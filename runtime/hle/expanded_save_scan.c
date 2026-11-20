@@ -142,15 +142,18 @@ static void queue(Cpu *c, uint64_t task, uint16_t file, uint8_t story) {
 }
 
 void xcde_expanded_scan_continue_begin(uint64_t sequence) {
+    if (!xcde_expanded_saves_enabled()) return;  // The native four-slot scan runs alone.
     owner_check(sequence, CONTINUE_SIZE);
     forget(sequence, SCAN_CONTINUE);
 }
 
 void xcde_expanded_scan_continue_drop(uint64_t sequence) {
+    if (!xcde_expanded_saves_enabled()) return;
     if (sequence) forget(sequence, SCAN_CONTINUE);
 }
 
 bool xcde_expanded_scan_continue_wait(Cpu *c) {
+    if (!xcde_expanded_saves_enabled()) return false;  // Let the native wait/selection run.
     uint64_t owner = c->x[19];
     owner_check(owner, CONTINUE_SIZE);
     if (LD8(owner + 0x98)) return false; // Native child/confirmation still busy.
@@ -208,6 +211,7 @@ bool xcde_expanded_scan_continue_wait(Cpu *c) {
 }
 
 void xcde_expanded_scan_continue_selected(Cpu *c) {
+    if (!xcde_expanded_saves_enabled()) return;  // The native winner was already stored by the original instruction.
     uint64_t owner = c->x[19];
     Scan state;
     if (!snapshot(owner, SCAN_CONTINUE, &state) || !state.complete || !state.found)
@@ -224,11 +228,12 @@ void xcde_expanded_scan_continue_selected(Cpu *c) {
 }
 
 void xcde_expanded_scan_presence_drop(uint64_t checker) {
+    if (!xcde_expanded_saves_enabled()) return;
     if (checker) forget(checker, SCAN_PRESENCE);
 }
 
 void xcde_expanded_scan_presence_reset(uint64_t checker) {
-    if (!checker) return;
+    if (!xcde_expanded_saves_enabled() || !checker) return;
     pthread_mutex_lock(&scan_lock);
     for (unsigned i = 0; i < SCAN_OWNERS; ++i)
         if (scans[i].owner == checker && scans[i].kind == SCAN_PRESENCE) {
@@ -242,6 +247,11 @@ void xcde_expanded_scan_presence_reset(uint64_t checker) {
 
 void xcde_expanded_scan_presence(Cpu *c) {
     uint64_t owner = c->x[0];
+    if (!xcde_expanded_saves_enabled()) {
+        // This hook replaced the native BL: run that same title availability check.
+        (void)call(c, 0x70003c2880ull, owner, 0, 0, 0);
+        return;
+    }
     owner_check(owner, CHECK_SIZE);
     uint64_t task = owner + CHECK_TASK;
     Scan state;

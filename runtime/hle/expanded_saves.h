@@ -17,7 +17,15 @@ enum {
     XCDE_SAVE_THUMB_STRIDE = 0x2a300,
     XCDE_SAVE_THUMB_BYTES = 0x107ac00,
     XCDE_SAVE_STATE_BYTES = 0x1601d50,
+    // [XCDE] xcde.ini save_slots_99 = 0 restores the game's own list: the autosave plus three
+    // manual slots (records 0..3). The patched allocation and thumbnail arena stay, but the
+    // logical record count, sort end and every extra adapter step follow the native values.
+    XCDE_SAVE_NATIVE_RECORD_COUNT = 4,
+    XCDE_SAVE_NATIVE_RECORD_END = XCDE_SAVE_RECORD_BASE + XCDE_SAVE_NATIVE_RECORD_COUNT * XCDE_SAVE_RECORD_STRIDE,
+    XCDE_SAVE_NATIVE_SELECTED_MAX = XCDE_SAVE_NATIVE_RECORD_COUNT - 1,
 };
+
+bool xcde_expanded_saves_enabled(void);
 
 void xcde_expanded_saves_initialize(Cpu *c);
 void xcde_expanded_saves_forget(uint64_t state);

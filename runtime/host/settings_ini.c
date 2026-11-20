@@ -21,7 +21,7 @@ const char *const g_language_names[N_LANGUAGES] = {"Auto", "Japanese", "English"
                                                    "Chinese (Simplified)", "Chinese (Traditional)"};
 Settings g_settings = {.fps = 30, .fps_overlay = true, .upscaler_auto = true, .volume = 1.0f, .movie_audio = true, .res_mode = RES_MATCH, .upscaler = UPSCALE_FSR1, .upscale_quality = UQ_QUALITY, .upscale_sharpness = -1.0f, .game_blur = true, .vsync = true, .ui_lang = 1, .gpu_index = -1, .gpu_profile = GPU_PROFILE_AUTO, .gpu_gpl = GPU_GPL_AUTO, .occlusion = OCCL_AUTO, .amd_fix = AMD_FIX_AUTO, .session_fix = SESSION_FIX_AUTO, .gpu_memory_budget = true, .input_rumble = true, .grass_lod = GRASS_DEFAULT, .run_speed = 1.0f, .ui_scale = 100,
     .cheat_damage_dealt_percent = 100, .cheat_damage_received_percent = 100, .cheat_exp_percent = 100, .cheat_ap_percent = 100,
-    .cheat_sp_percent = 100, .cheat_gold_percent = 100, .cheat_enemy_health_percent = 100};
+    .cheat_sp_percent = 100, .cheat_gold_percent = 100, .cheat_enemy_health_percent = 100, .save_slots_99 = true};
 int g_window_w = 1280, g_window_h = 720;  // windowed size (settings.h)
 
 // [XCDE] Mods (runtime/services/romfs_virtual.c): xcde.ini `mod_<folder> = 0/1`; a folder not listed is on.
@@ -141,6 +141,7 @@ void settings_load(void) {
 #undef LOAD_CHEAT
         else if (!strcmp(k, "cheat_no_fall_damage")) g_settings.cheat_no_fall_damage = xcde_cheat_enabled(v);
         else if (!strcmp(k, "quickstep_slot")) g_settings.quickstep_slot = xcde_cheat_enabled(v);  // [XCDE] Quick Step slot mod
+        else if (!strcmp(k, "save_slots_99")) g_settings.save_slots_99 = xcde_cheat_enabled(v);  // [XCDE] 99 manual save slots, applied at the next start
         else if (!strcmp(k, "ui_scale")) g_settings.ui_scale = ui_scale_percent(atoi(v));  // [XCDE] GitHub #121
         else if (!strcmp(k, "volume")) g_settings.volume = (float)atof(v) / 100.0f;
         else if (!strcmp(k, "movie_audio")) g_settings.movie_audio = atoi(v) != 0;
@@ -216,6 +217,7 @@ void settings_save(void) {
 #undef SAVE_CHEAT
     fprintf(f, "cheat_no_fall_damage = %d\n", g_settings.cheat_no_fall_damage);
     fprintf(f, "quickstep_slot = %d\n", g_settings.quickstep_slot);
+    fprintf(f, "save_slots_99 = %d\n", g_settings.save_slots_99);
     fprintf(f, "ui_scale = %d\n", ui_scale_percent(g_settings.ui_scale));  // [XCDE] GitHub #121
     fprintf(f, "vulkan_api = %s\nfps_overlay = %d\n", g_settings.vulkan_api == 12 ? "1.2" : g_settings.vulkan_api == 13 ? "1.3" : g_settings.vulkan_api == 14 ? "1.4" : "auto", g_settings.fps_overlay);
     fprintf(f, "fps_overlay_style = %s\n", g_settings.fps_overlay_style == FPS_OVERLAY_SIMPLE ? "simple" : "detailed");
