@@ -6,8 +6,9 @@ base for the other three Xenoblade games."
 
 > This document describes **what** and **why**, without deciding **how** (that is `plan.md`). Every requirement is
 > testable; open points are marked `[NEEDS CLARIFICATION]` and block the phase that depends on them.
-> Rules: `CONTRIBUTING.md`. Real game facts: `research.md` and `docs/inventory.md`.
-> (Status as of 2026-10-25: most stories are met; see the README and `HANDOFF.md` for what is done and what is open.)
+> Rules: `CONTRIBUTING.md`. Real game facts: `research.md` and `docs/reference/inventory.md`.
+> (Status as of 2026-11-20: most stories are met; see `docs/dev/tasks.md` for what is done and what is open and
+> `docs/UPSTREAM.md` for every change to the inherited runtime.)
 
 ---
 
@@ -109,7 +110,7 @@ without visual options.
    the one at 1.0.
 2. **Given** a 21:9 window, **when** playing, **then** the 3D scene widens and the interface isn't stretched.
 3. **Given** an unlocked frame rate, **when** it is enabled, **then** it is only offered if the determinism test showed
-   the logic doesn't depend on it. (Answered later: high frame rates work with frame pacing, see `HANDOFF.md`.)
+   the logic doesn't depend on it. (Answered later: high frame rates work with frame pacing, see `docs/dev/archive/HANDOFF-2026-10-25.md`.)
 
 ---
 

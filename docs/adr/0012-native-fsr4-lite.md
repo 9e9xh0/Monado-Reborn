@@ -1,5 +1,8 @@
 # ADR 0012 — Optional native FSR 4.1.2 Lite INT8 (Linux)
 
+- **Status:** Accepted — implemented as an optional native Linux component · **Date:** 2026-11-13
+- **Tasks:** T-FSR4-LITE
+
 [XCDE] T-FSR4-LITE, 2026-11-04. Proposed for the native Linux build.
 
 AMD FidelityFX SDK 2.4.0 (2026-10-28) supplies FSR Upscale 4.1.2 and a Vulkan

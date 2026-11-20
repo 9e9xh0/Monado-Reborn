@@ -10,7 +10,7 @@ fonts (see `CONTRIBUTING.md`, Article I). Players must supply files extracted fr
 |---|---|---|---|
 | AArch64→C generator (`gen.py`, `lifter.py`, `simd_c.py`, `analyze.py`, `nso.py`, `sym.py`) | [LASRecomp](https://github.com/peiikai/LASRecomp) by Peiikai, commit `136f679` | MIT | `tools/lifter/` |
 | Runtime (loader, dispatch, kernel, IPC, services, NVN→Vulkan, Maxwell shader translator) | LASRecomp, commit `136f679` | MIT | `runtime/` |
-| Optional cheats (damage, rewards, enemy HP, no fall damage), Exit to desktop rows, 99 save slots, dedicated Quick Step slot | [Monado II](https://github.com/brendonbusker/Monado-II) by the Monado II contributors, commit `69e593a` | MIT | `runtime/hle/cheats_*`, `title_exit*`, `system_exit*`, `desktop_exit_caption*`, `expanded_save*`, `quickstep_*`, `runtime/ui/cheats_controls.h`, their hooks in `games/xcde/patches.py` (see `docs/CHEATS_AND_MODS.md`) |
+| Optional cheats (damage, rewards, enemy HP, no fall damage), Exit to desktop rows, 99 save slots, dedicated Quick Step slot | [Monado II](https://github.com/brendonbusker/Monado-II) by the Monado II contributors, commit `69e593a` | MIT | `runtime/hle/cheats_*`, `title_exit*`, `system_exit*`, `desktop_exit_caption*`, `expanded_save*`, `quickstep_*`, `runtime/ui/cheats_controls.h`, their hooks in `games/xcde/patches.py` (see `docs/guides/CHEATS_AND_MODS.md`) |
 
 Every edit to a copied file is marked `[XCDE]` (the project's working name) and listed in `docs/UPSTREAM.md`.
 
@@ -20,7 +20,7 @@ Every edit to a copied file is marked `[XCDE]` (the project's working name) and 
 |---|---|---|
 | ssbu-recomp (Denkishi), commit `938e66b` | GPL-3.0 | design reference; copying code requires an ADR accepting GPL-3.0 for the whole project |
 | B2recomp (K0NL) | GPL-3.0 | design reference |
-| Other Switch recomps and PC ports reviewed for ideas (commits and issues) | various | listed in `docs/RECOMP_KNOWLEDGE.md`; no code copied |
+| Other Switch recomps and PC ports reviewed for ideas (commits and issues) | various | listed in `docs/reference/RECOMP_KNOWLEDGE.md`; no code copied |
 
 ## Third-party components in this repository (`third_party/`)
 

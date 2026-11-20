@@ -12,6 +12,6 @@ runtime.
 | `romfs_manifest` | `{dirs:{name:[n_files,bytes]}, sha256}` | | FR-004 |
 | `heap_max` | bytes | | memory |
 | `patches` | path | `games/xcde/patches.py` | FR-013 |
-| `hooks` | path | `games/xcde/hooks.c` | FR-012 |
+| `hooks` | path | (planned file; current hooks live in `runtime/hle/`) | FR-012 |
 
 Rules: the runtime must not refer to a game by name; flags like `g_is_las` are replaced by profile queries.

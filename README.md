@@ -19,8 +19,8 @@ Vulkan. Windows x86-64 is the primary target; Linux builds are supported too.
 1. Put your extracted `exefs` and `romfs` folders inside `targets/`, so that `targets/exefs` and `targets/romfs`
    exist. The folder names are lowercase on every system.
 2. **Portable build:** run `Play Monado.bat`. **From source:** run `Build Monado.bat` (Windows; it installs the
-   toolchain, a few GB) or follow [`docs/BUILD-CMAKE.md`](docs/BUILD-CMAKE.md) /
-   [`docs/LINUX.md`](docs/LINUX.md).
+   toolchain, a few GB) or follow [`docs/guides/BUILD-CMAKE.md`](docs/guides/BUILD-CMAKE.md) /
+   [`docs/guides/LINUX.md`](docs/guides/LINUX.md).
 3. Start the game with `Play Monado.bat`: it opens the launcher (graphics, scaling, controls, language) and then
    the game. The first start precompiles shaders and can take a while; later starts use the cache.
 4. From another launcher or a shortcut: `build/xcde.exe --game <folder with exefs/ and romfs/>`. The older

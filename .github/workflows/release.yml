@@ -74,7 +74,7 @@ jobs:
           echo "Package version: $version"
 
   pgo:
-    # The committed profile (data/pgo/monado.proftext.gz, docs/PGO.md) is LLVM's text format. A compiler reads only an
+    # The committed profile (data/pgo/monado.proftext.gz, docs/guides/PGO.md) is LLVM's text format. A compiler reads only an
     # indexed profile from its own LLVM version or an older one, so convert it once with the oldest compiler that
     # reads it: clang-19 (the Linux runtime). zig 0.17.1's clang 22 (the Windows runtime and every player's game code
     # build) reads that too.

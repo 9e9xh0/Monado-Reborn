@@ -8,13 +8,13 @@
 #
 # Ninja tracks header dependencies, compiles in parallel and rebuilds only what changed. The executables land where
 # the launchers expect them: build/xcde.exe + build/xcde_launcher.exe (Windows), build/linux/monado +
-# build/linux/monado-launcher (Linux). See docs/BUILD-CMAKE.md.
+# build/linux/monado-launcher (Linux). See docs/guides/BUILD-CMAKE.md.
 cmake_minimum_required(VERSION 3.21)
 project(Monado LANGUAGES C CXX)
 
 set(ROOT "${CMAKE_CURRENT_SOURCE_DIR}")
 option(MONADO_RUNTIME_ONLY "Compile the runtime only (no generated game code, no link)" OFF)
-# Release packages (docs/BUILD-CMAKE.md): the executable holds no game code. It loads lasgame.so / lasgame.dll, which
+# Release packages (docs/guides/BUILD-CMAKE.md): the executable holds no game code. It loads lasgame.so / lasgame.dll, which
 # the launcher builds once from the player's own dump (tools/gamebuild.py); nothing derived from the game ships.
 option(MONADO_RELEASE "Runtime without game code: loads the game library the launcher builds on first start" OFF)
 # GitHub #119: the version the launcher shows and compares with the latest GitHub release (the release workflow passes
@@ -29,7 +29,7 @@ else()
 endif()
 find_package(Python3 REQUIRED COMPONENTS Interpreter)
 
-# Optimisation level of the generated game code and the C runtime, and the profile-guided build (docs/PGO.md, after
+# Optimisation level of the generated game code and the C runtime, and the profile-guided build (docs/guides/PGO.md, after
 # TotK Recomp's docs/pgo.md). MONADO_PGO=gen instruments both: the game adds its counts to build/pgo/raw/*.profraw
 # every minute and at exit; tools/pgo.py merge turns them into a .profdata. MONADO_PGO=<file.profdata> compiles with it.
 set(MONADO_OPT "O1" CACHE STRING "Optimisation level of the game code and the C runtime: O1 or O2 (a PGO build uses O2)")
@@ -255,7 +255,7 @@ else()
   endif()
 endif()
 
-# A/B builds (docs/PGO.md): put this configuration's executables in another folder than the default one
+# A/B builds (docs/guides/PGO.md): put this configuration's executables in another folder than the default one
 set(MONADO_OUT_DIR "" CACHE PATH "Folder for the game executable and launcher (default: build/ or build/linux/)")
 if(MONADO_OUT_DIR)
   set(OUT "${MONADO_OUT_DIR}")

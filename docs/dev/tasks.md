@@ -1,13 +1,16 @@
 # Tasks: Monado
 
-**Inputs:** the original spec, plan and research documents (Spanish, not included in the public copy; their key facts
-are in the README) and `CONTRIBUTING.md` (the project rules, "constitution").
+**Inputs:** `docs/dev/spec.md`, `docs/dev/plan.md` and `docs/dev/research.md` (English, translated from the original
+Spanish on 2026-10-25) and `CONTRIBUTING.md` (the project rules, "constitution").
 
 **Format:** `- [ ] Txxx [P] [Milestone] Description → files · Req: … · Done when: …`
 - `[P]`: can run in parallel with other `[P]` tasks of the same milestone (different files, no dependency).
 - Every task cites its requirements (Art. IV). Tests come **before** the implementation they validate (Art. V).
 - A closed task is marked `[x]` and links its evidence when the milestone asks for it.
 - Statuses below M5 are historical: much of what is open here was done later under the session tasks further down.
+- Maintenance (2026-11-20): the former duplicate `T070` (M4) is now `T272`; developer documentation is English and new
+  session notes belong in `docs/dev/CHANGELOG.md`. The historical session sections in this file are kept as a record
+  and may cite paths from the private work tree (for example `verify.sh` or `build/...`) that are not repository files.
 
 ---
 
@@ -40,7 +43,7 @@ are in the README) and `CONTRIBUTING.md` (the project rules, "constitution").
   aborts → `tests/unit/test_patches.py` · Req: FR-013.
 - [x] T013 [M1] Reproducible generation: two runs → the same hash of `generated/` · Req: NFR-006.
 - [x] T014 [P] [M1] Generator coverage report (functions, tables, `Unsupported`, padding vs real `udf`) →
-  `tools/lifter/report.py` · Req: FR-010.
+  `tools/report.py` · Req: FR-010.
 - [x] T015 [P] [M1] Guest function map (address, size, name when known) to debug `main` without symbols →
   `build/maps/` · Req: FR-064.
 
@@ -50,7 +53,7 @@ are in the README) and `CONTRIBUTING.md` (the project rules, "constitution").
 
 - [x] T020 [M2] **Research Q1:** classify main's 1,083 unresolved `br` by pattern (R4).
 - [x] T021 [M2] **Test first:** synthetic corpus of jump-table patterns (`ldrb/ldrh/ldrsw` + `add lsl`, with and
-  without an immediate `cmp`, copied indices) → `tools/tests/test_jumptables.py` · Req: FR-011.
+  without an immediate `cmp`, copied indices) → `tests/unit/test_jumptables.py` · Req: FR-011.
 - [~] T022 [M2] Extend the table resolver to ≥ 95 % resolved in main and sdk · Req: R4, NFR-005. (Status: main 93.4 %,
   sdk 89.9 % after fixing the `adr` partition; the remaining patterns are listed in R4.)
 - [x] T023 [P] [M2] Wider differential test against Unicorn (on real XCDE instructions: 6,000 + 15,000 encodings,
@@ -58,7 +61,7 @@ are in the README) and `CONTRIBUTING.md` (the project rules, "constitution").
 - [x] T024 [P] [M2] Atomics as `__atomic` with the guest's ordering, `DMB/DSB` as fences; multithreaded stress test at
   `-O2` · Req: FR-011.
 - [x] T025 [M2] First full build (main+sdk) with clang; measure time and size; tune chunking and `-O0/-O1`
-  · Req: NFR-005 · Evidence: `docs/evidence/M2/build_time.md`.
+  · Req: NFR-005 · Evidence: `docs/evidence/M2/summary.md` (the separate build-time report was not archived).
 - [x] T026 [P] [M2] `FRSQRTE`/`FRECPE` without long loops (ssbu lesson #44); exhaustive test of 1–4095 · Req: SC-009.
 
 **M2 gate:** ≥ 95 % tables resolved, differential 100 %, `xcde_game` compiles, time measured.
@@ -82,10 +85,10 @@ are in the README) and `CONTRIBUTING.md` (the project rules, "constitution").
   Limits: it is not the game "at real speed" (no pacing, the game sees a virtual 60 fps), a thread busy-waiting
   without SVCs would hold the baton, and only the title was measured.
 - [ ] T030 [M3] Loader with the XCDE profile (main+sdk; `multimedia.nss` resolved through HLE) · Req: FR-010.
-- [x] T031 [M3] **Test first:** a condvar with a timeout returns without the mutex → `tests/unit/test_condvar.c`
+- [x] T031 [M3] **Test first:** a condvar with a timeout returns without the mutex → `tests/native/test_condvar.c`
   · Req: FR-021.
 - [ ] T032 [M3] **Test first:** a fiber resumed on another thread; 12,288 exception contexts freed →
-  `tests/unit/test_fibers.c` · Req: FR-022.
+  `tests/native/test_fibers.c` · Req: FR-022.
 - [x] T032b [M3] **Fiber HLE** on host fibers (Windows `CreateFiber`/`SwitchToFiber`):
   `nn::os::InitializeFiber/FinalizeFiber/SwitchToFiber/GetCurrentFiber`, a `Cpu` context per fiber, the fiber function
   returns the next one, symbols in `games/xcde/hle_symbols.txt` so the SDK's internal calls are replaced too
@@ -103,7 +106,7 @@ are in the README) and `CONTRIBUTING.md` (the project rules, "constitution").
 - [x] T036 [M3] Missing services used (per T034); network / shop / friends as "offline" · Req: FR-020, FR-024. **Done
   2026-10-17 (title):** no network / shop / friends services are requested; the 9 unimplemented IPC commands (`am`,
   `pctl`) are audited and strict mode catches them.
-- [ ] T037 [P] [M3] **Test first:** atomic saves and handle closing → `tests/unit/test_fs_commit.c` · Req: FR-023.
+- [ ] T037 [P] [M3] **Test first:** atomic saves and handle closing → the planned `test_fs_commit` native test (never created) · Req: FR-023.
   (Later: save commits with a journal, b78be40.)
 - [x] T038 [M3] `fsp-srv` over `targets/romfs` with 18.5 K files: listings and opens without copies · Req: FR-020.
 - [ ] T039 [P] [M3] `movie::SetCoreMask` and `movie::MediaData::operator=` (the 2 missing in LAS) · Req: FR-042.
@@ -111,8 +114,8 @@ are in the README) and `CONTRIBUTING.md` (the project rules, "constitution").
 - [x] T040 [M3] Heap and memory map per Q5 (adjust `HEAP_MAX` if needed) · Req: FR-020. **Done 2026-10-17:** the game
   asks for a single `SetHeapSize 0xC9400000` (≈ 3.15 GB); `HEAP_MAX` 3.25 GB fits (≈ 0.1 GB margin).
 - [x] T041 [M3] Reach the first `Present` · Evidence: log in `docs/evidence/M3/`.
-- [ ] T042 [P] [M3] Minimal recorded route "boot → first frame" → `games/xcde/routes/boot.txt`.
-- [ ] T043 [P] [M3] Per-function / per-thread profiler → `runtime/diag/profiler.c` · Req: FR-064. (Done later as the
+- [ ] T042 [P] [M3] Minimal recorded route "boot → first frame" → a recorded route under `tests/routes/` (planned; never created).
+- [ ] T043 [P] [M3] Per-function / per-thread profiler → `runtime/diag/sampler.c` · Req: FR-064. (Done later as the
   sampling profiler, `runtime/diag/sampler.c`.)
 
 **M3 gate:** first `Present` without unaudited stubs; Q2, Q4, Q5, Q7 answered.
@@ -144,7 +147,7 @@ are in the README) and `CONTRIBUTING.md` (the project rules, "constitution").
 
 ## M5 — Gameplay (Story 2, playable MVP)
 
-- [ ] T070 [M5] Test route intro → Colony 9 → battle → save → load → `games/xcde/routes/m5.txt` · Req: Story 2.
+- [ ] T070 [M5] Test route intro → Colony 9 → battle → save → load → routes under `tests/routes/` (planned; never created) · Req: Story 2.
 - [ ] T071 [M5] Fix whatever breaks the route (each bug with its route or test before the fix) · Req: Art. V.
 - [ ] T072 [P] [M5] SDL3 controllers, keyboard / mouse, remapping, non-blocking rumble · Req: FR-043.
 - [ ] T073 [P] [M5] Frame pacing with hysteresis · Req: FR-044.
@@ -163,7 +166,7 @@ are in the README) and `CONTRIBUTING.md` (the project rules, "constitution").
 
 ## M7 — Hardening (Story 3)
 
-- [ ] T081 [M7] Automated 4 h soak with metrics (private memory, VRAM, handles, live textures) → `tests/soak/`
+- [ ] T081 [M7] Automated 4 h soak with metrics (private memory, VRAM, handles, live textures) → `tools/soak.py`
   · Req: SC-004–006. (Done later as `tools/soak.py`.)
 - [ ] T082 [P] [M7] Go through every lesson of research R10 with its test · Req: R10.
 - [ ] T083 [P] [M7] GPU matrix (NVIDIA, AMD, Intel iGPU) on Windows and Linux · Req: NFR-004.
@@ -231,7 +234,7 @@ M0 → M1 → M2 → M3 → M4 → M5 → M6 ─┐
   by d+d/2; see `runtime/nvn/tegra.c`; the title is right in the window).
 - [ ] T069 [M4] Take the LAS-specific hooks out of the renderer (widening, mirror, flower pots, `texpatch`, `menu_*`)
   and delete `runtime/host/stubs_gfx.c` · Req: Art. IX.
-- [ ] T070 [M4] Exact `PTP` for `TLD4` (per-texel offsets) and `SUST` in D/P modes with 8/16-bit sizes, when a shader
+- [ ] T272 [M4] Exact `PTP` for `TLD4` (per-texel offsets) and `SUST` in D/P modes with 8/16-bit sizes, when a shader
   uses them · Req: FR-031.
 - [x] T105 [M4] (SOLVED: point sprites from an unsupported geometry shader; GS implemented) A regular dot pattern over
   the whole title image.
@@ -252,8 +255,8 @@ M0 → M1 → M2 → M3 → M4 → M5 → M6 ─┐
 - [ ] T110 [M4] The backend shares an image between NVN textures with the same address / size / compatible format:
   extend to views with another format of the same texel size, and to partial overlaps if a game uses them.
 
-## Candidate tasks from the WindowSmash review (2026-10-17, see `docs/lessons_windowsmash.md`)
-- [ ] T111 [M7] Whole-function differential tests (Unicorn vs native, registers + memory) for leaf functions of `main`/`sdk` -> `tests/diff/` · Req: SC-002.
+## Candidate tasks from the WindowSmash review (2026-10-17, see `docs/history/research/lessons_windowsmash.md`)
+- [ ] T111 [M7] Whole-function differential tests (Unicorn vs native, registers + memory) for leaf functions of `main`/`sdk` -> `tests/native/` (planned) · Req: SC-002.
 - [ ] T112 [M3] Sampling profiler: sample guest thread instruction pointers, map to `f_<addr>`, report per function/thread (finishes T043) · Req: FR-064.
 - [ ] T113 [M2] Cross-check function discovery against exception-frame tables (`.eh_frame` extents) · Req: FR-010.
 - [ ] T114 [M8] Tail-call helper so guest tail transfers do not grow the host stack · Req: SC-008.
@@ -270,7 +273,7 @@ M0 → M1 → M2 → M3 → M4 → M5 → M6 ─┐
 - [ ] T123 [M4] Passes 111/120/121 of the intro frames differ between runs although the final image does not (`XCDE_PASS_HASH`): probably uncovered regions of fresh render targets (uninitialised memory). Clear new targets in deterministic mode if it ever reaches the screen.
 - [ ] T120 [M4] Candidate: a fragment shader with no output for a bound render target (omap nibble 0) should leave it untouched (Maxwell); Vulkan writes undefined values. Set `colorWriteMask = 0` for those targets. Seen on the intro's off-screen marker draw (no visible effect there) · Req: FR-030.
 
-## Candidate tasks from three other recomp projects (2026-10-18, see `docs/lessons_other_recomps.md`)
+## Candidate tasks from three other recomp projects (2026-10-18, see `docs/history/research/lessons_other_recomps.md`)
 - [~] T125 [M4] Program cache keyed by shader content as well as address (streamed shaders reuse addresses; Let's Go #66). Done 2026-10-18 (hash per stage in `set_shaders`); route to frame 8000 unchanged (digest equal). Not yet exercised: a zone change that reloads shaders.
 - [x] T126 [M4] Constant buffer reads past the bound range return 0 (Maxwell): zero-padded copy in `cbuf_info` (Wonder #21). 2026-10-18: route clean, captures unchanged.
 - [x] T127 [M4] `LDC.64` when the address register is also a destination (Let's Go #21): our translator had the bug; address snapshot in a temp. Test `tests/native/test_translate_ldc.c` (failed before, passes now).
@@ -483,7 +486,7 @@ unB3s\samples.txt - suspected single translator thread: a translation cache woul
   - T182 lead (AC-Recomp): Astral Chain's internal resolution and its dynamic resolution are immediates in the game code;
     check XCDE's own DRS (it may drop the 3D target when our reported GPU times look slow) and every scene target's size
     at 4K. 60 fps model: a second lifted binary from a patched copy of main, chosen by the launcher.
-- From the other repos' updates (2026-10-19, `docs/lessons_astral_ssbu.md` last section):
+- From the other repos' updates (2026-10-19, `docs/history/research/lessons_astral_ssbu.md` last section):
   - [x] Lazy-commit race (upstream LASRecomp 2332e74): ported to runtime/platform/windows.c.
   - [ ] T190 [M8] **Slow-QPC PCs** (HPET timing): ~1 us per QueryPerformanceCounter; fall back to the invariant TSC when a
     read is over 250 ns (WindowSmash 5004359). Measure our reads per frame (rt_ticks in the limiter, plat_now_ns, SDL ticks).
@@ -492,7 +495,7 @@ unB3s\samples.txt - suspected single translator thread: a translation cache woul
   - [ ] T192 [M10] FSR 3.1 (temporal) upscaler option, if XCDE has depth + motion vectors (TAA) to feed it.
   - [~] T193 [M8] Port LASRecomp's integrated-GPU path (8a66a61, 03ee802): no per-frame target clears, lean image usage,
     SMAA stencil - on by default on iGPUs. Needs an iGPU to measure (the dev PC's Ryzen iGPU is disabled in the BIOS).
-    2026-10-23 (docs/spec_lowend_gpu.md R6):
+    2026-10-23 (docs/history/plans/spec_lowend_gpu.md R6):
     - lean image formats: done, fde082c, on for non-NVIDIA;
     - per-frame clears off: rejected, the frames differ;
     - SMAA stencil: open.
@@ -711,7 +714,7 @@ unB3s\samples.txt - suspected single translator thread: a translation cache woul
   tests/routes/load_spin.txt): 50-100 fps -> 62-116 fps (worst +24 %). Checked in real time: battle_b (no flicker,
   HUD fine), the Colony 9 gate, the intro cutscenes and the battle tutorial (realtime_tap_a_long, empty save), no crash
   in ~30 min of runs. Other recomps do the same ("replay thread" / "render thread with fence tickets":
-  docs/lessons_perf_recomps.md).
+  docs/history/research/lessons_perf_recomps.md).
 - [x] T175 redo (2026-10-20) **device-local mirrors of the transform-feedback buffers** (exec.c xsh_*): after each
   writer draw the captured bytes are copied once into a VRAM mirror of that buffer; vertex / index fetches starting
   in its range read the mirror (bound size clamped to its end: the game binds streams with the buffer's whole size
@@ -769,7 +772,7 @@ unB3s\samples.txt - suspected single translator thread: a translation cache woul
   only when FPS > 60 or unlimited - at 60 a frame fits the period and it only added a frame of input latency. 4K
   meadow spin with FIFO: 60.0 fps, max 17 ms. Tried and dropped: locking the emulated vsync / the limiter to DWM vblank
   times (the game doesn't use vi's vsync thread; the DWM-based phase metric proved unreliable). Notes:
-  docs/worklog_session14.md.
+  docs/dev/archive/worklog_session14.md.
 - [x] T200 (2026-10-21) **Frame drops to ~50 fps entering new parts of Colony 9** (user: short drops 60 -> 50, not at
   once on entering, shaders already precompiled). User log: each drop = a frame of 160-190 ms with `build waits` 2-9
   (162-273 ms), at prewarm bursts (~500 programs registered by the game when an area streams in). Not stale caches:
@@ -838,7 +841,7 @@ unB3s\samples.txt - suspected single translator thread: a translation cache woul
   every frame; a 30 fps animation would alternate). The user's session log shows 60.0 fps throughout. Open: which
   scene, whether character animation keys step at 30 under a moving camera (needs a static-camera shot).
 - [x] T206 (2026-10-21) **Party mod: Xenoblade 3-style switching of the controlled character** (runtime/hle/party.c,
-  docs/party_switch_research.md). F2 / L3+R3 (launcher Controls option, xcde.ini party_switch, off by default) rotates
+  docs/history/plans/party_switch_research.md). F2 / L3+R3 (launcher Controls option, xcde.ini party_switch, off by default) rotates
   the leader among the 3 deployed members as the game's Party menu does it (field group rebuilt, entity focus, set
   leader); in battle the HUD arts palette follows, downed members are skipped; refused in menus / cutscenes / loading;
   the new leader's pending follow move is dropped (no lock while running). Objects found by a scanner thread (no hitch).
@@ -861,7 +864,7 @@ unB3s\samples.txt - suspected single translator thread: a translation cache woul
   cache/precompile_done.txt; the launcher's pc_done() compares it, so JUGAR precompiles again after every new build.
   Note: the libraries live in the driver's own disk cache only (vk_pipelines.bin stays small, T187).
 - [x] T211 part 2 (2026-10-21) **pipeline pieces ready at loading time + link first** (user: no hitches even in the
-  ~30 areas not visited yet; OpenSmash's recipe, docs/lessons_astral_ssbu.md). exec.c: a program the game registers
+  ~30 areas not visited yet; OpenSmash's recipe, docs/history/research/lessons_astral_ssbu.md). exec.c: a program the game registers
   with no recorded variant (new area / new player) gets the precompilation's guessed variant translated and its
   pre-rasterization / fragment-shader libraries built on the workers (gpl_prebuild, pl_pending; discrete GPUs only,
   XCDE_PREBUILD_LIBS=0/1); build_pipeline links first when both libraries are in memory (gpl_ready; ~0.3 ms vs 2-17 ms
@@ -929,7 +932,7 @@ unB3s\samples.txt - suspected single translator thread: a translation cache woul
   Also found: the NVIDIA driver's shader cache (AppData/Local/NVIDIA/GLCache) at its 1 GB default limit - the
   precompiled libraries were evicted, pieces compiled 30-55 ms while turning the camera; the user set it to unlimited.
   Next: keep the libraries in our own cache file (RAM-aware) so no driver limit matters.
-- [x] T212 (2026-10-21, party mod session; docs/handoff_shader_pipeline.md "Fix 1") **Shader libraries prebuilt for
+- [x] T212 (2026-10-21, party mod session; docs/dev/archive/handoff_shader_pipeline.md "Fix 1") **Shader libraries prebuilt for
   programs with recorded variants too** (exec.c prewarm_drain / gpl_prebuild_variant): before, only programs without a
   recorded variant got their pre / fs libraries prebuilt, so new state combinations of the others loaded whole
   pipelines from the driver cache (2-5 ms each). Now once per (program, fill mode, samples, a2c) of their variants.
@@ -1058,7 +1061,7 @@ unB3s\samples.txt - suspected single translator thread: a translation cache woul
     (bloom 320x180 and below included), so the ratios match the Switch.
   - The rest is Dread-specific: DLAA on its OpenGL renderer, a skip-cutscene patch, icons, Steam shortcut.
 - [ ] T226 (2026-10-23, party mod session) **General fixes from the other recomps, any PC** (found in the commit review
-  of docs/spec_lowend_gpu.md 1.3; not low-end specific). Check each against XCDE.
+  of docs/history/plans/spec_lowend_gpu.md 1.3; not low-end specific). Check each against XCDE.
   - Rule: apply only what fits Xenoblade and changes nothing else. Each one needs deterministic captures in the noise
     band (or the bug it fixes visibly gone) and fps not lower.
   - Performance:
@@ -1321,7 +1324,7 @@ unB3s\samples.txt - suspected single translator thread: a translation cache woul
 
 ## Continuación local — 2026-11-04 (sin datos del juego)
 
-Evidencia y límites: `docs/PORT_VALIDATION.md`, `docs/evidence/port_2026-11-04.md`.
+Evidencia y límites: `docs/history/port/PORT_VALIDATION.md`, `docs/evidence/2026-11-04-port/summary.md`.
 
 - [x] T247 **INI compartido y reemplazo atómico:** conservar claves de otras versiones/frontends; persistir defaults/bindings para permitir restablecerlos. Comprobado con prueba C de round-trip en una compilación anterior; repeticiones posteriores bloqueadas por Windows.
 - [x] T248 **Adaptadores por nombre y UUID:** probe común, capacidades/colas, prioridad env/UUID/índice/auto y fallback informado. Prueba C con driver falso y enumeración real de una AMD integrada. Equipo híbrido real pendiente.
@@ -1349,7 +1352,7 @@ Ver `docs/VULKAN_DLSS_FPS.md` para opciones, fuente oficial, hashes, resultado d
 - T260: implementadas reutilización de descriptores/índices, índice de texturas, caché asociativa de archivos, propiedades GPU cacheadas, resolución dinámica con tiempo GPU, presentación con presupuesto y métricas/benchmark. Aceptación: pruebas nativas de identidad/vida útil/concurrencia, compilación completa, comparación visual y A/B local; rendimiento en campo/combate, Intel/NVIDIA y soak pendientes.
 - T261: implementados tema grafito/verde, bordes redondeados, navegación lateral, controles compartidos/responsivos y reducción de trabajo de UI. Aceptación: launcher enlazado y capturas nativas a 720p/1080p y 200 % DPI; navegación manual con mando y F1 en escenas jugables pendientes.
 
-Detalle: `docs/PERFORMANCE_UI.md`. Evidencia: `docs/evidence/performance_ui_2026-11-04.md`. No marcar compatibilidad de una familia a partir de una sola GPU.
+Detalle: `docs/PERFORMANCE_UI.md`. Evidencia: `docs/evidence/2026-11-04-performance-ui/summary.md`. No marcar compatibilidad de una familia a partir de una sola GPU.
 
 
 ## Issue #96 — fog-boundary sliver (2026-11-14)
@@ -1560,11 +1563,11 @@ Detalle: `docs/PERFORMANCE_UI.md`. Evidencia: `docs/evidence/performance_ui_2026
   device-local buffers could be reused or freed under the worker's command buffer: wrong geometry, wrong textures
   and graphical corruption. Fix: when `backend_async()` is active, eligibility uses `vk_completed_seq()`; the
   synchronous path is unchanged. Inert on Linux (vertex cache disabled there). Detail:
-  [windows-vertex-corruption](../evidence/windows-vertex-corruption/summary.md).
+  [windows-vertex-corruption](../evidence/2026-11-10-vertex-corruption/summary.md).
 - [x] T-FRAME-LAG-VCACHE (2026-11-10) **Windows async frame-lag vertex refresh.** User's Windows report: battle
   VFX beams/glows stretched, gone with `XCDE_ASYNC_RENDER=0`. `vc_flush` recorded the vertex cache's refresh as a
   GPU-time copy from guest memory; with frame lag (async + vertex cache + >60 FPS) that copy could run after the
   game rewrote the pages, so effect/particle streams drew another frame's contents. Fix: while frame lag is
   latched, `vc_flush` stages the written pages through the transient ring at submit time; GPU-written-page entries
   unchanged; `XCDE_VC_STAGE=0` is the A/B opt-out. Residual lag-time host reads (SSBOs, `gfast` copy-in) are not
-  covered. Detail: [windows-vertex-corruption](../evidence/windows-vertex-corruption/summary.md).
+  covered. Detail: [windows-vertex-corruption](../evidence/2026-11-10-vertex-corruption/summary.md).

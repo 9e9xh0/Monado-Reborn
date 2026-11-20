@@ -1,18 +1,32 @@
-# Selector Vulkan, DLSS y contador FPS
+# Vulkan selector, DLSS and FPS counter
 
-Continuación local del 2026-11-04. Estos cambios necesitan reconstruir el juego con sus archivos 2.0.0; copiar las DLL por sí solo no añade las opciones a un ejecutable antiguo.
+Local continuation of 2026-11-04. These changes need the game rebuilt with its 2.0.0 files; copying the DLLs alone
+does not add the options to an old executable.
 
-## Opciones
+## Options
 
-En **Gráficos / GPU** del launcher y **GPU / Vulkan** del menú F1:
+In **Graphics / GPU** of the launcher and **GPU / Vulkan** of the F1 menu:
 
-- **Ruta Vulkan:** Automático, 1.2 (KHR), 1.3 y 1.4. Las opciones incompatibles con la GPU seleccionada o el loader instalado aparecen deshabilitadas. Automático escoge la mayor ruta soportada hasta 1.4. Si cambia la máquina o el driver y una preferencia guardada deja de estar disponible, se registra el retorno a una ruta compatible. Requiere reiniciar.
-- El selector elige la ruta de API del backend. La instancia permite consultar las capacidades del driver; la ruta activa se muestra por separado de la versión máxima anunciada por la GPU. 1.4 utiliza el renderer existente y SPIR-V compatible; la opción no añade efectos exclusivos de 1.4. La ruta 1.2 conserva el escalado espacial y desactiva DLSS y los SDK temporales de esta implementación.
-- **Escalado Automático:** predeterminado para configuraciones nuevas. En la GPU NVIDIA elegida, DLSS SR se activa cuando el SDK confirma compatibilidad de GPU, driver, features y colas; en los demás casos se usa FSR 1. Se respeta una selección explícita anterior de bilineal/FSR/DLSS. Para activar este comportamiento en una configuración existente, elegir **Automático** y reiniciar.
-- **DLSS manual:** deshabilitado en el launcher si la GPU seleccionada no es NVIDIA, faltan las DLL o se usa la ruta 1.2. La comprobación definitiva la realiza `slIsFeatureSupported` sobre el adaptador activo. El menú muestra el resultado/motivo; detectar una NVIDIA por fabricante no basta para activar DLSS.
-- **Contador FPS en pantalla:** habilitado por defecto, visible dentro de la imagen incluso con F1 cerrado y a pantalla completa. Muestra FPS nativos y milisegundos por cuadro, actualizados cada medio segundo. Se conserva el checkbox independiente de FPS en la barra de título. Los presents repetidos y la generación de cuadros no incrementan el contador. Los replays deterministas omiten el overlay para conservar las comparaciones de imagen.
+- **Vulkan path:** Automatic, 1.2 (KHR), 1.3 and 1.4. Options incompatible with the selected GPU or the installed
+  loader appear disabled. Automatic picks the highest supported path up to 1.4. If the machine or driver changes and
+  a saved preference is no longer available, the fallback to a compatible path is logged. Requires a restart.
+- The selector chooses the backend API path. The instance allows querying the driver capabilities; the active path
+  is shown separately from the maximum version announced by the GPU. 1.4 uses the existing renderer and compatible
+  SPIR-V; the option does not add effects exclusive to 1.4. The 1.2 path keeps spatial upscaling and disables DLSS
+  and the temporal SDKs of this implementation.
+- **Automatic upscaling:** default for new configurations. On the selected NVIDIA GPU, DLSS SR is enabled when the
+  SDK confirms GPU, driver, feature and queue compatibility; otherwise FSR 1 is used. An earlier explicit
+  bilinear/FSR/DLSS selection is respected. To enable this behavior in an existing configuration, choose
+  **Automatic** and restart.
+- **Manual DLSS:** disabled in the launcher if the selected GPU is not NVIDIA, the DLLs are missing or the 1.2 path
+  is used. The definitive check is performed by `slIsFeatureSupported` on the active adapter. The menu shows the
+  result/reason; detecting an NVIDIA by vendor is not enough to enable DLSS.
+- **On-screen FPS counter:** enabled by default, visible inside the image even with F1 closed and in fullscreen. It
+  shows native FPS and milliseconds per frame, updated every half second. The independent FPS checkbox in the title
+  bar is kept. Repeated presents and frame generation do not increment the counter. Deterministic replays skip the
+  overlay to preserve image comparisons.
 
-Claves nuevas de `xcde.ini`:
+New `xcde.ini` keys:
 
 ```ini
 vulkan_api = auto
@@ -21,40 +35,68 @@ fps_overlay = 1
 fps_overlay_style = detailed
 ```
 
-`vulkan_api` también admite `1.2`, `1.3`, `1.4`; `fps_overlay` admite `0/1`; `fps_overlay_style` admite `detailed` (FPS, mínimos 1% / 0.1%, gráfica de tiempos, tiempo y esperas de GPU, carga de GPU / CPU / VRAM / RAM y resolución; GitHub #39) o `simple` (FPS y ms). Se cambia en vivo desde F1. `fps_overlay_scale` (50–150, en %; 100 por defecto) y `fps_overlay_position` (`top-left`, `top-right`, `bottom-left`, `bottom-right`) fijan su tamaño y esquina (GitHub #147), también en F1 y en el lanzador. Ambas interfaces conservan estas claves y las de otras versiones.
+`vulkan_api` also accepts `1.2`, `1.3`, `1.4`; `fps_overlay` accepts `0/1`; `fps_overlay_style` accepts `detailed`
+(FPS, 1 % / 0.1 % lows, time graph, GPU time and waits, GPU / CPU / VRAM / RAM load and resolution; GitHub #39) or
+`simple` (FPS and ms). It is changed live from F1. `fps_overlay_scale` (50–150, in %; 100 by default) and
+`fps_overlay_position` (`top-left`, `top-right`, `bottom-left`, `bottom-right`) set its size and corner (GitHub
+#147), also in F1 and in the launcher. Both interfaces keep these keys and those of other versions.
 
-## Runtime oficial NVIDIA instalado
+## Official NVIDIA runtime installed
 
-Fuente: [Streamline SDK 2.14.16, release de NVIDIA-RTX](https://github.com/NVIDIA-RTX/Streamline/releases/tag/v2.14.16), coincidente con las cabeceras del proyecto. Se descargó el SDK x64 de producción y se verificó su SHA-256:
+Source: [Streamline SDK 2.14.16, NVIDIA-RTX release](https://github.com/NVIDIA-RTX/Streamline/releases/tag/v2.14.16),
+matching the project headers. The production x64 SDK was downloaded and its SHA-256 verified:
 
 ```text
 32041e51db0cab709a271b72a352281b690c2abbd669a827809401a5dd23956b
 ```
 
-Se instalaron en `build/`: `sl.interposer.dll`, `sl.common.dll`, `sl.dlss.dll`, `nvngx_dlss.dll` y `NvLowLatencyVk.dll`. Las cuatro primeras DLL dieron firma Authenticode **Valid**, con firmante **NVIDIA Corporation**. Streamline informa versión 2.14.16.0; `nvngx_dlss.dll`, 310.9.16.0. El manifiesto de origen/hashes queda en `build/dlss-runtime.json`; las licencias originales se conservan en `sdk/sl/licenses/` y `build/dlss-licenses/`. Los binarios permanecen fuera de Git.
+Installed into `build/`: `sl.interposer.dll`, `sl.common.dll`, `sl.dlss.dll`, `nvngx_dlss.dll` and
+`NvLowLatencyVk.dll`. The first four DLLs gave an Authenticode signature **Valid**, with signer **NVIDIA
+Corporation**. Streamline reports version 2.14.16.0; `nvngx_dlss.dll`, 310.9.16.0. The origin/hash manifest remains
+in `build/dlss-runtime.json`; the original licences are kept in `sdk/sl/licenses/` and `build/dlss-licenses/`. The
+binaries remain outside Git.
 
-Para reinstalar el mismo paquete oficial:
+To reinstall the same official package:
 
 ```powershell
 python tools/install_dlss.py
 ```
 
-El instalador verifica el archivo antes de desplegarlo, selecciona exclusivamente las DLL de producción `bin/x64` y rechaza un paquete incompleto, duplicado o con hash incorrecto. El empaquetador local conserva DLL, licencias y manifiesto. Las dependencias Microsoft Visual C++ x64 importadas por Streamline están presentes en System32 en esta máquina; un equipo que no las tenga recibe el error de carga y escalado alternativo.
+The installer verifies the file before deploying it, selects only the production `bin/x64` DLLs and rejects an
+incomplete package, a duplicate or a wrong hash. The local packager keeps the DLLs, licences and manifest. The
+Microsoft Visual C++ x64 dependencies imported by Streamline are present in System32 on this machine; a machine
+without them receives the load error and the alternative upscaling.
 
-## Correcciones de integración DLSS
+## DLSS integration fixes
 
-- El chequeo inicial usa la GPU elegida por UUID/índice/env; una RTX presente en otra ranura no activa DLSS sobre una integrada seleccionada.
-- Se verifica la firma/publisher del interposer antes de cargarlo. La búsqueda de dependencias usa su propio directorio y System32. Se comprueban todas las funciones del SDK que después se invocan.
-- Si el SDK pide cero colas adicionales, los índices graphics/compute usan la cola 0 real; anteriormente se enviaban índices 1 aunque la aplicación solo hubiera creado una cola.
-- Se conecta el hook de creación Win32 de superficie, además de los proxies de swapchain/present existentes. Se comprueban límites y capacidades antes de agregar requisitos opcionales.
-- Se conservan los vectores de movimiento de valor cero como válidos; se activa exposición automática; los tags de recursos usan la vida útil de evaluación; después del SDK se invalida/restaura el estado de comandos del renderer. Se agrega apagado ordenado de Streamline.
-- Los fallos de inicialización, soporte o despacho aparecen en el estado y log, con escalado alternativo; no se informa DLSS activo solo por detectar un nombre RTX.
+- The initial check uses the GPU chosen by UUID/index/env; an RTX present in another slot does not enable DLSS over
+  a selected integrated GPU.
+- The interposer signature/publisher is verified before loading it. Dependency search uses its own directory and
+  System32. All SDK functions called afterwards are checked.
+- If the SDK asks for zero additional queues, the graphics/compute indices use the real queue 0; previously indices
+  1 were submitted even though the application had created only one queue.
+- The Win32 surface creation hook is connected, in addition to the existing swapchain/present proxies. Limits and
+  capabilities are checked before adding optional requirements.
+- Zero-valued motion vectors are kept as valid; automatic exposure is enabled; resource tags use the evaluation
+  lifetime; after the SDK the renderer command state is invalidated/restored. An orderly Streamline shutdown is
+  added.
+- Initialization, support or dispatch failures appear in the status and log, with alternative upscaling; DLSS is not
+  reported active just because an RTX name is detected.
 
-Referencias de implementación: [guía oficial de integración manual](https://github.com/NVIDIA-RTX/Streamline/blob/v2.14.16/docs/ProgrammingGuideManualHooking.md), [guía DLSS](https://github.com/NVIDIA-RTX/Streamline/blob/v2.14.16/docs/ProgrammingGuideDLSS.md).
+Implementation references: [official manual hooking guide](https://github.com/NVIDIA-RTX/Streamline/blob/v2.14.16/docs/ProgrammingGuideManualHooking.md),
+[DLSS guide](https://github.com/NVIDIA-RTX/Streamline/blob/v2.14.16/docs/ProgrammingGuideDLSS.md).
 
-## Verificación y límites
+## Verification and limits
 
-- Se añadieron pruebas sin GPU para selección 1.2/1.3/1.4, fallback, índices de colas SL sin extras y contador a 30/60/120/144/165 FPS. `test_display_options.exe` se ejecutó y aprobó.
-- Se ampliaron los tests de round-trip del INI y los del instalador oficial. La prueba C++ de firma compila, pero Windows bloqueó su ejecución con WinError 4551; la comprobación Authenticode independiente con PowerShell sí se ejecutó y fue válida.
-- Los módulos del runtime y el launcher se compilan con `python tools/validate_port.py --build-ui --compile-only`; este modo informa las pruebas nativas como **no ejecutadas**, sin contarlas como aprobadas. La CI usa el modo normal para ejecutarlas cuando el entorno lo permite.
-- La máquina disponible tiene una AMD integrada. Falta ejecutar el juego reconstruido en una RTX, comprobar el estado «DLSS Super Resolution disponible», la salida visual a distintas resoluciones y el comportamiento del HUD durante gameplay/FG. No se declara probada la reconstrucción DLSS real ni el juego completo sin ese hardware y los archivos del juego.
+- GPU-free tests were added for 1.2/1.3/1.4 selection, fallback, SL queue indices without extras and the counter at
+  30/60/120/144/165 FPS. `test_display_options.exe` ran and passed.
+- The INI round-trip tests and the official installer tests were extended. The C++ signature test compiles, but
+  Windows blocked its execution with WinError 4551; the independent Authenticode check with PowerShell did run and
+  was valid.
+- The runtime modules and the launcher compile with `python tools/validate_port.py --build-ui --compile-only`; this
+  mode reports the native tests as **not run**, without counting them as passed. CI uses the normal mode to run them
+  when the environment allows it.
+- The available machine has an integrated AMD GPU. Running the rebuilt game on an RTX and checking the "DLSS Super
+  Resolution available" status, the visual output at different resolutions and the HUD behavior during gameplay/FG
+  is still pending. Real DLSS reconstruction and the whole game are not declared tested without that hardware and
+  the game files.

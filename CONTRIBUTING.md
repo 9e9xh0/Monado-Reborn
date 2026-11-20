@@ -56,6 +56,14 @@ entry with the reason.
 2. Generic fixes useful to LASRecomp are offered upstream when reasonable.
 3. The simplest solution that meets the requirement wins; extra complexity is justified in the plan.
 
+## Documentation language and structure
+
+English is canonical for README files, developer documentation, ADRs and contracts, and new documents MUST be
+written in English. The only maintained Spanish document is the player guide
+[`docs/user/es/README.md`](docs/user/es/README.md); historical Spanish records are archived under `docs/history/es/`
+and are not updated. The documentation layout and entry point are described in [`docs/README.md`](docs/README.md);
+local links are checked by `python3 tools/check_docs.py` (run by CI).
+
 ## How changes are made (the loop the project followed)
 
 1. **Reproduce with a deterministic route.** `scripts/drive_env.sh <route> <frames> [secs] [name]` drives the game
@@ -63,12 +71,15 @@ entry with the reason.
    `DRIVE_SAVE=<folder with save_0/>` to start from a save, `DRIVE_EXE=` to test another build.
 2. **Write the check before the fix:** a unit test (`tests/unit`), a native test (`tests/native`), or a frame-hash
    comparison (`XCDE_FRAME_HASH=<file>` + `tools/hash_diff.py`).
-3. **Diagnose with data, not guesses:** the environment switches listed in `docs/dev/HANDOFF.md` (`XCDE_*`,
-   `LARECOMP_*`), the sampling profiler (`XCDE_SAMPLE=<from>:<to>`), the watchdog, RenderDoc.
+3. **Diagnose with data, not guesses:** the environment switches listed in the archived handoffs
+   (`docs/dev/archive/`, e.g. `HANDOFF-2026-10-25.md`) and in code comments (`XCDE_*`, `LARECOMP_*`), the sampling
+   profiler (`XCDE_SAMPLE=<from>:<to>`), the watchdog, RenderDoc.
 4. **Fix the cause, not the symptom;** minimal change; mark edits to upstream files with `[XCDE] Txxx`.
-5. **Verify by measuring:** the check from step 2 green, `scripts/ci.sh` green, and for rendering changes a
-   deterministic route compared frame by frame against the previous build (see "Equivalence" below).
-6. **Record it:** the task in `docs/dev/tasks.md`, a `HANDOFF.md` entry for anything the next person must know.
+5. **Verify by measuring:** the check from step 2 green, `scripts/ci.sh` green (it runs the unit tests, the packaging
+   guard and the documentation check), and for rendering changes a deterministic route compared frame by frame
+   against the previous build (see "Equivalence" below).
+6. **Record it:** the task in `docs/dev/tasks.md`, the session prose in `docs/dev/CHANGELOG.md`, and any edit to an
+   inherited file in `docs/UPSTREAM.md` (article X). Older session handoffs are archived in `docs/dev/archive/`.
 7. **Small commits**, one logical change each. Never commit `build/ cache/ save/ targets/ generated/ crash/ play/`.
 
 ### Equivalence (no regressions)

@@ -2,7 +2,7 @@
 # [XCDE] T-LINUX: native Linux x86-64 build of the same runtime and game code as the Windows build.
 # Windows and Linux objects never mix (build/linux/). Needs clang, pkg-config and the development packages of
 # SDL3, Vulkan, shaderc, opus, FFmpeg and zlib, plus the Vulkan Memory Allocator header (VMA_INCLUDE_DIR if it
-# is not installed system-wide) and .venv with capstone unicorn lz4 (see docs/LINUX.md).
+# is not installed system-wide) and .venv with capstone unicorn lz4 (see docs/guides/LINUX.md).
 #   scripts/build_linux.sh                # dump in targets/ -> generated/ -> build/linux/monado
 #   scripts/build_linux.sh --runtime-only # compile the runtime only (no game files needed)
 #   scripts/build_linux.sh --check        # check the build dependencies

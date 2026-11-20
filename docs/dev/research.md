@@ -1,8 +1,11 @@
 # Research (phase 0): Monado
 
+> **Frozen historical document (2026-10-17).** It records the project start only; current status is in
+> [`tasks.md`](tasks.md) and [`../UPSTREAM.md`](../UPSTREAM.md).
+
 **For:** `spec.md` v1.0 · **Date:** 2026-10-17
 Each entry follows the format **Decision / Reason / Alternatives considered / Evidence**.
-The figures come from a 2.0.0 dump (`docs/inventory.md`, `docs/nso_stats.json`) and a research pass of LASRecomp's
+The figures come from a 2.0.0 dump (`docs/reference/inventory.md`, `docs/reference/nso_stats.json`) and a research pass of LASRecomp's
 generator over the modules (`build/research/`, not versioned).
 
 ---

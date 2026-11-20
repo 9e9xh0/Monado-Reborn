@@ -36,8 +36,8 @@ Consulta todas las actualizaciones en la página de
 1. Coloca tus carpetas `exefs` y `romfs` extraídas (versión 2.0.0) dentro de `targets/`, de modo que existan
    `targets/exefs` y `targets/romfs`. Los nombres de carpeta son en minúsculas en todos los sistemas.
 2. **Versión portable:** ejecuta `Play Monado.bat`. **Compilar desde el código:** ejecuta `Build Monado.bat`
-   (Windows; instala las herramientas necesarias, varios GB) o sigue [`docs/BUILD-CMAKE.md`](../../BUILD-CMAKE.md)
-   / [`docs/LINUX.md`](../../LINUX.md).
+   (Windows; instala las herramientas necesarias, varios GB) o sigue [`docs/guides/BUILD-CMAKE.md`](../../guides/BUILD-CMAKE.md)
+   / [`docs/guides/LINUX.md`](../../guides/LINUX.md).
 3. Inicia el juego con `Play Monado.bat`: abre el lanzador (gráficos, escalado, controles, idioma) y después el
    juego. La primera vez compila los shaders y puede tardar; las siguientes usa la caché.
 4. Desde otro lanzador o acceso directo: `build/xcde.exe --game <carpeta con exefs/ y romfs/>`; la forma anterior
