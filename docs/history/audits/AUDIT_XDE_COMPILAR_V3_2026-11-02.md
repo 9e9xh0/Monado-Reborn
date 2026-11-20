@@ -23,7 +23,7 @@ No se incluyeron ROM, firmware, claves ni datos de juego adicionales. No se gene
 - Suite Python previa: 50 pruebas, 40 aprobadas, 10 omitidas por faltar `unicorn`, `lz4` y `capstone`; cero fallos.
 - Suite ampliada: **54 pruebas, 44 aprobadas, 10 omitidas, 0 fallidas**.
 - Las 10 omitidas requieren `unicorn`, `lz4` y `capstone`, ausentes en este entorno.
-- `tools/package_guard.py .` sin `--git` no es el modo de CI y reporta directorios de mods ya presentes en el ZIP. El archivo recibido no contiene metadatos `.git`, por lo que no se pudo reproducir el modo CI `--git` sobre el índice original.
+- `tools/package/package_guard.py .` sin `--git` no es el modo de CI y reporta directorios de mods ya presentes en el ZIP. El archivo recibido no contiene metadatos `.git`, por lo que no se pudo reproducir el modo CI `--git` sobre el índice original.
 - No se afirma compilación C/C++ ni compilación Windows en este entorno: no están instalados MSYS2 UCRT64, MinGW-w64 ni las cabeceras SDL3/Vulkan. La compilación completa además requiere los archivos legítimos del juego requeridos por `scripts/build_all.sh`.
 
 ## Compatibilidad: estado honesto
@@ -59,7 +59,7 @@ Se amplió el código en esta iteración:
 3. `runtime/nvn/vulkan/device.c`: el perfil de compatibilidad desactiva las rutas opcionales de pipeline libraries y host-memory import; la selección manual se integra con `LARECOMP_GPU`; `VK_EXT_memory_budget` respeta la configuración; la detección de memoria distingue heaps host-visible compartidos de heaps device-local no host-visible.
 4. Se consultan los bits de características de custom border color, vertex divisor y device fault antes de habilitarlos. La consulta de detalles de device fault ahora comprueba el resultado antes de leer las estructuras.
 5. Se corrigió el uso de `f11.storageBuffer16BitAccess` antes de declarar `f11` y se acotó la cantidad de colas frente al arreglo fijo de prioridades.
-6. Se añadieron `tests/gpu/GPU_COMPATIBILITY_MATRIX.md` y `tools/collect_gpu_diagnostics.bat` para recopilar evidencia por GPU/driver sin incluir archivos protegidos.
+6. Se añadieron `docs/reference/gpu-compatibility-matrix.md` y `tools/diag/collect_gpu_diagnostics.bat` para recopilar evidencia por GPU/driver sin incluir archivos protegidos.
 
 ### Verificación de esta fase
 
@@ -101,4 +101,4 @@ Verificación de esta fase:
 - UI de GPU permite seleccionar por índice Vulkan y ver el adaptador activo, pero no enumera una lista de nombres seleccionables en el combo; el índice se confirma en el siguiente arranque.
 - No se ha ejecutado compilación completa Windows ni prueba de juego. No hay certificación para ninguna familia AMD/Intel/NVIDIA en esta sesión.
 
-La matriz `tests/gpu/GPU_COMPATIBILITY_MATRIX.md` sigue siendo un plan de aceptación y todas sus familias permanecen pendientes de hardware.
+La matriz `docs/reference/gpu-compatibility-matrix.md` sigue siendo un plan de aceptación y todas sus familias permanecen pendientes de hardware.

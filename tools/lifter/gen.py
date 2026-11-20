@@ -24,7 +24,7 @@ from patchfmt import JumpTable
 import flags  # noqa: E402  (function-local NZCV, from TotK Recomp)
 import regs  # noqa: E402  (function-local general registers, from TotK Recomp)
 
-# [XCDE] Function-local general registers (tools/lifter/regs.py, docs/LIFTER_LOCALS.md). XCDE_REG_LOCALS=<n> keeps the
+# [XCDE] Function-local general registers (tools/lifter/regs.py, docs/guides/LIFTER_LOCALS.md). XCDE_REG_LOCALS=<n> keeps the
 # n most used X registers / SP of each function in C locals (0: none); XCDE_CALLEE_TRUST=0 reloads X19-X29 and SP
 # after calls too. The defaults are what ships: GAMELIB_ID hashes this file, not the environment.
 REG_LOCALS = int(os.environ.get('XCDE_REG_LOCALS', regs.LOCALS))
@@ -777,7 +777,7 @@ def main(argv=None):
         text += ['\n'.join(body), '\n']
         write_if_changed(path, ''.join(text))
         nchunks += 1
-        # (the start screen's setup reads these for its progress bar: runtime/gamebuild.c)
+        # (the start screen's setup reads these for its progress bar: tools/gamebuild/gamebuild.py)
         print(f'{args.name}: progress {ci}/{len(order)} files {nchunks}', file=sys.stderr, flush=True)
     for fn in os.listdir(args.outdir):  # an earlier run's extra chunks
         mm = re.fullmatch(re.escape(args.name) + r'_(\d{3})\.c', fn)

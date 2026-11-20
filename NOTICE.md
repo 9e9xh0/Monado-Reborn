@@ -32,6 +32,7 @@ Every edit to a copied file is marked `[XCDE]` (the project's working name) and 
 | NVIDIA Streamline headers (DLSS) | MIT (`third_party/streamline/license.txt`) |
 | weeping-of-the-empire (daniel-madrid-07, fe2345e8) | MIT (`third_party/weeping-of-the-empire/LICENSE`); the Linux AMDGPU GTT / dma-buf guest heap is adapted in `runtime/platform/linux_gpu.h` and the Vulkan import in `runtime/nvn/vulkan/exec.c`; its visibility-scoped feedback copies are the design reference for `resolve_feedback` (no code copied); the ordered Vulkan recording queue is adapted in `runtime/nvn/vulkan/vkq.c` / `vkq.h` |
 | Optional native AMD FSR 3.1.4 upscaler and Vulkan backend, SDK 1.1.4 (`c6efa6bf7f2027b3ec94f28578bb5965eabb9e55`) | AMD SDK MIT terms (`third_party/fsr3_native/LICENSE-AMD.txt`); fetched at build time from GPUOpen-LibrariesAndSDKs/FidelityFX-SDK; Linux adapter/preparation described in `third_party/fsr3_native/README.md` |
+| FSR 4 Lite capture tooling (bbport, `third_party/fsr4cap`) | GPL-2.0-or-later, pinned commit `0fc2921c45f8ff3900f6bfa43a299e9a4f532af4` (`third_party/fsr4cap/LICENSE`); used only to prepare AMD's model files on the player's PC, never linked into the runtime |
 | bcdec (BC texture decoding) | MIT or public domain (Unlicense), at the user's choice |
 
 ## Linked at build time (not in this repository)
@@ -53,11 +54,11 @@ Every edit to a copied file is marked `[XCDE]` (the project's working name) and 
 | NVIDIA Streamline 2.14.16 + DLSS DLLs | DLSS |
 | Button icon packs from GameBanana (CompC: "Xbox control layout", "PS5 DualSense control layout", CC BY-NC-ND) | controller prompts; installed by the user into `mods/` |
 
-`tools/install_dlss.py` retrieves Streamline 2.14.16 from NVIDIA-RTX's official GitHub release, verifies the pinned archive SHA-256 and installs production x64 binaries into the ignored `build/` directory. The release's licence files are retained in `sdk/sl/licenses/` and `build/dlss-licenses/`; source control contains no vendor binaries. The existing local packager preserves these files and the source/hash manifest when present.
+`tools/package/install_dlss.py` retrieves Streamline 2.14.16 from NVIDIA-RTX's official GitHub release, verifies the pinned archive SHA-256 and installs production x64 binaries into the ignored `build/` directory. The release's licence files are retained in `sdk/sl/licenses/` and `build/dlss-licenses/`; source control contains no vendor binaries. The existing local packager preserves these files and the source/hash manifest when present.
 
 ## Microsoft Visual C++ runtime (Windows packages)
 
-`tools/make_portable.py` copies the x64 VC++ 2015-2022 runtime DLLs that `amd_fidelityfx_vk.dll` imports
+`tools/package/make_portable.py` copies the x64 VC++ 2015-2022 runtime DLLs that `amd_fidelityfx_vk.dll` imports
 (`msvcp140.dll`, `vcruntime140.dll`, `vcruntime140_1.dll`, and any redistributable dependencies they need) from the
 build machine's Visual Studio redistributable or `System32` into the package, as Microsoft's redistributable terms
 allow for app-local deployment. They are not part of this repository. Without them FSR 3 fails to load with

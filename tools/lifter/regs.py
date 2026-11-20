@@ -1,5 +1,5 @@
 # [XCDE] Ported from TotK Recomp (github.com/valentderah/totk-pc-recomp, recomp/regs.py), MIT License,
-# Copyright (c) 2026 Valiantsin Dzerakh. Used by gen.py emit_function (docs/LIFTER_LOCALS.md).
+# Copyright (c) 2026 Valiantsin Dzerakh. Used by gen.py emit_function (docs/guides/LIFTER_LOCALS.md).
 """Function-local general registers for tools/lifter/gen.py.
 
 The lifter reads and writes the guest's X0-X30 and SP in the Cpu (c->x[n], c->sp), so every guest instruction loads
@@ -10,9 +10,9 @@ before a call, an SVC, a trap, a return or a tail exit it stores the registers i
 and after an SVC it loads them all again (reload). The other registers stay in the Cpu.
 
 After a call it reloads only X0-X18 and X30: AAPCS64 has the callee preserve X19-X29 and SP, so their locals still
-hold what the Cpu holds. What would break that does not occur in TotK (nor, checked 2026-11-18, in XC:DE: docs/LIFTER_LOCALS.md): main and subsdk0 import neither longjmp nor
+hold what the Cpu holds. What would break that does not occur in TotK (nor, checked 2026-11-18, in XC:DE: docs/guides/LIFTER_LOCALS.md): main and subsdk0 import neither longjmp nor
 the C++ unwinder, sdk's longjmp, __cxa_throw and _Unwind_* have no direct callers, and the runtime writes no register
-above X3 of a running thread's Cpu except X30, which rt_call restores (runtime/hostfn.c there). Guest fibers each run on a host fiber of their own with their own Cpu (runtime/kernel.c),
+above X3 of a running thread's Cpu except X30, which rt_call restores (in TotK Recomp). Guest fibers each run on a host fiber of their own with their own Cpu (runtime/kernel.c),
 and ExitThread leaves by longjmp without returning. XCDE_CALLEE_TRUST=0 (gen.py) reloads those registers too.
 
 Only plain assignments write registers in the lifted C (`c->x[n] = ...`, `c->sp = ...`), and no code takes a

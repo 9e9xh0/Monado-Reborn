@@ -5,7 +5,7 @@
 under `ffx/` are AMD's (MIT, see their headers).
 
 Monado uses it to prepare FSR 4.1.2 Lite's model files **on the player's own PC**, the way bbport does: nothing of
-AMD's is shipped. `tools/fsr4_prepare.py` (frozen as `monado-fsr4prep`, run by the launcher's "Prepare FSR 4 Lite"):
+AMD's is shipped. `tools/package/fsr4_prepare.py` (frozen as `monado-fsr4prep`, run by the launcher's "Prepare FSR 4 Lite"):
 
 1. downloads AMD's `amd_fidelityfx_upscaler_dx12.dll` and its licence from AMD's FidelityFX SDK 2.4.0 on GitHub
    (pinned commit, SHA-256 checked);

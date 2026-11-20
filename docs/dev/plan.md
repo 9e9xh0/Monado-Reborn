@@ -263,8 +263,8 @@ change must keep XCDE's routes passing (cross regression). `docs/reference/LESSO
 - 2026-10-18 — v1.10: T118 intro video fixed. The game builds a `movie::Buffer` over its own memory before `Decoder::GetOutputBuffer` and reads that memory; the HLE replaced the Buffer's pointer with its own slot, so the game's frame buffer kept the LCG "static" its uploader fills it with. Fix: copy the decoded output into the game's memory (`runtime/hle/movie_buf.h`, test `tests/native/test_movie_buf.c`).
 - 2026-10-17 — v1.9: T029 closed for real — deterministic mode with a cooperative scheduler, virtual time and virtual timers for vsync / audio; 3 title runs with 100 % identical hashes on every frame (2.1 % before).
 - 2026-10-17 — v1.8: M3 diagnostics — T027 watchdog (5 s), T028 out-of-process minidump, T029 deterministic mode + per-frame hash + input record / replay, T033 strict mode + generated HLE audit.
-- 2026-10-17 — v1.7: T059 closed — the audio capture matches the reference recording of the title (chroma 0.92, the same notes and bands). Added `tools/wav_compare.py`.
-- 2026-10-17 — v1.6: T059 partly — the game's audio goes through `audout:u`; a valid WAV dump, real-time pacing, `tools/wav_report.py` + a test.
+- 2026-10-17 — v1.7: T059 closed — the audio capture matches the reference recording of the title (chroma 0.92, the same notes and bands). Added `tools/media/wav_compare.py`.
+- 2026-10-17 — v1.6: T059 partly — the game's audio goes through `audout:u`; a valid WAV dump, real-time pacing, `tools/media/wav_report.py` + a test.
 - 2026-10-17 — v1.5: T067 (hang: an ETIMEDOUT / condvar race in the kernel) and T108 (close: the virtual RomFS fd cache without a lock) closed; 47/47 clean boots. New tools: `scripts/repro_stability.sh`, `XCDE_STALL`, `XCDE_CRASH_DUMP_REG`.
 - 2026-10-17 — v1.4: title right (deferred lighting, points, depth-only draws); T064/T105/T106/T107 closed; new T108–T110.
 - 2026-10-17 — v1.3: T068 solved (3D deswizzle); title right in the window; new T105–T106.

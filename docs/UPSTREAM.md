@@ -20,7 +20,7 @@ patches of `games/xcde`; no addresses were invented and no game code was generat
 
 - `runtime/settings.h`, `host/settings_ini.c`, `host/settings_boot.c`, `gpu_policy.h`, `vulkan_policy.h`, `nvn/vulkan/gpu_probe.h`, `device.c`, `vk.h`: API path preference, capabilities and automatic upscaler.
 - `runtime/nvn/vulkan/dlss.cpp`, `exec.c`, `temporal.c`, `runtime/dlss_policy.h`, `host/nvidia_signature.h`: official NVIDIA runtime, per-GPU/SDK gating, queues, surface hook, resources/state and signature verification.
-- `runtime/ui/menu_vk.cpp`, `menu.h`, `gpu_picker.h`, `runtime/fps_meter.h`, `host/menu_stub.c`: on-screen counter and options. The launcher shares the options and preserves the new keys.
+- `runtime/ui/menu_vk.cpp`, `menu.h`, `gpu_picker.h`, `runtime/fps_meter.h`: on-screen counter and options. (the earlier host menu stub was removed in the 2026-11 cleanup; `runtime/ui/menu_vk.cpp` owns the overlay.) The launcher shares the options and preserves the new keys.
 
 Details and tests in `docs/VULKAN_DLSS_FPS.md`. The NVIDIA binaries live only in `sdk/` and `build/`, excluded from
 version control.
@@ -30,7 +30,7 @@ version control.
 - `runtime/settings.h`, `quality_policy.h`, `host/settings_ini.c`, `services/romfs_virtual.c`: profiles, compatible keys, C/C++ bindings and optional in-memory effects.
 - `runtime/nvn/output_scale.c`, `nvn/vulkan/exec.c`, `device.c`, `textures.c`, `vk.h`: presentation budget, asynchronous GPU time, descriptor cache, index scratch, texture index and GPU properties.
 - New helpers `render_policy.h`, `descriptor_cache.h`, `native_intervals.h`, `services/romfs_fd_cache.h`, `nvn/vulkan/texture_index.h`; they share logic with the tests.
-- `runtime/ui/menu_vk.cpp`, new UI helpers, `tools/launcher/launcher.cpp`: theme, navigation and shared configuration. `scripts/native_tests.sh` and `tools/validate_port.py`: checks without game data.
+- `runtime/ui/menu_vk.cpp`, new UI helpers, `tools/launcher/launcher.cpp`: theme, navigation and shared configuration. `scripts/native_tests.sh` and `tools/diag/validate_port.py`: checks without game data.
 
 Justification in ADR 0011. Attribution is kept and no code from other projects is incorporated. No change has been
 sent upstream nor has a distribution been published.

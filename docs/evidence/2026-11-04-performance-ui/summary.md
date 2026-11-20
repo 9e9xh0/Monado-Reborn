@@ -28,7 +28,7 @@ La referencia incorpora solamente el observador ligero de intervalos nativos sob
 | Suite Python | **72 pruebas correctas**, `build/unit-results.log`. El mensaje `VIOLATION ... a.nsp` es una fixture deliberada del guard de empaquetado, no un archivo del usuario. |
 | Validación nativa | **17 pruebas ejecutadas correctas**, 18 módulos runtime/C++ compilados, launcher compilado/enlazado, cero fallos; `build/clang-validation.log`, `build/validation-clang/`. |
 | Prueba de firma NVIDIA | Compila; no ejecutada en esta validación porque falta la DLL oficial en la ruta de esa prueba. No implica validación de DLSS. |
-| Guard de fuentes | `tools/package_guard.py` sobre `runtime tools tests docs games data third_party`, salida 0; `build/source-guard.log`. No se ejecutó el modo basado en índice Git porque no existe `.git`. |
+| Guard de fuentes | `tools/package/package_guard.py` sobre `runtime tools tests docs games data third_party`, salida 0; `build/source-guard.log`. No se ejecutó el modo basado en índice Git porque no existe `.git`. |
 | Smoke Vulkan 1.3 core | Clear/readback y 256 píxeles correctos; `build/gpu-smoke.log`. |
 | Smoke Vulkan 1.2 KHR forzado | Correcto en el mismo driver 1.3; `build/gpu-smoke12.log`. No demuestra compatibilidad con hardware/driver exclusivamente 1.2. |
 
@@ -38,7 +38,7 @@ Para repetir la validación de componentes en este entorno:
 
 ```powershell
 $env:XCDE_SDK='C:/msys64/ucrt64'
-.venv/Scripts/python -X utf8 tools/validate_port.py --clang build/clang-sdk/ucrt64/bin/clang.exe --build-ui
+.venv/Scripts/python -X utf8 tools/diag/validate_port.py --clang build/clang-sdk/ucrt64/bin/clang.exe --build-ui
 ```
 
 ## Comparación visual y arranque real
@@ -68,7 +68,7 @@ Configuración: objetivo 30, resolución coincidente con ventana 1280×720, FSR,
 Datos originales, hashes de CSV y resumen: `build/ab-present/results.json` y seis CSV adyacentes. Ese JSON se recalculó con el intervalo anterior; es el resultado autoritativo frente al resumen inicial de consola que todavía incluía el intervalo de captura. La herramienta ya excluye ese intervalo al repetir la prueba:
 
 ```powershell
-.venv/Scripts/python -X utf8 tools/benchmark_native.py --reference build/xcde_reference.exe --candidate build/xcde.exe --ini build/qa/balanced.ini --present --output build/ab-repeat
+.venv/Scripts/python -X utf8 tools/diag/benchmark_native.py --reference build/xcde_reference.exe --candidate build/xcde.exe --ini build/qa/balanced.ini --present --output build/ab-repeat
 ```
 
 El directorio de salida debe ser nuevo. El observador está presente en ambos ejecutables. Cambiar de configuración, driver, modo de instrumentación o escena invalida una comparación directa.

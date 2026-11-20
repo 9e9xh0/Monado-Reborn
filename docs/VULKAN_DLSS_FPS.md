@@ -59,7 +59,7 @@ binaries remain outside Git.
 To reinstall the same official package:
 
 ```powershell
-python tools/install_dlss.py
+python tools/package/install_dlss.py
 ```
 
 The installer verifies the file before deploying it, selects only the production `bin/x64` DLLs and rejects an
@@ -93,7 +93,7 @@ Implementation references: [official manual hooking guide](https://github.com/NV
 - The INI round-trip tests and the official installer tests were extended. The C++ signature test compiles, but
   Windows blocked its execution with WinError 4551; the independent Authenticode check with PowerShell did run and
   was valid.
-- The runtime modules and the launcher compile with `python tools/validate_port.py --build-ui --compile-only`; this
+- The runtime modules and the launcher compile with `python tools/diag/validate_port.py --build-ui --compile-only`; this
   mode reports the native tests as **not run**, without counting them as passed. CI uses the normal mode to run them
   when the environment allows it.
 - The available machine has an integrated AMD GPU. Running the rebuilt game on an RTX and checking the "DLSS Super

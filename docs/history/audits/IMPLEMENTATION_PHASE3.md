@@ -23,4 +23,4 @@
 - VMA budget telemetry is diagnostic, not an active eviction/VRAM cap policy.
 - No Windows full build or hardware/gameplay validation was run.
 
-See `AUDIT_XDE_COMPILAR_V3_2026-11-02.md` for the cumulative status and `tests/gpu/GPU_COMPATIBILITY_MATRIX.md` for hardware acceptance criteria.
+See `AUDIT_XDE_COMPILAR_V3_2026-11-02.md` for the cumulative status and `docs/reference/gpu-compatibility-matrix.md` for hardware acceptance criteria.

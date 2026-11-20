@@ -9,7 +9,7 @@ account is doing right now, so the next Claude can continue mid-task.
 Frames extracted: <work dir>\vid1021\idx (2 fps, 480 px), \all (every frame, 640 px), \full (picked seconds).
 The video is 30 fps (the recorder); the game log (build/last_game.log) shows a steady 60.0 fps, max 17 ms.
 1. **Graphics bug in Colony 9 (night)** - not located yet in the frames. Next: ask the user for the second / spot, or
-   scan <work dir>\vid1021\all for frame-to-frame anomalies (tools/video_flicker.py).
+   scan <work dir>\vid1021\all for frame-to-frame anomalies (tools/media/video_flicker.py).
 2. **"Feels laggy / slowdown" at a steady 60 fps, Afterburner frametime flat** (60 Hz monitor, windowed 3840x2160).
 3. **Grass looks noisy** after turning off the game's TMAA / blur (T198 option) - expected: TMAA was the game's temporal
    AA. Mitigations: SMAA option (spatial, partial), FSR 3 native AA / DLAA (task A) = the real fix.

@@ -34,7 +34,7 @@ typedef struct {
     const uint64_t *main_count, *sdk_count;
 } GameLibTables;
 
-// The library's one exported function (tools/gamelib_entry.c).
+// The library's one exported function (tools/gamebuild/gamelib_entry.c).
 typedef const GameLibTables *(*GameLibEntry)(void);
 #define GAMELIB_ENTRY "lasgame_tables"
 

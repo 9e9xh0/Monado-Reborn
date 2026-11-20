@@ -64,16 +64,16 @@ calls and staging bytes; the time categories can overlap and must not be summed.
 buffer and on scheduled captures; a forced close can lose its last chunk.
 
 ```powershell
-.venv/Scripts/python -X utf8 tools/performance_report.py build/native_metrics.csv --start-frame 700 --output build/performance.json
+.venv/Scripts/python -X utf8 tools/diag/performance_report.py build/native_metrics.csv --start-frame 700 --output build/performance.json
 ```
 
 For a test with less instrumentation, `XCDE_NATIVE_INTERVALS=<csv>` records only native intervals and a
-GPU/driver/configuration identity. `tools/benchmark_native.py` alternates reference/candidate, uses separate saves
+GPU/driver/configuration identity. `tools/diag/benchmark_native.py` alternates reference/candidate, uses separate saves
 and does not replace existing evidence. Both executables must include that observer; the local reference one
 contains only that measurement addition on top of the original sources.
 
 ```powershell
-.venv/Scripts/python -X utf8 tools/benchmark_native.py --reference build/xcde_reference.exe --candidate build/xcde_optimized.exe --ini build/qa/balanced.ini --present --output build/ab-new
+.venv/Scripts/python -X utf8 tools/diag/benchmark_native.py --reference build/xcde_reference.exe --candidate build/xcde_optimized.exe --ini build/qa/balanced.ini --present --output build/ab-new
 ```
 
 Diagnostic overrides: `XCDE_DESCRIPTOR_CACHE=0` disables set reuse; `XCDE_GPU_TIMING=0` disables GPU queries;

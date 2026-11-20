@@ -1880,7 +1880,7 @@ static void begin_pass(void) {
         if (eh < minh) minh = eh;
         pass_samples = b->samples;
     }
-    {   // [XCDE] R1 (docs/spec_lowend_gpu.md): trailing colour slots without an image are left out of the pass. They went
+    {   // [XCDE] R1 (docs/history/plans/spec_lowend_gpu.md): trailing colour slots without an image are left out of the pass. They went
         // in as VK_NULL_HANDLE attachments - legal, but Intel's Windows driver crashes in vkCmdBeginRendering on them
         // (LASRecomp f4cb039 / letsgo-recomp 431f4da). Pipelines (k.ncolor) and clears follow pass_ncolor; an empty slot
         // before a used one stays (logged once). XCDE_KEEP_EMPTY_SLOTS=1: as before.
@@ -3694,7 +3694,7 @@ static void var_load(void) {
         fclose(f);
         LOG("[prewarm] %zu shader variants known (cache/variants.bin)\n", var_n);
     }
-    {   // [XCDE] T211: the shipped seed (data/variants_seed.bin: variants recorded in real play, tools/merge_variants.py):
+    {   // [XCDE] T211: the shipped seed (data/variants_seed.bin: variants recorded in real play, tools/research/merge_variants.py):
         // a new player's first visit to an area finds them known as if seen before (prewarmed at its loading screen)
         size_t n0 = var_n;
         FILE *sf = fopen("data/variants_seed.bin", "rb");
@@ -7162,7 +7162,7 @@ static void draw_(CmdRec *r, bool indexed) {
     if (tmp_enabled()) tmp_draw(pr, &jx, &jy);  // [XCDE] temporal upscaling: the camera, the scene depth, jitter
     if (tmp_enabled()) {  // [XCDE] T215: the game's velocity buffer (gTVelocity of its temporal AA / AO / shadow passes)
         // read at the gTVelocity unit of the game's own readers, found by their code hashes (container names,
-        // tools/spch_attrs.py + the SPCH layout). Written in the G-buffer pass, also with the game's AA off.
+        // tools/research/spch_attrs.py + the SPCH layout). Written in the G-buffer pass, also with the game's AA off.
         static const struct { uint64_t h; int unit; } vr[] = {
             {0xbb44ef3b36ad9cebull, 0}, {0x7e44df8503cc1e3dull, 4}, {0x920e4c73a20a21beull, 3}, {0x99e2b215439c052dull, 2},
             {0xfc143ddc53c1c59eull, 0}, {0x1abac2378f5ba855ull, 0}, {0x21ec426dc97769c6ull, 2}, {0xec955aaaac94168aull, 4},

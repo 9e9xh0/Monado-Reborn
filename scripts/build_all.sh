@@ -10,7 +10,7 @@ step() { echo; echo "=== $* ==="; }
 step "1/5 Checking the game files (targets/)"
 .venv/Scripts/python -X utf8 tools/extract/check_dump.py targets
 step "2/5 Recompiling the game code into C (generated/, ~1 min)"
-(cd tools && ../.venv/Scripts/python -X utf8 gen_all.py --out ../generated)
+.venv/Scripts/python -X utf8 tools/build/gen_all.py --out generated
 step "3/5 Compiling the game code (build/obj/, several minutes the first time)"
 XCDE_SKIP_BOOT_LINK=1 scripts/build_boot.sh
 step "4/5 Compiling the runtime and linking ${XCDE_EXE:-build/xcde.exe}"

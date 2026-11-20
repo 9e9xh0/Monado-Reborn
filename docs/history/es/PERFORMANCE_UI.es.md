@@ -40,13 +40,13 @@ Se conservan `gpu_preset = balanced|performance`; se añaden `potato|custom`. Nu
 `Play Monado (performance metrics).bat` escribe `build/native_metrics.csv`. Activa perfilado detallado, así que las comparaciones deben usar el mismo modo. Registra FPS nativos/intervalos, tiempo GPU, CPU/esperas/presentación, llamadas de descriptores y bytes de staging; las categorías de tiempo pueden solaparse y no deben sumarse. El escritor vacía periódicamente el buffer y en las capturas planificadas; un cierre forzado puede perder su último tramo.
 
 ```powershell
-.venv/Scripts/python -X utf8 tools/performance_report.py build/native_metrics.csv --start-frame 700 --output build/performance.json
+.venv/Scripts/python -X utf8 tools/diag/performance_report.py build/native_metrics.csv --start-frame 700 --output build/performance.json
 ```
 
-Para una prueba con menos instrumentación, `XCDE_NATIVE_INTERVALS=<csv>` registra solamente intervalos nativos y una identidad de GPU/driver/configuración. `tools/benchmark_native.py` alterna referencia/candidato, usa guardados separados y no reemplaza evidencia existente. Ambos ejecutables deben incorporar ese observador; el de referencia local contiene solamente ese añadido de medida sobre las fuentes originales.
+Para una prueba con menos instrumentación, `XCDE_NATIVE_INTERVALS=<csv>` registra solamente intervalos nativos y una identidad de GPU/driver/configuración. `tools/diag/benchmark_native.py` alterna referencia/candidato, usa guardados separados y no reemplaza evidencia existente. Ambos ejecutables deben incorporar ese observador; el de referencia local contiene solamente ese añadido de medida sobre las fuentes originales.
 
 ```powershell
-.venv/Scripts/python -X utf8 tools/benchmark_native.py --reference build/xcde_reference.exe --candidate build/xcde_optimized.exe --ini build/qa/balanced.ini --present --output build/ab-new
+.venv/Scripts/python -X utf8 tools/diag/benchmark_native.py --reference build/xcde_reference.exe --candidate build/xcde_optimized.exe --ini build/qa/balanced.ini --present --output build/ab-new
 ```
 
 Overrides de diagnóstico: `XCDE_DESCRIPTOR_CACHE=0` desactiva reutilización de sets; `XCDE_GPU_TIMING=0` desactiva consultas GPU; `XCDE_REPEAT_PRESENT=0` desactiva las repeticiones; `XCDE_PIPE_WAIT_MS=<n>` restaura explícitamente el antiguo presupuesto que puede omitir dibujos. No son recomendaciones generales para jugar.

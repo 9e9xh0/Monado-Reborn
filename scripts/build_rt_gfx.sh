@@ -27,7 +27,7 @@ for f in $NVN; do
   extra=""
   if [ "$f" = smaa_data ]; then  # [XCDE] the SMAA reference shader (third_party/smaa, MIT) as a C string
     mkdir -p build/inc
-    .venv/Scripts/python tools/gen_smaa_inc.py third_party/smaa/SMAA.hlsl build/inc/smaa_hlsl.inc || fail=1
+    .venv/Scripts/python tools/build/gen_smaa_inc.py third_party/smaa/SMAA.hlsl build/inc/smaa_hlsl.inc || fail=1
     extra="-Ibuild/inc -Ithird_party/smaa/Textures"
   fi
   o=build/nvn/nvn_$(echo $f | tr / _).o

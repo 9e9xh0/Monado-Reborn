@@ -51,9 +51,9 @@ To train with your own data folder (settings, saves, the launcher's environment)
    Cover what players spend their time on: open fields and towns, battles (arts, chain attacks, Monado arts), menus,
    cutscenes, loading into new areas, day and night, weather. Keep one or two scenes out of the training so you can
    measure on code the profile has not seen.
-3. Merge: `python tools/pgo.py merge` writes `build/pgo/monado.profdata` and `build/pgo/monado.json`, a record of the
+3. Merge: `python tools/build/pgo.py merge` writes `build/pgo/monado.profdata` and `build/pgo/monado.json`, a record of the
    lifter and the runtime headers (`cpu.h`, `simd.h`, `simd_fp.h`) it was trained on.
-4. Publish: `python tools/pgo.py publish` writes `data/pgo/monado.proftext.gz` (about 0.8 MB) and `data/pgo/monado.json`.
+4. Publish: `python tools/build/pgo.py publish` writes `data/pgo/monado.proftext.gz` (about 0.8 MB) and `data/pgo/monado.json`.
    Commit both: release builds use them.
 
 Train on Linux: the Windows build uses zig cc, which ships no profile runtime for `gen`. One profile serves both
@@ -63,20 +63,20 @@ inline NaN helpers with no counts, mismatch on Linux and Windows alike). Only th
 
 ## Release packages
 
-Players build the game code on their own PC (`tools/gamebuild.py`, bundled zig 0.17.1), so the profile has to reach
+Players build the game code on their own PC (`tools/gamebuild/gamebuild.py`, bundled zig 0.17.1), so the profile has to reach
 that build:
 
 - The committed copy is LLVM's **text** format. A compiler only reads an indexed profile written by its own LLVM
   version or an older one: zig 0.17.1's clang 22 rejects one from clang 23 ("unsupported instrumentation profile
   format version"). Text reads anywhere (checked with LLVM 15 and 21).
-- The release workflow's `pgo` job runs `tools/pgo.py index --tool llvm-profdata-19`: LLVM 19 is the oldest compiler
+- The release workflow's `pgo` job runs `tools/build/pgo.py index --tool llvm-profdata-19`: LLVM 19 is the oldest compiler
   in the release (clang-19 builds the Linux runtime), and zig's clang 22 reads its output too.
 - Both platform jobs build the runtime with `-DMONADO_PGO=build/pgo/monado.profdata` and stage it for the player's
-  build (`tools/gamebuild_stage.py --pgo`, `link.json` `"pgo"`); `tools/gamebuild.py` then compiles every game file
+  build (`tools/gamebuild/gamebuild_stage.py --pgo`, `link.json` `"pgo"`); `tools/gamebuild/gamebuild.py` then compiles every game file
   with `-fprofile-use`.
-- The guest flags are `-O2` (`tools/game_id.py`), and `GAMELIB_ID` includes the profile, so a new profile makes every
+- The guest flags are `-O2` (`tools/build/game_id.py`), and `GAMELIB_ID` includes the profile, so a new profile makes every
   player's launcher rebuild the game code once.
-- Every compile that uses the profile also gets `-DMONADO_PGO_ID=<its digest>` (CMake and `tools/gamebuild.py`).
+- Every compile that uses the profile also gets `-DMONADO_PGO_ID=<its digest>` (CMake and `tools/gamebuild/gamebuild.py`).
   zig's compiler cache keys on the command line and the included files, not on the profile's contents: without the
   digest, a new profile at the same path got the old objects back, from CI's restored zig cache and from the zig-cache
   a player's build keeps between releases.
@@ -99,11 +99,11 @@ Every compile depends on the profile, so a new profile rebuilds everything.
 
 clang matches each function by name and a hash of its control flow, and silently drops the counts of a function whose
 code changed. The helpers of `cpu.h`, `simd.h` and `simd_fp.h` are inlined into every lifted function, so a change to
-them, or to the lifter (`tools/lifter`), invalidates the whole profile. `python tools/pgo.py check` says whether that
+them, or to the lifter (`tools/lifter`), invalidates the whole profile. `python tools/build/pgo.py check` says whether that
 happened. Game-code patches only touch the patched functions and can wait for the next training.
 
 ## Measure
 
-`tools/benchmark_native.py --reference <exe> --candidate <exe> --ini <ini> --frames N --warmup W` alternates the two
+`tools/diag/benchmark_native.py --reference <exe> --candidate <exe> --ini <ini> --frames N --warmup W` alternates the two
 executables with the same settings and route in deterministic mode (one guest thread at a time, so the time per frame
 is the CPU cost of the frame) and reports the median FPS change.

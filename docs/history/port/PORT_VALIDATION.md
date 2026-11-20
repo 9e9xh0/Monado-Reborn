@@ -24,13 +24,13 @@ Desde la raíz, con Python instalado; todo el SDK y las salidas quedan en `build
 
 ```powershell
 python -m pip install --target build/toolchain ziglang==0.17.1 capstone lz4 unicorn
-python tools/setup_validation.py
+python tools/diag/setup_validation.py
 $env:PYTHONPATH = "$PWD\build\toolchain"
 New-Item -ItemType Directory -Force build/tmp | Out-Null
 $env:TEMP = "$PWD\build\tmp"
 $env:TMP = $env:TEMP
 python -X utf8 -W error::ResourceWarning -m unittest discover -s tests/unit -q
-python tools/validate_port.py --build-ui
+python tools/diag/validate_port.py --build-ui
 build/validation/gpu_diagnostics.exe
 build/validation/gpu_diagnostics.exe --smoke
 build/validation/gpu_diagnostics.exe --smoke-vulkan12
@@ -47,7 +47,7 @@ En esta máquina Windows bloqueó ejecuciones de `test_time_math`, `test_transla
 ## Pruebas jugables pendientes
 
 1. Proporcionar los `exefs/romfs` propios 2.0.0 al procedimiento de build existente. Usar copias de configuración/guardados para pruebas y desactivar mods en esas copias. No incorporar datos derivados al repositorio.
-2. Convertir las rutas conocidas a tiempo: `python tools/timed_route.py tests/routes/load_walk.txt build/load_walk_ms.txt --source-fps 30`. Usar `XCDE_INPUT_REPLAY=build/load_walk_ms.txt`; el encabezado `v2-ms` selecciona milisegundos desde la primera muestra de entrada. `XCDE_INPUT_TIME=1` permite registrar entradas con esa unidad. Los ficheros v1 conservan la interpretación por cuadros.
+2. Convertir las rutas conocidas a tiempo: `python tools/tours/timed_route.py tests/routes/load_walk.txt build/load_walk_ms.txt --source-fps 30`. Usar `XCDE_INPUT_REPLAY=build/load_walk_ms.txt`; el encabezado `v2-ms` selecciona milisegundos desde la primera muestra de entrada. `XCDE_INPUT_TIME=1` permite registrar entradas con esa unidad. Los ficheros v1 conservan la interpretación por cuadros.
 3. Comparar 30/60/120/144/165 FPS y sin límite con frame generation desactivado, mismo guardado, resolución, clima, mods y versión de driver. Medir FPS realmente conseguidos y separar el tiempo de cargas. Comparar posiciones/relojes y duración de animaciones a los mismos tiempos de entrada; no comparar el cuadro N entre frecuencias distintas. Tolerancia temporal objetivo: 1 %, considerando la cuantización de una actualización.
 4. Cubrir menús y repetición de teclas, seguidores, cámara, batalla, cinemáticas, transiciones, guardado/carga y Future Connected. Capturar reproducciones de las texturas azules y parpadeos antes/después. Repetir el mismo build dos veces para cuantificar el ruido conocido antes de comparar hashes/imágenes.
 5. En NVIDIA, probar cambios de resolución interna/salida, fullscreen, minimizar/restaurar, FSR/DLSS disponibles y drivers Vulkan 1.3/1.4. En un equipo híbrido, elegir cada GPU por nombre, comprobar el adaptador activo y probar la pérdida/reordenación de adaptadores al reiniciar.

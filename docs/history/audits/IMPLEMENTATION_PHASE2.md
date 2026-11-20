@@ -14,8 +14,8 @@ This phase adds persistent Vulkan adapter policy, a GPU/Vulkan diagnostics tab, 
 - `runtime/ui/menu_vk.cpp`: GPU/Vulkan tab with adapter diagnostics and restart-scoped controls.
 - `xcde.ini`: documented default GPU settings.
 - `tests/unit/test_vk_source_contracts.py`: regression contracts.
-- `tests/gpu/GPU_COMPATIBILITY_MATRIX.md`: per-family hardware acceptance matrix.
-- `tools/collect_gpu_diagnostics.bat`: Windows diagnostic collection helper.
+- `docs/reference/gpu-compatibility-matrix.md`: per-family hardware acceptance matrix.
+- `tools/diag/collect_gpu_diagnostics.bat`: Windows diagnostic collection helper.
 - `docs/history/audits/AUDIT_XDE_COMPILAR_V3_2026-11-02.md`: cumulative audit and remaining limitations.
 
 ## Verification
@@ -25,4 +25,4 @@ This phase adds persistent Vulkan adapter policy, a GPU/Vulkan diagnostics tab, 
 - A standalone C load/save round-trip test for all four GPU settings passed.
 - Full Windows C/C++ build and GPU runtime tests were not possible in this environment. No AMD, NVIDIA, or Intel compatibility certification is claimed.
 
-See `docs/history/audits/AUDIT_XDE_COMPILAR_V3_2026-11-02.md` and `tests/gpu/GPU_COMPATIBILITY_MATRIX.md` before testing.
+See `docs/history/audits/AUDIT_XDE_COMPILAR_V3_2026-11-02.md` and `docs/reference/gpu-compatibility-matrix.md` before testing.

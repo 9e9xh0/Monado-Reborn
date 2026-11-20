@@ -39,7 +39,7 @@ Se instalaron en `build/`: `sl.interposer.dll`, `sl.common.dll`, `sl.dlss.dll`, 
 Para reinstalar el mismo paquete oficial:
 
 ```powershell
-python tools/install_dlss.py
+python tools/package/install_dlss.py
 ```
 
 El instalador verifica el archivo antes de desplegarlo, selecciona exclusivamente las DLL de producción `bin/x64` y rechaza un paquete incompleto, duplicado o con hash incorrecto. El empaquetador local conserva DLL, licencias y manifiesto. Las dependencias Microsoft Visual C++ x64 importadas por Streamline están presentes en System32 en esta máquina; un equipo que no las tenga recibe el error de carga y escalado alternativo.
@@ -59,5 +59,5 @@ Referencias de implementación: [guía oficial de integración manual](https://g
 
 - Se añadieron pruebas sin GPU para selección 1.2/1.3/1.4, fallback, índices de colas SL sin extras y contador a 30/60/120/144/165 FPS. `test_display_options.exe` se ejecutó y aprobó.
 - Se ampliaron los tests de round-trip del INI y los del instalador oficial. La prueba C++ de firma compila, pero Windows bloqueó su ejecución con WinError 4551; la comprobación Authenticode independiente con PowerShell sí se ejecutó y fue válida.
-- Los módulos del runtime y el launcher se compilan con `python tools/validate_port.py --build-ui --compile-only`; este modo informa las pruebas nativas como **no ejecutadas**, sin contarlas como aprobadas. La CI usa el modo normal para ejecutarlas cuando el entorno lo permite.
+- Los módulos del runtime y el launcher se compilan con `python tools/diag/validate_port.py --build-ui --compile-only`; este modo informa las pruebas nativas como **no ejecutadas**, sin contarlas como aprobadas. La CI usa el modo normal para ejecutarlas cuando el entorno lo permite.
 - La máquina disponible tiene una AMD integrada. Falta ejecutar el juego reconstruido en una RTX, comprobar el estado «DLSS Super Resolution disponible», la salida visual a distintas resoluciones y el comportamiento del HUD durante gameplay/FG. No se declara probada la reconstrucción DLSS real ni el juego completo sin ese hardware y los archivos del juego.

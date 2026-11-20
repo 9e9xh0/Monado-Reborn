@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Build the headless boot executable (M3a) from targets/ (dump) with the project venv's zig cc.
-#   1. python tools/gen_all.py            -> generated/{main,sdk}
+#   1. python tools/build/gen_all.py            -> generated/{main,sdk}
 #   2. this script                        -> build/obj/*.o, build/rt/*.o, build/xcde_boot.exe
 #   3. build/xcde_boot.exe targets 15     -> boot log on stderr
 set -e

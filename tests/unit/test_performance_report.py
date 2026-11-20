@@ -3,7 +3,7 @@ from pathlib import Path
 import tempfile
 import unittest
 
-spec = importlib.util.spec_from_file_location('performance_report', Path(__file__).resolve().parents[2] / 'tools/performance_report.py')
+spec = importlib.util.spec_from_file_location('performance_report', Path(__file__).resolve().parents[2] / 'tools/diag/performance_report.py')
 report = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(report)
 

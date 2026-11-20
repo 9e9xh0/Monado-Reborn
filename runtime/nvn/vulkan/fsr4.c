@@ -72,7 +72,7 @@ bool fsr4_available(void) {
         LOG("[fsr4] incompatible native component\n"); fsr4_close(module); api = NULL; return false;
     }
     // The prepared model files: MONADO_FSR4_ASSET_DIR, <executable folder>/fsr4, then the data folder's fsr4/, where
-    // the launcher's "Prepare FSR 4 Lite" (tools/fsr4_prepare.py) puts them on the player's PC.
+    // the launcher's "Prepare FSR 4 Lite" (tools/package/fsr4_prepare.py) puts them on the player's PC.
     const char *dir = getenv("MONADO_FSR4_ASSET_DIR");
     static char beside[4096], data_dir[4096];
     char probe[4300];

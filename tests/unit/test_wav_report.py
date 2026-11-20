@@ -1,7 +1,7 @@
 import math, os, struct, subprocess, sys, tempfile, unittest, wave
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-TOOL = os.path.join(ROOT, 'tools', 'wav_report.py')
+TOOL = os.path.join(ROOT, 'tools', 'media', 'wav_report.py')
 
 
 def write_wav(path, seconds, amp, freq=440.0, rate=48000):

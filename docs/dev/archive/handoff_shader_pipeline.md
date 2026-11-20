@@ -4,7 +4,7 @@
 
 The user is handing this task to the other Claude session. **For this task you own** runtime/nvn/vulkan/exec.c
 (pipeline / prewarm / GPL code only), runtime/nvn/vulkan/precompile.c, runtime/nvn/vulkan/device.c (pipeline cache
-save/load only), data/variants_seed.bin, tools/merge_variants.py and the launcher's precompile button.
+save/load only), data/variants_seed.bin, tools/research/merge_variants.py and the launcher's precompile button.
 The graphics session keeps working in temporal.c, dlss.cpp, shaders.c (post shaders), textures.c, and the
 DLSS / HUD / post-process parts of exec.c (draw_ velocity table, tmp_* calls, post_process). If you need to touch those
 regions, write it in HANDOFF.md "Requests". Same rules as at the top of HANDOFF.md:

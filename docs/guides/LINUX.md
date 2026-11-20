@@ -50,7 +50,8 @@ upscaler is just unavailable (`XCDE_NATIVE_FSR=0` skips both).
   without them its Lanczos table was half 1.0 and stationary detail blurred (`tests/native/test_fsr3_temporal.cpp`).
 - **AMD FSR 4 Lite INT8** (`build/linux/libmonado_fsr4.so`, `scripts/build_fsr4_linux.sh`): a native Vulkan
   implementation of FSR 4.1.2's Lite graph (GPL-2.0-or-later, `third_party/fsr4_native/`, ADR 0012). It needs the
-  Lite model assets, prepared once with `tools/prepare_fsr4_lite.py` from AMD's public SDK 2.4.0 (into
+  Lite model assets, prepared once with the preparation tool (`tools/package/fsr4_prepare.py`, packaged by
+  `tools/build/build_fsr4prep.py`) from AMD's public SDK 2.4.0 (into
   `build/fsr4/assets`, linked as `build/linux/fsr4`), or `MONADO_FSR4_ASSET_DIR`. GPU: push descriptors, int8/int16/fp16
   and integer dot product (Vulkan 1.3); 4K output at most. Without VALVE mixed float dot (Intel ANV, NVIDIA) the
   prepass dots are rewritten to FP32 (`portable_dot.h`); RADV keeps the native shaders.
@@ -62,7 +63,7 @@ component paths.
 ## AppImage (for your own machine)
 
 ```bash
-scripts/build_appimage_linux.sh       # build_linux.sh + tools/make_appimage.py -> build/Monado-x86_64.AppImage
+scripts/build_appimage_linux.sh       # build_linux.sh + tools/package/make_appimage.py -> build/Monado-x86_64.AppImage
 ./Monado-x86_64.AppImage /path/to/dump    # launcher; the dump is remembered
 ./Monado-x86_64.AppImage --play           # the game directly
 ```

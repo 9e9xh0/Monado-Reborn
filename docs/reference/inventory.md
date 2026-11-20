@@ -2,7 +2,7 @@
 
 Source: the 2.0.0 update of a legally owned copy (Patch `0x0100ff500e34a800`, version 262144 = **2.0.0**), program
 `0x0100ff500e34a000`. The update's exefs is complete, so the base game isn't needed for this part.
-Analysis made on 2026-10-17 with `nstool 1.9.2` + `tools/analyze_nso.py`. It only holds counts and API names; nothing
+Analysis made on 2026-10-17 with `nstool 1.9.2` + `tools/research/analyze_nso.py`. It only holds counts and API names; nothing
 of the game's content.
 
 ## 1. Package

@@ -1,6 +1,6 @@
 # M1 evidence (2026-10-17)
 
-- `tools/gen_all.py` generates `main` (0x7000000000) and `sdk` (0x7004000000) from the profile `games/xcde/profile.json`.
+- `tools/build/gen_all.py` generates `main` (0x7000000000) and `sdk` (0x7004000000) from the profile `games/xcde/profile.json`.
 - **Reproducible:** two independent runs give the same hash of the generated tree (`main` db2d12c0…, `sdk` edc36808…),
   11–12 s in all.
 - **Coverage:** see `coverage.md` (0 unsupported instructions in both modules).

@@ -1,4 +1,4 @@
-# kind<TAB>name (or prefix*)<TAB>class<TAB>note. Classes: real | simplified | stub. Read by tools/hle_audit.py.
+# kind<TAB>name (or prefix*)<TAB>class<TAB>note. Classes: real | simplified | stub. Read by tools/diag/hle_audit.py.
 # Only entries that were checked belong here; everything else is reported as "unreviewed".
 svc	0x01	real	SetHeapSize: a heap region capped at HEAP_MAX (3.25 GB)
 svc	0x04	simplified	MapMemory copies instead of remapping (on Horizon the source becomes unmapped)

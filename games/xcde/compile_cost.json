@@ -1,5 +1,5 @@
 {
- "note": "Seconds per chunk from one reference build (tools/gamebuild.py --write-costs). The builder starts the slowest first; a stale file only changes that order.",
+ "note": "Seconds per chunk from one reference build (tools/gamebuild/gamebuild.py --write-costs). The builder starts the slowest first; a stale file only changes that order.",
  "seconds": {
   "main/main_000.c": 5.7,
   "main/main_001.c": 0.2,

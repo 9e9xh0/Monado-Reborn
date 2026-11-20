@@ -48,7 +48,7 @@ set "PY=.venv\Scripts\python.exe"
 if not exist "%PY%" set "PY=python"
 echo.
 echo  Destino: %DEST%
-"%PY%" -X utf8 tools\make_portable.py "%DEST%" %EXTRA%
+"%PY%" -X utf8 tools\package\make_portable.py "%DEST%" %EXTRA%
 if errorlevel 1 goto :fail
 echo.
 choice /m " Abrir la carpeta ahora"

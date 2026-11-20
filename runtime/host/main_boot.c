@@ -179,7 +179,7 @@ int main(int argc, char **argv) {
 #endif
     loader_load(exefs);
     // The recompiled game code: compiled into the executable by a source build, or into the library the launcher
-    // prepares once from the player's own game files (release packages; tools/gamebuild.py).
+    // prepares once from the player's own game files (release packages; tools/gamebuild/gamebuild.py).
     char no_code[256];
     if (!gamelib_load(root, no_code, sizeof no_code)) FATAL("Cannot start the game: %s\n", no_code);
     kernel_init();

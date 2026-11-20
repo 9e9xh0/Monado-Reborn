@@ -18,14 +18,14 @@ What it adds:
 The game code is generated first, as before:
 
 ```bash
-python tools/gen_all.py --out generated     # Windows: .venv/Scripts/python; Linux: .venv/bin/python
+python tools/build/gen_all.py --out generated     # Windows: .venv/Scripts/python; Linux: .venv/bin/python
 ```
 
 CMake picks up the generated chunks by themselves, including chunks that appear or disappear after a generator change. Re-run `gen_all.py` after a new dump or patch change, then build.
 
 ### Windows (Git Bash or PowerShell)
 
-`tools/setup_windows.ps1` installs `cmake` and `ninja` into `.venv` next to `ziglang`.
+`tools/setup/setup_windows.ps1` installs `cmake` and `ninja` into `.venv` next to `ziglang`.
 
 ```bash
 export PATH="$PWD/.venv/Scripts:/c/msys64/ucrt64/bin:$PATH"
@@ -70,29 +70,29 @@ Configure and build files live in `build/cmake/<preset>/`. Deleting that folder 
 from their own dump. Nothing derived from the game is in the package, so it can be published.
 
 The pieces:
-- `tools/gamebuild.py`: the first-start builder. It lifts the code from the dump with `tools/lifter`, compiles it with a
-  bundled `zig cc` at the same flags as a source build (`tools/game_id.py`), and links the library. It reports progress
+- `tools/gamebuild/gamebuild.py`: the first-start builder. It lifts the code from the dump with `tools/lifter`, compiles it with a
+  bundled `zig cc` at the same flags as a source build (`tools/build/game_id.py`), and links the library. It reports progress
   to the launcher and only rebuilds what changed.
-- `tools/game_id.py`: the `GAMELIB_ID` fingerprint of the generator, guest headers and flags. The runtime and the library
+- `tools/build/game_id.py`: the `GAMELIB_ID` fingerprint of the generator, guest headers and flags. The runtime and the library
   must carry the same one, or the library is rebuilt.
-- `tools/gamebuild_stage.py`: copies the builder's inputs (headers, patches, profile, a trimmed zig) to
+- `tools/gamebuild/gamebuild_stage.py`: copies the builder's inputs (headers, patches, profile, a trimmed zig) to
   `build/gamebuild/`.
-- `tools/freeze_gamebuild.py`: turns the builder into one executable with PyInstaller, so players need no Python.
-- `tools/make_appimage.py --release` and `tools/make_portable.py --release`: package it all, and refuse a tree that
-  `tools/package_guard.py` flags.
+- `tools/gamebuild/freeze_gamebuild.py`: turns the builder into one executable with PyInstaller, so players need no Python.
+- `tools/package/make_appimage.py --release` and `tools/package/make_portable.py --release`: package it all, and refuse a tree that
+  `tools/package/package_guard.py` flags.
 
 Linux, by hand (the release workflow does the same):
 
 ```bash
 python -m venv .venv && .venv/bin/pip install ziglang==0.17.1 capstone unicorn lz4 pyinstaller
-.venv/bin/python tools/gamebuild_stage.py --dest build/gamebuild --platform linux
+.venv/bin/python tools/gamebuild/gamebuild_stage.py --dest build/gamebuild --platform linux
 cmake --preset linux -B build/cmake/release -DMONADO_RELEASE=ON && cmake --build build/cmake/release
-.venv/bin/python tools/freeze_gamebuild.py --python .venv/bin/python
-python3 tools/make_appimage.py --release
+.venv/bin/python tools/gamebuild/freeze_gamebuild.py --python .venv/bin/python
+python3 tools/package/make_appimage.py --release
 ```
 
 On Windows, stage with `--platform windows --link-file xcde_imports.a` first (the game library links against the
-executable's exports), use the `windows` preset, and package with `tools/make_portable.py <out> --release`. The package
+executable's exports), use the `windows` preset, and package with `tools/package/make_portable.py <out> --release`. The package
 also carries the x64 MSVC runtime (`msvcp140.dll`, `vcruntime140*.dll`) that `amd_fidelityfx_vk.dll` imports: the
 packager takes it from the Visual Studio redist folder or `System32` and refuses `--release` when it is missing, so FSR 3
 cannot silently fail to load on a PC without the VC++ redistributable.

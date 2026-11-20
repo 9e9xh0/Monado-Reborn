@@ -3,7 +3,7 @@ from pathlib import Path
 import importlib.util
 import unittest
 
-MODULE = Path(__file__).resolve().parents[2] / 'tools/timed_route.py'
+MODULE = Path(__file__).resolve().parents[2] / 'tools/tours/timed_route.py'
 spec = importlib.util.spec_from_file_location('timed_route', MODULE)
 timed_route = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(timed_route)

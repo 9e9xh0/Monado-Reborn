@@ -8,7 +8,7 @@
 - **Determinism (T029):** first version (clock derived from frames): 2.1 % of frames identical between two runs.
   Second version (cooperative scheduler + virtual time + virtual timers, `XCDE_DETERMINISTIC=1`): three title runs
   (35–60 s, 2,299 frames, 2,007 distinct images) with **an identical hash on 100 % of the frames**
-  (`python tools/hash_diff.py a b`). With an input route (`XCDE_INPUT_REPLAY`, A at frame 600) two runs match on
+  (`python tools/diag/hash_diff.py a b`). With an input route (`XCDE_INPUT_REPLAY`, A at frame 600) two runs match on
   2,595/2,595 frames and diverge from the input-less run from frame 603.
   Causes that had to be closed: the wake-up order of host threads, vsync and the end of an audio buffer in real time,
   timeouts on the real clock, asynchronous shader builds (draws dropped until ready), GPU counters and the frame pacer
