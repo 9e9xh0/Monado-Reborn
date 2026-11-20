@@ -4,12 +4,20 @@
 *.c     text eol=lf
 *.h     text eol=lf
 *.cpp   text eol=lf
+*.m     text eol=lf
 *.md    text eol=lf
 *.txt   text eol=lf
 *.tsv   text eol=lf
 *.json  text eol=lf
 *.yml   text eol=lf
+*.cmake text eol=lf
+*.inc   text eol=lf
 *.patch text eol=lf
 *.ps1   text eol=crlf
 *.bat   text eol=crlf
 *.bin   binary
+*.gz    binary
+*.lib   binary
+*.ttf   binary
+# Launcher entry script: no extension, must stay LF on Linux/macOS checkouts.
+packaging/linux/AppRun text eol=lf
