@@ -2,6 +2,7 @@
 // physical cards, sorting, async file jobs and save transactions. This contains
 // authored layout adaptation only; no game implementation or assets.
 #include "../hle.h"
+#include "../settings.h"
 #include "expanded_saves.h"
 
 enum { UI_STATE = 0x90, UI_VISIBLE = 0x88, UI_MODE = 0x8c,
@@ -38,6 +39,13 @@ _Static_assert(XCDE_SAVE_THUMB_BASE + XCDE_SAVE_THUMB_BYTES == XCDE_SAVE_STATE_B
 
 static bool range(uint64_t address, uint64_t bytes) {
     return address >= GUEST_LO && address < GUEST_HI && bytes <= GUEST_HI - address;
+}
+
+// xcde.ini save_slots_99: on keeps this adapter's 100-record list; off leaves the native
+// autosave + three manual records. Read at every native reset, so a launcher change applies
+// the next time the game starts.
+bool xcde_expanded_saves_enabled(void) {
+    return g_settings.save_slots_99;
 }
 
 static uint64_t native_call(Cpu *c, uint64_t function, uint64_t x0, uint64_t x1) {
@@ -88,19 +96,29 @@ static uint64_t checked_ui(uint64_t ui, uint32_t *story) {
 
 void xcde_expanded_saves_initialize(Cpu *c) {
     uint64_t state = c->x[20];
+    bool expanded = xcde_expanded_saves_enabled();
     if ((state & 15) || !range(state, XCDE_SAVE_STATE_BYTES)
             || c->x[0] != state + XCDE_SAVE_RECORD_BASE
             || LD32(state + XCDE_SAVE_COUNT_OFFSET) != XCDE_SAVE_RECORD_COUNT)
         FATAL("[expanded-saves] native save allocation/layout mismatch\n");
     // This checked site runs once after a fresh native constructor/reset, before
     // any asynchronous metadata load. No borrowed or loaded string can alias.
-    for (uint32_t i = 0; i < 4; ++i) {
+    for (uint32_t i = 0; i < XCDE_SAVE_NATIVE_RECORD_COUNT; ++i) {
         uint64_t record = state + XCDE_SAVE_RECORD_BASE + i * XCDE_SAVE_RECORD_STRIDE;
         if (LD64(record + 0x18) || LD32(record + 0x3c) || LD32(record + 0x40) != 1
                 || LD16(record + 0x44) != (i ? i - 1 : 0)
                 || LD8(record + 0x46) != (i == 0) || LD8(record + 0x47)
                 || LD8(record + 0x48) || LD8(record + 0x49) != 1 || LD8(record + 0x4a))
             FATAL("[expanded-saves] native empty-record template changed\n");
+    }
+    if (!expanded) {
+        // The checked constructor always reserves the larger state and writes 100.
+        // Turn that into the game's own list again: four logical records (autosave
+        // plus three manual) and the native sort end. Rows 0..3 are already the
+        // native ones; no extended row, binding or scan is created or touched.
+        ST32(state + XCDE_SAVE_COUNT_OFFSET, XCDE_SAVE_NATIVE_RECORD_COUNT);
+        c->x[1] = state + XCDE_SAVE_NATIVE_RECORD_END;
+        return;
     }
     pthread_mutex_lock(&save_lock);
     SaveBinding *b;
@@ -151,6 +169,7 @@ void xcde_expanded_saves_initialize(Cpu *c) {
 }
 
 void xcde_expanded_saves_forget(uint64_t state) {
+    if (!xcde_expanded_saves_enabled()) return;  // Nothing was bound to this state.
     // LINUX-036: collect one bounded summary without retaining a guest pointer.
     SaveScanStats scan = {0};
     uint32_t story = 0;
@@ -351,6 +370,7 @@ static void scan_pump(Cpu *c, uint64_t ui, uint64_t state) {
 }
 
 void xcde_expanded_saves_pump(Cpu *c, uint64_t ui, uint64_t state) {
+    if (!xcde_expanded_saves_enabled()) return;  // Native cadence only.
     // LINUX-036: preserve even the original call's volatile results and FP state;
     // only native memory effects of approved extra metadata reads are retained.
     Cpu saved = *c;
@@ -369,6 +389,7 @@ void xcde_expanded_saves_remember(uint32_t story, uint16_t file_id, bool autosav
 }
 
 void xcde_expanded_saves_capture(Cpu *c) {
+    if (!xcde_expanded_saves_enabled()) return;  // The native remembered slot stays authoritative.
     uint32_t story;
     uint64_t ui = c->x[0], state = checked_ui(ui, &story);
     int32_t selected = (int32_t)LD32(ui + UI_SELECTED);
@@ -385,6 +406,11 @@ void xcde_expanded_saves_capture(Cpu *c) {
 }
 
 void xcde_expanded_saves_legacy_set(Cpu *c) {
+    if (!xcde_expanded_saves_enabled()) {
+        // This hook replaced the native BL; keep its exact argument and effect.
+        (void)native_call(c, 0x7000081980ull, c->x[0], c->x[1]);
+        return;
+    }
     uint32_t story;
     uint64_t state = c->x[19];
     uint32_t slot = (uint32_t)c->x[1];
@@ -397,6 +423,12 @@ void xcde_expanded_saves_legacy_set(Cpu *c) {
 }
 
 void xcde_expanded_saves_default(Cpu *c) {
+    if (!xcde_expanded_saves_enabled()) {
+        // The native getter's nibble and the native 0..3 selection, as before the feature.
+        uint32_t legacy = (uint32_t)native_call(c, 0x70000819d0ull, c->x[0], 0);
+        c->x[0] = legacy > XCDE_SAVE_NATIVE_SELECTED_MAX ? XCDE_SAVE_NATIVE_SELECTED_MAX : legacy;
+        return;
+    }
     uint64_t sequence = c->x[19];
     if (!range(sequence, 0x138)) FATAL("[expanded-saves] invalid save sequence\n");
     uint32_t story;

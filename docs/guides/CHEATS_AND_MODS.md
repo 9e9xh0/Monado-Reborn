@@ -42,9 +42,15 @@ were ever cut short.
 
 ## 99 manual save slots
 
-The Save and Load lists hold 99 manual slots plus the autosave. The game keeps its four-card view. Only the
-logical record list and the separate CPU thumbnail arena are larger. Title *Continue* and the title's save-presence
-check scan the extra files too. Files keep the game's own names and format. This is always on.
+On by default. The Save and Load lists hold 99 manual slots plus the autosave. The game keeps its four-card view. Only
+the logical record list and the separate CPU thumbnail arena are larger. Title *Continue* and the title's save-presence
+check scan the extra files too. Files keep the game's own names and format.
+
+Turn it off in the launcher (Cheats → Save files) or with `save_slots_99 = 0` in `xcde.ini`, before starting the game.
+The game's own list returns: the autosave plus three manual slots (files `00`–`02`), and *Continue* and the save-presence
+check only look at those. Saves in slots 4–99 stay in `save/` but are not listed until the option is turned back on;
+while it is off, new saves use the native slots. The larger buffers stay reserved, but every save-list, sort and
+title-scan path uses the native records.
 
 ## Dedicated Quick Step gem slot (launcher → Controls)
 

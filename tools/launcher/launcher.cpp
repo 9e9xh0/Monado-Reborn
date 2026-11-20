@@ -163,6 +163,7 @@ struct Cfg {
     bool cut_fg = false;    // T224: cutscenes at 30 + frame generation, gameplay without it (xcde.ini cutscenes = 30fg)
     bool party_switch = false;  // party mod: switch the controlled character (F2 / L2 + L1 / R1), runtime/hle/party.c
     bool quickstep_slot = false; // dedicated Quick Step gem slot (Monado II port), runtime/hle/quickstep_*.c
+    bool save_slots_99 = true;   // 99 manual save slots (Monado II port), runtime/hle/expanded_saves.c; false = native
     float run_speed = 1.0f;     // GitHub #100: player movement multiplier (1, 1.5, 2), runtime/hle/party.c
     Settings cheats = {};       // [XCDE] Monado II cheats: only the cheat_* fields are used; the controls, keys and
                                 // validation are the game's (runtime/cheats_options.h)
@@ -450,6 +451,16 @@ static const char *const k_en[][2] = {
     {"Nombre no válido: usa letras, números y _ (sin empezar por un número).",
      "Invalid name: use letters, digits and _ (not starting with a digit)."},
     {"No se pudieron guardar los ajustes", "Could not save the settings"},
+    {"Partidas guardadas", "Save files"},
+    {"99 ranuras de guardado manuales (además del autoguardado)", "99 manual save slots (plus the autosave)"},
+    {"El juego muestra cuatro tarjetas y permite 99 partidas manuales. Desactivado, vuelve a\n"
+     "sus 3 ranuras manuales nativas más el autoguardado.\n"
+     "Se aplica al iniciar el juego. Las partidas de las ranuras 04-99 siguen en save/, pero\n"
+     "no se listan hasta volver a activarlo.",
+     "The game shows four cards and allows 99 manual saves. Off, it goes back to\n"
+     "its native 3 manual slots plus the autosave.\n"
+     "Applies when the game starts. Saves in slots 04-99 stay in save/ but\n"
+     "are not listed until it is turned back on."},
 };
 static const char *T(const char *es) {
     if (g.ui_lang != 1) return es;
@@ -618,6 +629,7 @@ static void load() {
         else if (!strcmp(k, "cutscenes")) { g.cutscenes = !strcmp(v, "30") || !strcmp(v, "30fg") ? 1 : 0; g.cut_fg = !strcmp(v, "30fg"); }
         else if (!strcmp(k, "party_switch")) g.party_switch = atoi(v) != 0;
         else if (!strcmp(k, "quickstep_slot")) g.quickstep_slot = !strcmp(v, "1") || !strcmp(v, "true");
+        else if (!strcmp(k, "save_slots_99")) g.save_slots_99 = !strcmp(v, "1") || !strcmp(v, "true");
         else if (!strcmp(k, "run_speed")) { float x = (float)atof(v); g.run_speed = x < 1.0f ? 1.0f : x > 2.0f ? 2.0f : x; }
         // [XCDE] Monado II cheats: the same keys and value rules as the game (runtime/host/settings_ini.c)
 #define LOAD_CHEAT(name, minimum) \
@@ -708,6 +720,7 @@ static bool save() {
     fprintf(f, "cutscenes = %s\n", g.cut_fg ? "30fg" : g.cutscenes ? "30" : "same");
     fprintf(f, "party_switch = %d\n", g.party_switch);
     fprintf(f, "quickstep_slot = %d\n", g.quickstep_slot);
+    fprintf(f, "save_slots_99 = %d\n", g.save_slots_99);
     fprintf(f, "run_speed = %.2f\n", g.run_speed);
     // [XCDE] Monado II cheats: out-of-range multipliers are written as 1.00x, as the game does (settings_ini.c)
 #define SAVE_CHEAT(name, minimum) fprintf(f, "cheat_" #name " = %d\ncheat_" #name "_percent = %d\n", \
@@ -2129,6 +2142,12 @@ static void tab_controls() {
 static void tab_cheats() {
     ImGui::TextDisabled(g.ui_lang ? "Options that are not part of the original game. They apply when the game starts."
                                   : "Opciones que no forman parte del juego original. Se aplican al iniciar el juego.");
+    ImGui::SeparatorText(T("Partidas guardadas"));
+    ImGui::Checkbox(T("99 ranuras de guardado manuales (además del autoguardado)"), &g.save_slots_99);
+    ImGui::SetItemTooltip("%s", T("El juego muestra cuatro tarjetas y permite 99 partidas manuales. Desactivado, vuelve a\n"
+                                  "sus 3 ranuras manuales nativas más el autoguardado.\n"
+                                  "Se aplica al iniciar el juego. Las partidas de las ranuras 04-99 siguen en save/, pero\n"
+                                  "no se listan hasta volver a activarlo."));
     ImGui::SeparatorText(g.ui_lang ? "Movement" : "Movimiento");
     static const char *rs_ui[] = {"Normal (x1)", "Rápida (x1.5)", "Muy rápida (x2)"};
     static const float rs_val[] = {1.0f, 1.5f, 2.0f};

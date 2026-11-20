@@ -119,6 +119,7 @@ typedef struct {
         cheat_sp_percent, cheat_gold_percent, cheat_enemy_health_percent;  // 100 = 1.00x (0..2000; enemy health 10..2000)
     bool cheat_no_fall_damage;
     bool quickstep_slot; // [XCDE] dedicated character-owned Quick Step gem slot (Monado II port, runtime/hle/quickstep_*.c), opt-in
+    bool save_slots_99;  // [XCDE] 99 manual save slots (Monado II port, runtime/hle/expanded_saves.c): false = the native three + autosave
 } Settings;
 
 enum { N_TUNIC_COLOURS = 13, N_HEART_COLOURS = 9 };
