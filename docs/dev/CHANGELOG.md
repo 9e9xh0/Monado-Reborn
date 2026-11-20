@@ -38,3 +38,19 @@ of `tasks.md`; do not move them, they are the record.
 - Deferred: `tools/lifter/tests/test_simd.py` is still broken (it references a `test_simd_harness.c` that was never
   committed) and neither it nor `test_lift.py` can run here (no Unicorn/Capstone); Windows-only build paths were not
   executed locally.
+
+## 2026-11-20 — cleanup follow-ups and decisions (Phase 3)
+
+- Proposed [ADR 0013](../adr/0013-variant-seed-publication.md): a narrow, explicit Article I exception for
+  `data/variants_seed.bin` (numeric pipeline-state keys only, reproducible with `tools/research/merge_variants.py`;
+  no game content). The ADR is **Proposed**: accepting it needs a one-line Article I amendment plus the changelog
+  entry that Article I requires.
+- Removed the orphan Vulkan 1.1 compatibility header (`vk_compat`; its implementation and test were deleted in Phase 2) and the
+  stale `host_menu_stub.o` cleanup line from `scripts/build_rt_gfx.sh`.
+- Verified on the cleaned tree: `bash scripts/ci.sh` (113 unit tests, package guard), `tools/check_docs.py`,
+  `tools/check_paths.py`, `tools/diag/hle_audit.py --check`, `package_guard --git`, a runtime-only CMake build and a
+  release-mode `monado_launcher` build.
+- Left open as decisions (not cleanup): consolidating the four hand-synced build paths, shipping `LICENSE`/`NOTICE`
+  and the GPL notice for the FSR 4 Lite capture tooling in release packages, pruning merged remote branches and
+  normalizing tag names, and pinning GitHub Actions / unifying the CI Python version.
+

@@ -18,3 +18,4 @@ supersedes it.
 | [0010](0010-diagnostics-from-m1.md) | Diagnostics from M1 | Accepted | 2026-10-17 |
 | [0011](0011-performance-quality-ui.md) | Conservative optimization and explicit quality | Implemented | 2026-11-04 |
 | [0012](0012-native-fsr4-lite.md) | Optional native FSR 4.1.2 Lite INT8 (Linux) | Accepted | 2026-11-13 |
+| [0013](0013-variant-seed-publication.md) | Publish the precompilation variant seed despite Article I | Proposed | 2026-11-20 |
