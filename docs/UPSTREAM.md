@@ -58,3 +58,10 @@ drawn with another frame's vertex data. Both are inert on Linux, where the verte
 
 Details, symptoms, diagnostics and limits:
 [summary.md](evidence/2026-11-10-vertex-corruption/summary.md).
+
+## 2026-11-20 — T273 (GitHub #183)
+
+- `runtime/nvn/vulkan/exec.c`: the screen fade the load screen paints over the picture (0 textures, the whole guest
+  target, drawn after every other window draw) is classified as a full-window composite instead of a 16:9-boxed UI
+  draw, so on an ultrawide window a skip travel no longer leaves the destination field visible at the sides while the
+  box is black. `XCDE_LOAD_FADE_WIDE=0` is the A/B opt-out.
