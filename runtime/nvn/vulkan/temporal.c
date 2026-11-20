@@ -58,7 +58,7 @@ static bool ffx_load(void) {
         DWORD e = GetLastError();
         // [XCDE] T-FSR3-LOAD: "not found" said nothing: ERROR_MOD_NOT_FOUND (126) also means a DLL it imports is
         // missing. amd_fidelityfx_vk.dll imports msvcp140.dll / vcruntime140*.dll (the x64 VC++ 2015-2022
-        // redistributable, which is NOT part of Windows); tools/make_portable.py bundles them beside the exe.
+        // redistributable, which is NOT part of Windows); tools/package/make_portable.py bundles them beside the exe.
         if (e == ERROR_MOD_NOT_FOUND)
             LOG("[tmp] amd_fidelityfx_vk.dll cannot load: it or one of the DLLs it needs is missing (x64 VC++ 2015-2022 "
                 "runtime: msvcp140.dll, vcruntime140.dll, vcruntime140_1.dll): FSR 3 unavailable (error %lu)\n", (unsigned long)e);
@@ -192,7 +192,7 @@ void tmp_jitter(float j[2]) {
 
 // [XCDE][FSR3] GitHub #14: XCDE_TMP_NOJITTER proved the whole-image trembling is our jitter not matching what the
 // upscaler undoes (option 11: both at 0 = image steady). AMD's own sample defines the contract as
-//   jitterX = +2*j/width, jitterY = -2*j/height   (docs/techniques: "Calculate the jittered projection matrix")
+//   jitterX = +2*j/width, jitterY = -2*j/height   (AMD FidelityFX FSR sample: "Calculate the jittered projection matrix")
 // i.e. a positive jitterOffset.y is supposed to shift the image DOWN on screen in the D3D (NDC y up) world the
 // sample was written for. Our draws move the Vulkan viewport (framebuffer y downward): the mapping of positive Y is
 // the opposite of NDC y up. XCDE_TMP_JIT_SIGN picks what we declare (and never what the draws do):

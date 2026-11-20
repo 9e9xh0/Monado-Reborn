@@ -1,6 +1,6 @@
 @echo off
-rem Monado: set up the tools (tools\setup_windows.ps1), point the project at your own game files
-rem (tools\setup_game_files.ps1) and build everything (scripts\build_all.sh). Instructions on how to obtain the game
+rem Monado: set up the tools (tools\setup\setup_windows.ps1), point the project at your own game files
+rem (tools\setup\setup_game_files.ps1) and build everything (scripts\build_all.sh). Instructions on how to obtain the game
 rem files are NOT provided: you need the exefs and romfs folders of your own copy, version 2.0.0.
 setlocal EnableExtensions
 cd /d "%~dp0"
@@ -28,7 +28,7 @@ if defined SETUP (
     echo  1. The build tools are not set up yet ^(MSYS2 with SDL3, FFmpeg, Vulkan, shaderc, Opus; Python 3.12^).
     choice /m "    Install them now (winget + pacman + pip, a few GB)"
     if errorlevel 2 goto :fail
-    powershell -NoProfile -ExecutionPolicy Bypass -File tools\setup_windows.ps1
+    powershell -NoProfile -ExecutionPolicy Bypass -File tools\setup\setup_windows.ps1
     if errorlevel 1 goto :fail
 ) else (
     echo  1. Build tools: ready
@@ -45,7 +45,7 @@ if not errorlevel 2 goto :build
 echo.
 echo  2. Choose the folder that has the game's exefs and romfs folders in it.
 echo     ^(Xenoblade Chronicles: Definitive Edition, version 2.0.0: the base game with the 2.0.0 update applied^)
-powershell -NoProfile -ExecutionPolicy Bypass -File tools\setup_game_files.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File tools\setup\setup_game_files.ps1
 if errorlevel 2 goto :fail
 if errorlevel 1 (
     choice /m "    Choose another folder"

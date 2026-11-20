@@ -1,7 +1,7 @@
 import os, subprocess, sys, tempfile, unittest
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-sys.path.insert(0, os.path.join(ROOT, 'tools'))
+sys.path.insert(0, os.path.join(ROOT, 'tools', 'diag'))
 import hash_diff  # noqa: E402
 import hle_audit  # noqa: E402
 
@@ -25,7 +25,7 @@ class HashDiffTest(unittest.TestCase):
 
 class HleAuditTest(unittest.TestCase):
     def test_audit_is_current(self):
-        r = subprocess.run([sys.executable, '-X', 'utf8', os.path.join(ROOT, 'tools', 'hle_audit.py'), '--check'],
+        r = subprocess.run([sys.executable, '-X', 'utf8', os.path.join(ROOT, 'tools', 'diag', 'hle_audit.py'), '--check'],
                            capture_output=True, text=True)
         self.assertEqual(r.returncode, 0, r.stderr)
 

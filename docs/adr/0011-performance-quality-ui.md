@@ -1,11 +1,19 @@
-# ADR 0011 — Optimización conservadora y calidad explícita
+# ADR 0011 — Conservative optimization and explicit quality
 
-Estado: implementado, aceptación jugable ampliada pendiente. Fecha: 2026-11-04. Tareas: T259–T261.
+- **Status:** Implemented · **Date:** 2026-11-04
+- **Tasks:** T259–T261
 
-Se amplían las cachés/filtrado de estado existentes, conservando claves completas y la vida útil GPU. Los recursos temporales se reutilizan en CPU y los índices auxiliares sustituyen búsquedas lineales sin cambiar su precedencia. No se eliminan barreras, clears ni escrituras observables para reducir llamadas.
+The existing caches and state filtering are extended, keeping complete keys and the GPU lifetime. Temporary
+resources are reused on the CPU and auxiliary indices replace linear searches without changing their precedence. No
+barriers, clears or observable writes are removed to reduce calls.
 
-La calidad es una acción compartida por ambos frontends, independiente del objetivo FPS. La resolución dinámica usa límites absolutos para que una salida 4K no convierta un perfil de integrada en renderizado 1080p mínimo. No se aplican perfiles al cargar archivos antiguos ni se recortan nuevos efectos por defecto sin aceptación visual.
+Quality is an action shared by both frontends, independent of the FPS target. Dynamic resolution uses absolute limits
+so that a 4K output does not turn an integrated-GPU profile into a 1080p minimum render. Profiles are not applied
+when loading old files and new effects are not cut by default without visual acceptance.
 
-Se conserva Dear ImGui/SDL y se comparte un tema sencillo. No se añade una segunda plataforma UI, texturas decorativas ni animaciones que consuman recursos mientras se juega.
+Dear ImGui/SDL is kept and a simple theme is shared. No second UI platform, decorative textures or animations that
+consume resources while playing are added.
 
-La medición distingue cuadros nativos, instrumentación detallada y observación ligera. Se exige igualdad visual y comparación reproducible antes de afirmar mejoras de FPS. Clang local sirve para verificar este entorno; no sustituye la decisión del compilador predeterminado de ADR 0007.
+Measurement distinguishes native frames, detailed instrumentation and lightweight observation. Visual equality and a
+reproducible comparison are required before claiming FPS improvements. Local Clang serves to verify this environment;
+it does not replace ADR 0007's decision on the default compiler.

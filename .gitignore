@@ -1,26 +1,51 @@
-# Derived from the game: NEVER published (CONTRIBUTING.md, art. I)
-targets/
-build/
-generated/
-dump/
+# Derived from the game: NEVER published (CONTRIBUTING.md, art. I).
+# Root-anchored on purpose: only the top-level copies are local game data / build output.
+/targets/
+/build/
+/generated/
+/dump/
+/cache/
+/crash/
+/play/
+/reports/
+/save/
+/saves/
+/mods/
+/sdk/
+/ref/
+/dist/
+
+# Machine-local settings written by the launcher / portable runs.
+xcde.ini
+xcde_env.ini
+launcher_update.ini
+
+# Game package formats and keys: never commit.
 *.nsp
 *.xci
 *.nca
 *.nsz
 *.xcz
 *.keys
+
+# Build output and editor/tool leftovers outside build/.
 *.log
+*.proftext
+*.bak
+*.orig
+*.rej
+*.exe
+*.dll
+*.pdb
+cmake-build-*/
 __pycache__/
 .venv/
-cache/
-save/
-build/
-crash/
-play/
-xcde.ini
-xcde_env.ini
-mods/
-reports/
-sdk/
-saves/
-ref/
+
+# Local tooling state.
+.agents/
+.vscode/
+.idea/
+.vs/
+node_modules/
+.DS_Store
+Thumbs.db

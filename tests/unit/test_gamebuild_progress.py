@@ -8,7 +8,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..', 'tools'))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..', 'tools', 'gamebuild'))
 # The lifter needs unicorn and these tests never lift: a stand-in for the import, taken out again at once so the
 # lifter's own tests (test_jumptables) still see whether the real one is installed.
 _stub = 'gen' not in sys.modules

@@ -25,12 +25,12 @@
   through **`audout:u`**: stereo PCM16 48 kHz, 0x1000-byte buffers (1,024 frames), `Start`, `AppendAudioOutBuffer`,
   `GetReleasedAudioOutBuffers`.
 - Dump: `LARECOMP_AUDOUT_WAV=<path>` (a valid PCM16 WAV; one file per `IAudioOut`) and
-  `python tools/wav_report.py <wav>`. A 65 s capture in real time (≈ 0.7× before: `nanosleep` rounded to the 15.6 ms
+  `python tools/media/wav_report.py <wav>`. A 65 s capture in real time (≈ 0.7× before: `nanosleep` rounded to the 15.6 ms
   tick; absolute deadlines now): silence 0–12 s (loading), then a tonal signal (peaks ≈ 349 Hz, 469/936 Hz),
   0 clipped samples, no DC. WAVs are not versioned (`build/` is ignored).
 
 ### Audio against a reference (T059, 2026-10-17)
-Reference: a recording of the title music (not versioned). `python tools/wav_compare.py build/audout.wav ref.wav`:
+Reference: a recording of the title music (not versioned). `python tools/media/wav_compare.py build/audout.wav ref.wav`:
 - The same dominant notes (A#, D, F, D#/G) and a mean chroma cosine of **0.92**; with the best time alignment the
   per-second cosine rises from 0.50 to 0.81 over the last 20 s.
 - Almost the same energy split by band (300 Hz–1 kHz ≈ 58 % in both). The reference's mean level is ≈ −40 dBFS: the

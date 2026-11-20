@@ -2,7 +2,7 @@
 # [XCDE] T-LINUX: native Linux x86-64 build of the same runtime and game code as the Windows build.
 # Windows and Linux objects never mix (build/linux/). Needs clang, pkg-config and the development packages of
 # SDL3, Vulkan, shaderc, opus, FFmpeg and zlib, plus the Vulkan Memory Allocator header (VMA_INCLUDE_DIR if it
-# is not installed system-wide) and .venv with capstone unicorn lz4 (see docs/LINUX.md).
+# is not installed system-wide) and .venv with capstone unicorn lz4 (see docs/guides/LINUX.md).
 #   scripts/build_linux.sh                # dump in targets/ -> generated/ -> build/linux/monado
 #   scripts/build_linux.sh --runtime-only # compile the runtime only (no game files needed)
 #   scripts/build_linux.sh --check        # check the build dependencies
@@ -36,11 +36,11 @@ rtdir=build/linux/rt
 if [[ ${XCDE_NATIVE_FSR:-1} != 0 ]]; then
   scripts/build_fsr3_linux.sh || echo 'warning: native FSR 3 not built (needs git, glslangValidator; see third_party/fsr3_native/README.md)' >&2
   scripts/build_fsr4_linux.sh || echo 'warning: native FSR 4 Lite not built (see third_party/fsr4_native/README.md)' >&2
-  # FSR 4 Lite model assets (tools/prepare_fsr4_lite.py, once) are looked up beside the executable
+  # FSR 4 Lite model assets (tools/package/fsr4_prepare.py, once) are looked up beside the executable
   [[ ! -d build/fsr4/assets/lite || -e build/linux/fsr4 ]] || ln -s ../fsr4/assets build/linux/fsr4
 fi
 mkdir -p "$rtdir" build/linux/game build/inc
-python3 tools/gen_smaa_inc.py third_party/smaa/SMAA.hlsl build/inc/smaa_hlsl.inc
+python3 tools/build/gen_smaa_inc.py third_party/smaa/SMAA.hlsl build/inc/smaa_hlsl.inc
 objects=()
 # The units of scripts/build_rt_gfx.sh, with the Linux platform layer.
 rt=(loader dispatch kernel ipc fnprof platform/linux services/fs services/romfs_virtual services/am services/acc services/time
@@ -72,7 +72,7 @@ for f in "${cpp[@]}"; do
   objects+=("$obj")
 done
 [[ $mode != --runtime-only ]] || { echo 'Linux runtime compiled (game files not needed)'; exit 0; }
-"$PYTHON" tools/gen_all.py --out generated
+"$PYTHON" tools/build/gen_all.py --out generated
 jobs=${JOBS:-$(nproc)}
 [[ $jobs =~ ^[1-9][0-9]*$ ]] || { echo 'JOBS must be a positive integer' >&2; exit 2; }
 pending=()

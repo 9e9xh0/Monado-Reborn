@@ -1,4 +1,4 @@
-// Profile-guided build (docs/PGO.md). An instrumented build (cmake -DMONADO_PGO=gen) adds its counts to
+// Profile-guided build (docs/guides/PGO.md). An instrumented build (cmake -DMONADO_PGO=gen) adds its counts to
 // build/pgo/raw/default_<id>.profraw once a minute, so a training session that crashes or is killed still leaves
 // them, and again when the process ends (plat_terminate: its _exit / TerminateProcess skip LLVM's atexit writer).
 // After TotK Recomp's runtime/platform win32.c. In other builds these are empty.

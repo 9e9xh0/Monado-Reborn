@@ -1,5 +1,5 @@
-// [XCDE] Party mod: Xenoblade 3-style switching of the controlled character (docs/plan_party_switch.md,
-// docs/party_switch_research.md). The game's own leader change, as its Party menu does it on closing: the live party
+// [XCDE] Party mod: Xenoblade 3-style switching of the controlled character (docs/history/plans/plan_party_switch.md,
+// docs/history/plans/party_switch_research.md). The game's own leader change, as its Party menu does it on closing: the live party
 // list (u16 character ids, leader first; u32 count at +0x18) is reordered and the party manager's set-leader routine
 // rebuilds the player's control (pad, camera, action handlers) on the new leader; the old one becomes a follower.
 //   f_70000b6790(party manager)    -> the live party list (game data + 0x1545e0)

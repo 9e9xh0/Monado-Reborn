@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Like drive.sh but passes extra env from the caller; retries on the startup "not free" race (T135).
+# Deterministic drive with extra env from the caller; retries on the startup "not free" race (T135).
 # Runs ${XCDE_EXE:-build/xcde_dev.exe} (a test copy: the user's build/xcde.exe is never killed or relinked under a
 # running game) and stops by itself after the last capture. Several drives can run at once (distinct names).
 #   DRIVE_EXE=<exe>  run another exe (default build/xcde_dev.exe, copied from build/xcde.exe when older or missing)

@@ -2,20 +2,20 @@
 # (scripts/build_rt_gfx.sh + build_boot.sh + link_gfx.sh + tools/launcher/build.sh on Windows,
 #  scripts/build_linux.sh + tools/launcher/build_linux.sh on Linux), with the same compilers and flags.
 #
-#   tools/gen_all.py --out generated               # game code: first, and again after a new dump or patch change
+#   tools/build/gen_all.py --out generated               # game code: first, and again after a new dump or patch change
 #   cmake --preset windows    (or linux, linux-zig)
 #   cmake --build --preset windows
 #
 # Ninja tracks header dependencies, compiles in parallel and rebuilds only what changed. The executables land where
 # the launchers expect them: build/xcde.exe + build/xcde_launcher.exe (Windows), build/linux/monado +
-# build/linux/monado-launcher (Linux). See docs/BUILD-CMAKE.md.
+# build/linux/monado-launcher (Linux). See docs/guides/BUILD-CMAKE.md.
 cmake_minimum_required(VERSION 3.21)
 project(Monado LANGUAGES C CXX)
 
 set(ROOT "${CMAKE_CURRENT_SOURCE_DIR}")
 option(MONADO_RUNTIME_ONLY "Compile the runtime only (no generated game code, no link)" OFF)
-# Release packages (docs/BUILD-CMAKE.md): the executable holds no game code. It loads lasgame.so / lasgame.dll, which
-# the launcher builds once from the player's own dump (tools/gamebuild.py); nothing derived from the game ships.
+# Release packages (docs/guides/BUILD-CMAKE.md): the executable holds no game code. It loads lasgame.so / lasgame.dll, which
+# the launcher builds once from the player's own dump (tools/gamebuild/gamebuild.py); nothing derived from the game ships.
 option(MONADO_RELEASE "Runtime without game code: loads the game library the launcher builds on first start" OFF)
 # GitHub #119: the version the launcher shows and compares with the latest GitHub release (the release workflow passes
 # the tag's version; "dev" = a local build, which checks only when asked)
@@ -29,9 +29,9 @@ else()
 endif()
 find_package(Python3 REQUIRED COMPONENTS Interpreter)
 
-# Optimisation level of the generated game code and the C runtime, and the profile-guided build (docs/PGO.md, after
+# Optimisation level of the generated game code and the C runtime, and the profile-guided build (docs/guides/PGO.md, after
 # TotK Recomp's docs/pgo.md). MONADO_PGO=gen instruments both: the game adds its counts to build/pgo/raw/*.profraw
-# every minute and at exit; tools/pgo.py merge turns them into a .profdata. MONADO_PGO=<file.profdata> compiles with it.
+# every minute and at exit; tools/build/pgo.py merge turns them into a .profdata. MONADO_PGO=<file.profdata> compiles with it.
 set(MONADO_OPT "O1" CACHE STRING "Optimisation level of the game code and the C runtime: O1 or O2 (a PGO build uses O2)")
 set(MONADO_PGO "" CACHE STRING "Profile-guided build: empty (off), gen (instrumented build), or a .profdata file")
 set(PGO_FLAGS)
@@ -87,12 +87,12 @@ endif()
 set(RT_SOURCES)
 if(MONADO_RELEASE)
   list(APPEND RT_UNITS gamelib)
-  # GAMELIB_ID: the fingerprint of the generator, guest headers and guest flags (tools/game_id.py). The first-start
+  # GAMELIB_ID: the fingerprint of the generator, guest headers and guest flags (tools/build/game_id.py). The first-start
   # builder stamps the library with the same one; the runtime loads no other.
-  execute_process(COMMAND "${Python3_EXECUTABLE}" tools/game_id.py WORKING_DIRECTORY "${ROOT}"
+  execute_process(COMMAND "${Python3_EXECUTABLE}" tools/build/game_id.py WORKING_DIRECTORY "${ROOT}"
                   OUTPUT_VARIABLE GAMELIB_ID OUTPUT_STRIP_TRAILING_WHITESPACE RESULT_VARIABLE _gid)
   if(NOT _gid EQUAL 0 OR NOT GAMELIB_ID)
-    message(FATAL_ERROR "tools/game_id.py failed")
+    message(FATAL_ERROR "tools/build/game_id.py failed")
   endif()
   message(STATUS "release runtime, GAMELIB_ID ${GAMELIB_ID}")
 else()
@@ -110,16 +110,16 @@ endforeach()
 set(GEN_INC "${CMAKE_BINARY_DIR}/inc")
 add_custom_command(OUTPUT "${GEN_INC}/smaa_hlsl.inc"
   COMMAND "${CMAKE_COMMAND}" -E make_directory "${GEN_INC}"
-  COMMAND "${Python3_EXECUTABLE}" tools/gen_smaa_inc.py third_party/smaa/SMAA.hlsl "${GEN_INC}/smaa_hlsl.inc"
-  DEPENDS tools/gen_smaa_inc.py third_party/smaa/SMAA.hlsl WORKING_DIRECTORY "${ROOT}" VERBATIM)
+  COMMAND "${Python3_EXECUTABLE}" tools/build/gen_smaa_inc.py third_party/smaa/SMAA.hlsl "${GEN_INC}/smaa_hlsl.inc"
+  DEPENDS tools/build/gen_smaa_inc.py third_party/smaa/SMAA.hlsl WORKING_DIRECTORY "${ROOT}" VERBATIM)
 set_source_files_properties(runtime/nvn/smaa_data.c PROPERTIES OBJECT_DEPENDS "${GEN_INC}/smaa_hlsl.inc")
 
 if(NOT MONADO_RUNTIME_ONLY AND NOT MONADO_RELEASE)
-  # (another folder of tools/gen_all.py output, for A/B builds of a lifter change)
-  set(MONADO_GENERATED "${ROOT}/generated" CACHE PATH "Folder with the generated game code (tools/gen_all.py --out)")
+  # (another folder of tools/build/gen_all.py output, for A/B builds of a lifter change)
+  set(MONADO_GENERATED "${ROOT}/generated" CACHE PATH "Folder with the generated game code (tools/build/gen_all.py --out)")
   file(GLOB GAME_SOURCES CONFIGURE_DEPENDS "${MONADO_GENERATED}/main/*.c" "${MONADO_GENERATED}/sdk/*.c")
   if(NOT GAME_SOURCES OR NOT EXISTS "${MONADO_GENERATED}/main/main_id.h")
-    message(FATAL_ERROR "generated/ is empty: run tools/gen_all.py --out generated first (it needs your dump in targets/), "
+    message(FATAL_ERROR "generated/ is empty: run tools/build/gen_all.py --out generated first (it needs your dump in targets/), "
                         "or configure with -DMONADO_RUNTIME_ONLY=ON")
   endif()
 endif()
@@ -159,15 +159,15 @@ if(WIN32)
   list(APPEND GAME_LINK_LIBS winmm dbghelp)
   set(GAME_LINK_OPTIONS ${MARCH} -Wl,--stack,268435456)
   if(MONADO_RELEASE)
-    # The game library links against xcde.exe's exports (tools/gamebuild_stage.py --link-file xcde_imports.a). zig's
+    # The game library links against xcde.exe's exports (tools/gamebuild/gamebuild_stage.py --link-file xcde_imports.a). zig's
     # linker has no --export-all-symbols, so the runtime objects' globals are exported through a generated .drectve
-    # (tools/coff_exports.py) and the import library is written from the linked executable (tools/pe_implib.py).
+    # (tools/gamebuild/coff_exports.py) and the import library is written from the linked executable (tools/gamebuild/pe_implib.py).
     set(RELEASE_EXPORTS "${CMAKE_BINARY_DIR}/release_exports.c")
     add_custom_command(OUTPUT "${RELEASE_EXPORTS}"
-      COMMAND "${Python3_EXECUTABLE}" "${ROOT}/tools/coff_exports.py" --output "${RELEASE_EXPORTS}" --objects
+      COMMAND "${Python3_EXECUTABLE}" "${ROOT}/tools/gamebuild/coff_exports.py" --output "${RELEASE_EXPORTS}" --objects
               "$<TARGET_OBJECTS:monado_rt>" "$<TARGET_OBJECTS:monado_ui>" "$<TARGET_OBJECTS:monado_dlss>"
               "$<TARGET_OBJECTS:monado_vma>"
-      DEPENDS monado_rt monado_ui monado_dlss monado_vma "${ROOT}/tools/coff_exports.py"
+      DEPENDS monado_rt monado_ui monado_dlss monado_vma "${ROOT}/tools/gamebuild/coff_exports.py"
               "$<TARGET_OBJECTS:monado_rt>" "$<TARGET_OBJECTS:monado_ui>"
       COMMAND_EXPAND_LISTS VERBATIM)
   endif()
@@ -192,7 +192,7 @@ if(WIN32)
                          "SHELL:-idirafter \"${MSYS2_PREFIX}/include\"")
   target_include_directories(monado_fsr4 PRIVATE runtime/nvn/vulkan)
   target_link_libraries(monado_fsr4 PRIVATE "${MSYS2_PREFIX}/lib/libvulkan-1.dll.a")
-  # the prepared model files (tools/prepare_fsr4_lite.py) go where the runtime looks: build/fsr4/lite
+  # the prepared model files (tools/package/fsr4_prepare.py) go where the runtime looks: build/fsr4/lite
   if(EXISTS "${ROOT}/build/fsr4/assets/lite")
     add_custom_command(TARGET monado_fsr4 POST_BUILD
       COMMAND "${CMAKE_COMMAND}" -E copy_directory "${ROOT}/build/fsr4/assets/lite" "${ROOT}/build/fsr4/lite" VERBATIM)
@@ -255,7 +255,7 @@ else()
   endif()
 endif()
 
-# A/B builds (docs/PGO.md): put this configuration's executables in another folder than the default one
+# A/B builds (docs/guides/PGO.md): put this configuration's executables in another folder than the default one
 set(MONADO_OUT_DIR "" CACHE PATH "Folder for the game executable and launcher (default: build/ or build/linux/)")
 if(MONADO_OUT_DIR)
   set(OUT "${MONADO_OUT_DIR}")
@@ -290,9 +290,9 @@ if(PGO_DEPENDS)  # a new profile recompiles everything it applies to
   set_property(SOURCE ${RT_SOURCES} ${GAME_SOURCES} APPEND PROPERTY OBJECT_DEPENDS "${PGO_DEPENDS}")
 endif()
 if(WIN32 AND MONADO_RELEASE)
-  # zig's linker writes no import library: make one from xcde.exe's export table (tools/pe_implib.py)
+  # zig's linker writes no import library: make one from xcde.exe's export table (tools/gamebuild/pe_implib.py)
   add_custom_command(TARGET monado_game_exe POST_BUILD
-    COMMAND "${Python3_EXECUTABLE}" "${ROOT}/tools/pe_implib.py" "$<TARGET_FILE:monado_game_exe>"
+    COMMAND "${Python3_EXECUTABLE}" "${ROOT}/tools/gamebuild/pe_implib.py" "$<TARGET_FILE:monado_game_exe>"
             "${ROOT}/build/gamebuild/xcde_imports.a" --zig "${CMAKE_C_COMPILER}" VERBATIM)
 endif()
 if(WIN32)

@@ -127,7 +127,7 @@ static void add_prog(uint32_t vs, uint32_t fs) {
 }
 
 // [XCDE] T211: each program's vertex input names (container program data, the layout of ScanMountGoat/xc3_lib's
-// public description of SPCH, tools/spch_attrs.py): which locations the game declares as integers. Monolith names
+// public description of SPCH, tools/research/spch_attrs.py): which locations the game declares as integers. Monolith names
 // them by type - v* float vectors, f* float scalars, n* integers (nWgtIdx, the skinning weight index: location 1 in
 // 17,729 character programs, location 0 in 356). A draw binds an integer vertex format there, so the translation key
 // has an unsigned input at that location: built that way instead of guessed (the guess was float + "input 1 also
@@ -421,7 +421,7 @@ static _Atomic size_t next_seed;
 static _Atomic uint64_t n_seed_built;
 static _Atomic size_t n_seed_done;  // [PRECOMPILE-STALL-FIX] seed jobs finished (n_seed_built counts only the successes)
 // [XCDE] T240: and every recorded variant's whole optimized pipeline (exec.c vk_precompile_variant): the shipped list
-// (the debugger tours of every map and cutscene, tools/tour_batch.py) plus the player's own cache/variants.bin
+// (the debugger tours of every map and cutscene, tools/tours/tour_batch.py) plus the player's own cache/variants.bin
 extern int vk_precompile_variant(const NvnProgram *np, const void *rec, size_t rec_size);
 typedef struct { uint32_t vs, fs; uint8_t *rec; } VarJob;
 static VarJob *var_jobs;

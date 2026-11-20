@@ -1,8 +1,11 @@
 # Research (phase 0): Monado
 
+> **Frozen historical document (2026-10-17).** It records the project start only; current status is in
+> [`tasks.md`](tasks.md) and [`../UPSTREAM.md`](../UPSTREAM.md).
+
 **For:** `spec.md` v1.0 · **Date:** 2026-10-17
 Each entry follows the format **Decision / Reason / Alternatives considered / Evidence**.
-The figures come from a 2.0.0 dump (`docs/inventory.md`, `docs/nso_stats.json`) and a research pass of LASRecomp's
+The figures come from a 2.0.0 dump (`docs/reference/inventory.md`, `docs/reference/nso_stats.json`) and a research pass of LASRecomp's
 generator over the modules (`build/research/`, not versioned).
 
 ---
@@ -14,7 +17,7 @@ generator over the modules (`build/research/`, not versioned).
 | Version | 2.0.0 (`v262144`), program `0x0100ff500e34a000` | the update's cnmt |
 | SDK | NintendoSDK 9.3.1, kernel 9.1 | `nstool --listapi`, npdm |
 | Modules | rtld, **main** (9.14 MB `.text`), **sdk** (5.50 MB), **subsdk0** (3.58 MB, `multimedia.nss`) | NSO |
-| Instructions | ≈ 4.56 M (main 2.29 M, sdk 1.38 M, subsdk0 0.90 M) | `tools/analyze_nso.py` |
+| Instructions | ≈ 4.56 M (main 2.29 M, sdk 1.38 M, subsdk0 0.90 M) | `tools/research/analyze_nso.py` |
 | Symbols | main 360 dynamic (no debug symbols), sdk 25,042, subsdk0 11,514 | `nso.py` |
 | `main` imports | 337: **305 from sdk**, **28 from subsdk0** (`movie::`), 4 linker markers | `nso.py` |
 | `nn::*` imported by `main` | 201 (os 66, hid 35, fs 26, audio 18, oe 17, mem 8, prepo 8, vi 7, account 5, time 4…) | `nstool --listsym` |

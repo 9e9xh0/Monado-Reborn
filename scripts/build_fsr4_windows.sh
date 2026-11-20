@@ -11,7 +11,8 @@ mkdir -p build
 $Z -O2 -std=c++20 -target x86_64-windows-gnu -mcpu=x86_64_v2 -shared -fvisibility=hidden -Iruntime/nvn/vulkan -idirafter "$M/include" -w \
   third_party/fsr4_native/fsr411.cpp third_party/fsr4_native/monado_adapter.cpp \
   -o build/monado_fsr4.dll "$M/lib/libvulkan-1.dll.a" || { echo "FAIL fsr4 (FSR 4 Lite will be unavailable)"; exit 1; }
-# The model files: tools/prepare_fsr4_lite.py writes build/fsr4/assets/lite; the runtime reads <exe folder>/fsr4/lite.
+# The model files: the preparation tool (tools/package/fsr4_prepare.py) writes lite/ under its --out; a copy staged
+# in build/fsr4/assets/lite is placed beside the executable, which is where the runtime reads <exe folder>/fsr4/lite.
 if [ -d build/fsr4/assets/lite ]; then
   rm -rf build/fsr4/lite && cp -r build/fsr4/assets/lite build/fsr4/lite && echo "FSR 4 Lite model files ready in build/fsr4/lite"
 elif [ ! -d build/fsr4/lite ]; then

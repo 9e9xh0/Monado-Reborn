@@ -3,7 +3,7 @@ from pathlib import Path
 import importlib.util
 import unittest
 
-spec = importlib.util.spec_from_file_location('install_dlss', Path(__file__).resolve().parents[2] / 'tools/install_dlss.py')
+spec = importlib.util.spec_from_file_location('install_dlss', Path(__file__).resolve().parents[2] / 'tools/package/install_dlss.py')
 installer = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(installer)
 

@@ -1,7 +1,7 @@
 # Release packages for Linux and Windows, built in CI. They hold NO game code and NO game files (Constitution art. I):
 # the runtime is built with CMake -DMONADO_RELEASE=ON and the launcher builds the game code once, on the player's PC,
-# from their own dump (tools/gamebuild.py, frozen with PyInstaller and bundled with a trimmed zig). Every package tree
-# is checked with tools/package_guard.py before it is uploaded.
+# from their own dump (tools/gamebuild/gamebuild.py, frozen with PyInstaller and bundled with a trimmed zig). Every package tree
+# is checked with tools/package/package_guard.py before it is uploaded.
 #
 # Run it by hand (Actions > release > Run workflow) for test packages, or push a tag v* for a DRAFT GitHub release with
 # both packages attached: review it on the Releases page and publish it yourself.
@@ -13,8 +13,8 @@
 #
 # Upscalers: FSR 1 always; FSR 3 (Linux: native component built from AMD's SDK source; Windows: AMD's signed DLL from
 # the official FidelityFX SDK 1.1.4 release); DLSS on Windows (NVIDIA's official Streamline release,
-# tools/install_dlss.py, hash-pinned); FSR 4 Lite on both. FSR 4 Lite's model files are NOT packaged (they are
-# derived from AMD's SDK): the packages carry the preparation tool (tools/build_fsr4prep.py) and the launcher's
+# tools/package/install_dlss.py, hash-pinned); FSR 4 Lite on both. FSR 4 Lite's model files are NOT packaged (they are
+# derived from AMD's SDK): the packages carry the preparation tool (tools/build/build_fsr4prep.py) and the launcher's
 # "Prepare FSR 4 Lite" makes them once on the player's PC from AMD's own download.
 name: release
 on:
@@ -74,7 +74,7 @@ jobs:
           echo "Package version: $version"
 
   pgo:
-    # The committed profile (data/pgo/monado.proftext.gz, docs/PGO.md) is LLVM's text format. A compiler reads only an
+    # The committed profile (data/pgo/monado.proftext.gz, docs/guides/PGO.md) is LLVM's text format. A compiler reads only an
     # indexed profile from its own LLVM version or an older one, so convert it once with the oldest compiler that
     # reads it: clang-19 (the Linux runtime). zig 0.17.1's clang 22 (the Windows runtime and every player's game code
     # build) reads that too.
@@ -85,8 +85,8 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends llvm-19
-          python3 tools/pgo.py check
-          python3 tools/pgo.py index --tool llvm-profdata-19 --out build/pgo/monado.profdata
+          python3 tools/build/pgo.py check
+          python3 tools/build/pgo.py index --tool llvm-profdata-19 --out build/pgo/monado.profdata
       - uses: actions/upload-artifact@v4
         with:
           name: pgo-profile
@@ -143,7 +143,7 @@ jobs:
           name: pgo-profile
           path: build/pgo
       - name: Stage the first-start builder
-        run: .venv/bin/python tools/gamebuild_stage.py --dest build/gamebuild --platform linux --pgo build/pgo/monado.profdata
+        run: .venv/bin/python tools/gamebuild/gamebuild_stage.py --dest build/gamebuild --platform linux --pgo build/pgo/monado.profdata
       - name: Build the release runtime, launcher and upscaler components
         env:
           VMA_INCLUDE_DIR: ${{ github.workspace }}/build/deps
@@ -157,9 +157,9 @@ jobs:
           test -f build/linux/libmonado_fsr3.so || { echo "::error::native FSR 3 was not built"; exit 1; }
           test -f build/linux/libmonado_fsr4.so || { echo "::error::native FSR 4 Lite was not built"; exit 1; }
       - name: Freeze the builder
-        run: .venv/bin/python tools/freeze_gamebuild.py --python .venv/bin/python
+        run: .venv/bin/python tools/gamebuild/freeze_gamebuild.py --python .venv/bin/python
       - name: FSR 4 Lite preparation tool
-        run: .venv/bin/python tools/build_fsr4prep.py
+        run: .venv/bin/python tools/build/build_fsr4prep.py
       - name: Point the bundled OpenSSL at the host's CA store
         # monado-fsr4prep is frozen here with the runner's OpenSSL (Ubuntu), which is compiled with
         # OPENSSLDIR=/usr/lib/ssl. Arch/SteamOS keep their store in /etc/ssl and Fedora in /etc/pki/tls,
@@ -192,12 +192,12 @@ jobs:
           curl -fsSL -o /tmp/appimagetool "$APPIMAGETOOL_URL"
           echo "$APPIMAGETOOL_SHA256  /tmp/appimagetool" | sha256sum -c -
           chmod +x /tmp/appimagetool
-      - name: Package the AppImage (checked with tools/package_guard.py)
+      - name: Package the AppImage (checked with tools/package/package_guard.py)
         env:
           VERSION: ${{ needs.version.outputs.version }}
         run: |
           img="Monado-${VERSION}-x86_64.AppImage"
-          python3 tools/make_appimage.py --release --appimagetool /tmp/appimagetool --output "dist/$img"
+          python3 tools/package/make_appimage.py --release --appimagetool /tmp/appimagetool --output "dist/$img"
           (cd dist && sha256sum "$img" > "$img.sha256")
       - uses: actions/upload-artifact@v4
         with:
@@ -260,14 +260,14 @@ jobs:
         uses: actions/cache/restore@v4
         with:
           path: build/unicorn
-          key: unicorn-windows-${{ hashFiles('tools/build_unicorn.py', 'tools/unicorn/*.patch') }}-v1
+          key: unicorn-windows-${{ hashFiles('tools/build/build_unicorn.py', 'tools/unicorn/*.patch') }}-v1
       - name: unicorn 2.1.4 with the Windows code buffer committed up front (GitHub #104)
-        # The frozen builder ships this library instead of the wheel's: tools/build_unicorn.py says why. --check
+        # The frozen builder ships this library instead of the wheel's: tools/build/build_unicorn.py says why. --check
         # emulates one instruction with faulthandler on and fails on any fault.
         run: |
           $env:PATH = "$PWD\.venv\Scripts;$env:PATH"
           $skip = if ('${{ steps.unicorn-cache.outputs.cache-hit }}' -eq 'true') { '--skip-build' } else { $null }
-          .venv\Scripts\python tools/build_unicorn.py --install --check $skip
+          .venv\Scripts\python tools/build/build_unicorn.py --install --check $skip
       - name: Save the patched unicorn
         if: steps.unicorn-cache.outputs.cache-hit != 'true'
         uses: actions/cache/save@v4
@@ -293,7 +293,7 @@ jobs:
           "amd_fidelityfx_vk.dll signature: $($sig.Status) ($($sig.SignerCertificate.Subject))"
           if ($sig.Status -ne 'Valid') { throw 'amd_fidelityfx_vk.dll is not validly signed' }
           Remove-Item ffx.zip
-          .venv\Scripts\python tools/install_dlss.py
+          .venv\Scripts\python tools/package/install_dlss.py
       - uses: actions/download-artifact@v4
         with:
           name: pgo-profile
@@ -303,11 +303,11 @@ jobs:
         uses: actions/cache/restore@v4
         with:
           path: ${{ runner.temp }}\zig-prelink
-          key: prelink-windows-${{ env.ZIG_VERSION }}-${{ hashFiles('tools/gamebuild_stage.py', 'tools/game_id.py') }}-v1
+          key: prelink-windows-${{ env.ZIG_VERSION }}-${{ hashFiles('tools/gamebuild/gamebuild_stage.py', 'tools/build/game_id.py') }}-v1
       - name: Stage the first-start builder (with the executable's import library)
         env:
           MONADO_PRELINK_CACHE: ${{ runner.temp }}\zig-prelink
-        run: .venv\Scripts\python tools/gamebuild_stage.py --dest build/gamebuild --platform windows --link-file xcde_imports.a --pgo build/pgo/monado.profdata
+        run: .venv\Scripts\python tools/gamebuild/gamebuild_stage.py --dest build/gamebuild --platform windows --link-file xcde_imports.a --pgo build/pgo/monado.profdata
       - name: Save zig's C runtime for the game code library
         if: steps.prelink-cache.outputs.cache-hit != 'true'
         uses: actions/cache/save@v4
@@ -323,29 +323,29 @@ jobs:
             if (-not (Test-Path $f)) { throw "missing $f" }
           }
       - name: Freeze the builder
-        run: .venv\Scripts\python tools/freeze_gamebuild.py --python .venv\Scripts\python.exe
+        run: .venv\Scripts\python tools/gamebuild/freeze_gamebuild.py --python .venv\Scripts\python.exe
       - name: Restore the FSR 4 Lite preparation tool
         id: fsr4prep-cache
         uses: actions/cache/restore@v4
         with:
           path: build/fsr4prep
-          key: fsr4prep-windows-${{ hashFiles('tools/build_fsr4prep.py', 'tools/fsr4_prepare.py', 'tools/gamebuild_stage.py', 'third_party/fsr4cap/**') }}-zig${{ env.ZIG_VERSION }}-v1
+          key: fsr4prep-windows-${{ hashFiles('tools/build/build_fsr4prep.py', 'tools/package/fsr4_prepare.py', 'tools/gamebuild/gamebuild_stage.py', 'third_party/fsr4cap/**') }}-zig${{ env.ZIG_VERSION }}-v1
       - name: FSR 4 Lite preparation tool
         if: steps.fsr4prep-cache.outputs.cache-hit != 'true'
         run: |
           $env:PATH = "$PWD\.venv\Scripts;C:\msys64\ucrt64\bin;$env:PATH"
-          .venv\Scripts\python tools/build_fsr4prep.py
+          .venv\Scripts\python tools/build/build_fsr4prep.py
       - name: Save the FSR 4 Lite preparation tool
         if: steps.fsr4prep-cache.outputs.cache-hit != 'true'
         uses: actions/cache/save@v4
         with:
           path: build/fsr4prep
           key: ${{ steps.fsr4prep-cache.outputs.cache-primary-key }}
-      - name: Package the ZIP (checked with tools/package_guard.py)
+      - name: Package the ZIP (checked with tools/package/package_guard.py)
         env:
           VERSION: ${{ needs.version.outputs.version }}
         run: |
-          .venv\Scripts\python tools/make_portable.py "$env:RUNNER_TEMP\Monado-Windows" --release --msys C:\msys64\ucrt64\bin
+          .venv\Scripts\python tools/package/make_portable.py "$env:RUNNER_TEMP\Monado-Windows" --release --msys C:\msys64\ucrt64\bin
           New-Item -ItemType Directory -Force dist | Out-Null
           $zip = "Monado-Windows-x64-$env:VERSION.zip"
           Compress-Archive -Path "$env:RUNNER_TEMP\Monado-Windows\*" -DestinationPath "dist/$zip"

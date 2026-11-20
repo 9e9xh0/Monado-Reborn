@@ -3,7 +3,7 @@
 Integer, memory, and control flow are translated to C. FP/SIMD instructions (and CRC32) are
 either re-emitted as inline assembly (simd='asm', AArch64 hosts), with guest V registers
 loaded from / stored to the Cpu struct around each batch, so their semantics are
-bit-exact by construction, or lowered to portable C (simd='c', tools/simd_c.py + runtime/simd.h).
+bit-exact by construction, or lowered to portable C (simd='c', tools/lifter/simd_c.py + runtime/simd.h).
 """
 import struct
 

@@ -254,7 +254,7 @@ void rt_udf(Cpu *c, uint64_t pc) {
 }
 
 // [XCDE] The generated code trusts AAPCS64: after a call it does not reload X19-X29 and SP (tools/lifter/regs.py).
-// longjmp and the C++ unwinder break that; nothing in XC:DE calls them (docs/LIFTER_LOCALS.md), and their lifted
+// longjmp and the C++ unwinder break that; nothing in XC:DE calls them (docs/guides/LIFTER_LOCALS.md), and their lifted
 // entry points call this, so a call through a pointer stops here instead of running on with stale registers.
 void rt_trust_fault(Cpu *c, uint64_t pc) {
     (void)c;

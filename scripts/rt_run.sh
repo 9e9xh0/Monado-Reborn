@@ -4,7 +4,7 @@
 #     scripts/rt_run.sh <route> <secs> <outdir>
 # The run's cwd is <outdir> (a junction to targets/ is made there), so cache/ starts empty unless RT_CACHE is given.
 # LARECOMP_LOG_PACE=1 always (frame periods); __GL_SHADER_DISK_CACHE_PATH=<outdir>/nvcache (the driver's own cache
-# starts empty too). RT_SHOTS=<frames>: deterministic captures instead. Extra env passes through. Prints the summary of scripts/rt_summary.py at the end.
+# starts empty too). RT_SHOTS=<frames>: deterministic captures instead. Extra env passes through. Prints the summary of tools/diag/rt_summary.py at the end.
 cd "$(dirname "$0")/.."
 REPO=$(pwd -W)
 export PATH="/c/msys64/ucrt64/bin:$PATH"
@@ -28,4 +28,4 @@ for t in 1 2 3; do
   grep -aq "not free" game.log || break
 done
 cmd //c rmdir targets
-"python" "$REPO/scripts/rt_summary.py" game.log
+"python" "$REPO/tools/diag/rt_summary.py" game.log

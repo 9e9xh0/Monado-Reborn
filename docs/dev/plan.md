@@ -1,9 +1,12 @@
 # Implementation plan: Monado
 
+> **Frozen historical document (2026-10-17).** It records the project start only; current status is in
+> [`tasks.md`](tasks.md) and [`../UPSTREAM.md`](../UPSTREAM.md).
+
 **Branch / ID:** `001-xcde-recomp` · **Date:** 2026-10-17 · **Version:** 1.0 (translated 2026-10-25)
 **Specification:** [`spec.md`](spec.md) · **Rules:** [`../../CONTRIBUTING.md`](../../CONTRIBUTING.md) ·
 **Research:** [`research.md`](research.md) · **Tasks:** [`tasks.md`](tasks.md) ·
-**Game inventory:** [`../inventory.md`](../inventory.md)
+**Game inventory:** [`../reference/inventory.md`](../reference/inventory.md)
 
 > **How this project works (spec-driven development)**
 >
@@ -13,7 +16,7 @@
 > evidence in `docs/evidence/`.
 >
 > This plan reflects the project's start (sessions 1–4). What came after (gameplay, performance, upscalers, the
-> launcher, memory work) is recorded in `HANDOFF.md` and the session sections of `tasks.md`.
+> launcher, memory work) is recorded in `docs/dev/archive/HANDOFF-2026-10-25.md` and the session sections of `tasks.md`.
 
 ---
 
@@ -61,10 +64,11 @@ implementations of its `movie::` API. Everything derived from the game is genera
 Monado/
 ├── README.md  LICENSE  NOTICE.md  CONTRIBUTING.md
 ├── docs/
-│   ├── dev/                 spec.md plan.md research.md tasks.md HANDOFF.md (the development record)
-│   ├── inventory.md  nso_stats.json            # dump facts (no game content)
+│   ├── dev/                 spec.md plan.md research.md tasks.md CHANGELOG.md (+ archive/) (record)
+│   ├── reference/           inventory.md nso_stats.json RECOMP_KNOWLEDGE.md LESSONS_FOR_XC2.md
 │   ├── adr/NNNN-*.md                           # decisions (one per file)
-│   ├── RECOMP_KNOWLEDGE.md  LESSONS_FOR_XC2.md # what we learnt, for any recomp / for the other Xenoblades
+│   ├── guides/              BUILD-CMAKE.md LINUX.md PGO.md LIFTER_LOCALS.md CHEATS_AND_MODS.md
+│   ├── history/             archived audits, research, plans and Spanish originals
 │   └── evidence/M*/                            # logs, metrics, captures without assets
 ├── tools/
 │   ├── lifter/      gen.py lifter.py simd_c.py analyze.py nso.py sym.py (from LAS, adapted)
@@ -222,14 +226,16 @@ Tests with game data never run in CI and never upload artefacts with assets.
 | 0008 | Wwise lifted; `audren/audout` + `hwopus` | research R6 |
 | 0009 | Video through FFmpeg with GPU conversion | research R7 |
 | 0010 | Diagnostics from M1 (watchdog, minidump, determinism, `device_fault`) | rules VII |
+| 0011 | Conservative optimization and explicit quality (T259–T261) | performance/UI work; implemented 2026-11-04 |
+| 0012 | Optional native FSR 4.1.2 Lite INT8 on Linux | `third_party/fsr4_native/`, ADR 0012 |
 
 ## 13. Extending to XC2, XC3 and XCX DE
 
 Each new game is a new feature (`002-xc2-recomp`, …) with its own `spec.md`, reusing `runtime/` and defining its
 `games/<game>/`. Before starting, the research is repeated (module inventory, SDK, services, middleware). Every runtime
-change must keep XCDE's routes passing (cross regression). `docs/LESSONS_FOR_XC2.md` lists what carries over.
+change must keep XCDE's routes passing (cross regression). `docs/reference/LESSONS_FOR_XC2.md` lists what carries over.
 
-## 14. Early status (2026-10-17, end of session 1) — see `HANDOFF.md` for the current state
+## 14. Early status (2026-10-17, end of session 1) — the current state is in `tasks.md` and `docs/UPSTREAM.md`
 
 **Done and verified then**
 - M0, M1 (reproducible generator, 0 unsupported instructions), M2 (jump tables 93.4 % main / 89.9 % sdk; a full `-O1`
@@ -251,18 +257,18 @@ change must keep XCDE's routes passing (cross regression). `docs/LESSONS_FOR_XC2
 - 2026-10-18 — v1.16: T137/T139 — occlusion counters (samples passed) implemented with Vulkan occlusion queries: the party and enemies now render in battle (they were culled as hidden). T138 thread stacks reserved instead of committed (~10 GB less commit; fixed a deterministic hang). Route reaches "Battle Introduction 2".
 - 2026-10-18 — v1.15: T134 — transform feedback and rasterizer discard implemented (emulated with heap stores from a vertex shader variant; layout from the NVN control section): grass no longer renders as black streaks. The battle field shows.
 - 2026-10-18 — v1.14: T133 — `nvnCommandBufferBarrier` implemented (was dropped): GPU-computed skinning palettes no longer race their draws; cutscene characters render correctly. New `scripts/build_rt_gfx.sh` (all runtime objects + link).
-- 2026-10-18 — v1.13: fixes from reviewing three other Switch recomp / port projects and upstream LASRecomp (`docs/lessons_other_recomps.md`): T125 program cache keyed by shader content, T126 zero-padded constant buffers, T127 LDC.64 address snapshot (test), T128 fence sequence + fatal GPU wait timeout.
+- 2026-10-18 — v1.13: fixes from reviewing three other Switch recomp / port projects and upstream LASRecomp (`docs/history/research/lessons_other_recomps.md`): T125 program cache keyed by shader content, T126 zero-padded constant buffers, T127 LDC.64 address snapshot (test), T128 fence sequence + fatal GPU wait timeout.
 - 2026-10-18 — v1.12: T122 closed — HLE mutexes held across guest calls no longer deadlock the deterministic scheduler; the New Game route reaches the first 3D scene. Open: T124 (image hashes split from the 3D scene on).
 - 2026-10-18 — v1.11: T119 closed — deterministic mode reads vertices in place (the vertex cache gave run-to-run differences: T121); 3 runs through the intro movie hash-identical on 5245/5245 frames.
 - 2026-10-18 — v1.10: T118 intro video fixed. The game builds a `movie::Buffer` over its own memory before `Decoder::GetOutputBuffer` and reads that memory; the HLE replaced the Buffer's pointer with its own slot, so the game's frame buffer kept the LCG "static" its uploader fills it with. Fix: copy the decoded output into the game's memory (`runtime/hle/movie_buf.h`, test `tests/native/test_movie_buf.c`).
 - 2026-10-17 — v1.9: T029 closed for real — deterministic mode with a cooperative scheduler, virtual time and virtual timers for vsync / audio; 3 title runs with 100 % identical hashes on every frame (2.1 % before).
 - 2026-10-17 — v1.8: M3 diagnostics — T027 watchdog (5 s), T028 out-of-process minidump, T029 deterministic mode + per-frame hash + input record / replay, T033 strict mode + generated HLE audit.
-- 2026-10-17 — v1.7: T059 closed — the audio capture matches the reference recording of the title (chroma 0.92, the same notes and bands). Added `tools/wav_compare.py`.
-- 2026-10-17 — v1.6: T059 partly — the game's audio goes through `audout:u`; a valid WAV dump, real-time pacing, `tools/wav_report.py` + a test.
+- 2026-10-17 — v1.7: T059 closed — the audio capture matches the reference recording of the title (chroma 0.92, the same notes and bands). Added `tools/media/wav_compare.py`.
+- 2026-10-17 — v1.6: T059 partly — the game's audio goes through `audout:u`; a valid WAV dump, real-time pacing, `tools/media/wav_report.py` + a test.
 - 2026-10-17 — v1.5: T067 (hang: an ETIMEDOUT / condvar race in the kernel) and T108 (close: the virtual RomFS fd cache without a lock) closed; 47/47 clean boots. New tools: `scripts/repro_stability.sh`, `XCDE_STALL`, `XCDE_CRASH_DUMP_REG`.
 - 2026-10-17 — v1.4: title right (deferred lighting, points, depth-only draws); T064/T105/T106/T107 closed; new T108–T110.
 - 2026-10-17 — v1.3: T068 solved (3D deswizzle); title right in the window; new T105–T106.
-- 2026-10-17 — v1.2: status after session 1: M2 closed, M3 nearly closed, M4 in progress; new tasks T064–T068; `HANDOFF.md` added.
+- 2026-10-17 — v1.2: status after session 1: M2 closed, M3 nearly closed, M4 in progress; new tasks T064–T068; `docs/dev/archive/HANDOFF-2026-10-25.md` added.
 - 2026-10-17 — v1.1: the fixes from other recomps with their task and status; the fiber HLE gap found (T032b).
 - 2026-10-17 — v1.0: restructured as spec-driven development (rules, spec, research, plan, tasks). Includes the generator pass (0 unsupported, 1,083 unresolved tables in main, 295 MB of C), the import map (main→subsdk0: 28 `movie::`) and LAS's HLE coverage.
 - 2026-10-17 — v0.2/v0.2.1: analysis of the 2.0.0 update and RomFS extraction.

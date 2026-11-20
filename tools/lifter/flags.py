@@ -1,5 +1,5 @@
 # [XCDE] Ported from TotK Recomp (github.com/valentderah/totk-pc-recomp, recomp/flags.py), MIT License,
-# Copyright (c) 2026 Valiantsin Dzerakh. Used by gen.py emit_function (docs/LIFTER_LOCALS.md).
+# Copyright (c) 2026 Valiantsin Dzerakh. Used by gen.py emit_function (docs/guides/LIFTER_LOCALS.md).
 """Function-local NZCV for tools/lifter/gen.py.
 
 The lifter writes flags the way the guest does: every flag-setting instruction packs N, Z, C and V into c->nzcv

@@ -27,7 +27,7 @@ for f in $NVN; do
   extra=""
   if [ "$f" = smaa_data ]; then  # [XCDE] the SMAA reference shader (third_party/smaa, MIT) as a C string
     mkdir -p build/inc
-    .venv/Scripts/python tools/gen_smaa_inc.py third_party/smaa/SMAA.hlsl build/inc/smaa_hlsl.inc || fail=1
+    .venv/Scripts/python tools/build/gen_smaa_inc.py third_party/smaa/SMAA.hlsl build/inc/smaa_hlsl.inc || fail=1
     extra="-Ibuild/inc -Ithird_party/smaa/Textures"
   fi
   o=build/nvn/nvn_$(echo $f | tr / _).o
@@ -39,7 +39,6 @@ done
 # MSYS2 CRT headers, or libc++ mixes two libc header sets and fails to compile; -idirafter still finds SDL3/Vulkan/VMA.
 if pick ui/menu; then
   I=third_party/imgui
-  rm -f build/nvn/host_menu_stub.o
   for f in $I/imgui.cpp $I/imgui_draw.cpp $I/imgui_tables.cpp $I/imgui_widgets.cpp $I/backends/imgui_impl_vulkan.cpp \
            runtime/nvn/vulkan/imgui_glue.cpp runtime/ui/menu_vk.cpp; do
     .venv/Scripts/python -m ziglang c++ -c $f -o build/nvn/ui_$(basename ${f%.cpp}).o -std=c++17 -O1 -march=x86_64_v2 \

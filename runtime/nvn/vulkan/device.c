@@ -1146,7 +1146,7 @@ static void dup_check(TexBackend *b) {
 // F10 starts / stops it (at most 1200 frames a recording, each one overwrites the last), or XCDE_REC=<from>:<to>
 // (presented frames).
 // [XCDE] T240 XCDE_REC_SCAN=<dir>[:<threshold=40>[:<block px=40>]]: the recorder's frames are not written but searched
-// as they come (tools/flicker_scan.py in the game, for tours of hours): a block of the image that differs from both the
+// as they come (tools/media/flicker_scan.py in the game, for tours of hours): a block of the image that differs from both the
 // frame k before and k after (k = 1, 2, 3, 4, 6, 8) much more than those two differ from each other - an area wrong for
 // a few frames that comes back. Each hit is logged ("[flicker]") and saved as <dir>/flicker_<frame>.ppm (before, the
 // frame, after side by side). Camera cuts don't count (before and after differ too).
@@ -1202,7 +1202,7 @@ static void scan_frame(const uint8_t *px, uint32_t W, uint32_t H, uint64_t fno) 
     uint64_t f = num[mi % SCAN_RING];
     if (best <= thr || (last_hit && f - last_hit <= 8)) return;
     last_hit = f;
-    // tools/flicker_view.py's tests, so that only the hits worth a look are saved: "calm" - the whole before and after
+    // tools/media/flicker_view.py's tests, so that only the hits worth a look are saved: "calm" - the whole before and after
     // images nearly the same (in fast action and flashes they match by chance: a fault there can't be told from an
     // effect); "back" - the block's pixels come back as they were (before and after alike pixel by pixel, the frame
     // unlike both). XCDE_REC_SCAN_ALL=1 saves every hit.

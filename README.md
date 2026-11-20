@@ -2,104 +2,69 @@
 
 <a href="https://recomplauncher.com/game/monado-fix-portable"><picture><source media="(prefers-color-scheme: dark)" srcset="https://recomplauncher.com/assets/press/launcher/badge-light.svg"><img alt="Get it on RecompLauncher" src="https://recomplauncher.com/assets/press/launcher/badge-dark.svg" height="48"></picture></a>
 
----
+A static recompilation of **Xenoblade Chronicles: Definitive Edition** (Nintendo Switch, 2020) into a native
+application with a Vulkan renderer.
 
-## 🇪🇸 Español
+Monado is **not an emulator**: the game's ARM64 code is translated ahead of time (AOT) into C and compiled for
+your PC, while the console's operating system and graphics API (NVN) are reimplemented on top of the host OS and
+Vulkan. Windows x86-64 is the primary target; Linux builds are supported too.
 
-### 📌 ¿Qué es Monado? (Proyecto Original - Resumen)
+> **Requirements.** You need your own legally obtained copy of the game, version 2.0.0 (the base game with the
+> 2.0.0 update applied), extracted into plain `exefs/` and `romfs/` folders. No game files, updates, keys or
+> packaged formats (`.nsp`, `.xci`, `.nca`) are included or downloaded by this project — see
+> [`CONTRIBUTING.md`](CONTRIBUTING.md) (article I).
 
-**Monado** es una **recompilación estática** de *Xenoblade Chronicles: Definitive Edition* (Nintendo Switch, 2020) diseñada para convertirse en una aplicación nativa de Windows x86-64 con un renderizador Vulkan.
+## Quick start
 
-* **No es un emulador:** El código ARM64 original del juego se traduce con antelación (Ahead-of-Time) a C y se compila directamente para tu PC. El sistema operativo de la consola y la API gráfica (NVN) se reimplementan sobre Windows y Vulkan.
-* **Requisitos:** Requiere una copia propia y legal del juego (versión 2.0.0, con el juego base y su actualización aplicados) extraída en carpetas `exefs` y `romfs`. No se incluyen archivos del juego ni formatos empaquetados (`.nsp`, `.xci`, `.nca`).
+1. Put your extracted `exefs` and `romfs` folders inside `targets/`, so that `targets/exefs` and `targets/romfs`
+   exist. The folder names are lowercase on every system.
+2. **Portable build:** run `Play Monado.bat`. **From source:** run `Build Monado.bat` (Windows; it installs the
+   toolchain, a few GB) or follow [`docs/guides/BUILD-CMAKE.md`](docs/guides/BUILD-CMAKE.md) /
+   [`docs/guides/LINUX.md`](docs/guides/LINUX.md).
+3. Start the game with `Play Monado.bat`: it opens the launcher (graphics, scaling, controls, language) and then
+   the game. The first start precompiles shaders and can take a while; later starts use the cache.
+4. From another launcher or a shortcut: `build/xcde.exe --game <folder with exefs/ and romfs/>`. The older
+   `build/xcde.exe <folder>` form still works.
 
-### 🚀 Mejoras y Características de Monado-FIX-Portable
+Extra launchers: `Play Monado (performance metrics).bat` and `Play Monado (stutter diagnostics).bat` are
+diagnostic variants; `Crear Monado Portable.bat` builds a movable folder for another PC / USB disk (for your own
+use only), and `Limpiar Monado.bat` deletes this PC's shader cache, crash reports and logs before you move it.
 
-Este repositorio (`Monado-FIX-Portable`) toma como base el fork de `vinitaison/Monado` (y el proyecto original de `TheMonadoGuy`) para ofrecer una experiencia mucho más accesible, optimizada y fácil de usar en Windows:
+## What this fork adds
 
-1. **Versión Portable y Opciones de Compilación Facilitada:**
-* Se incluyen scripts y distribuciones diseñadas para simplificar el proceso, permitiendo configuraciones más directas o versiones portables listas para usar sin lidiar con cadenas de dependencias complejas.
+Fixes and improvements on top of the original Monado project (details in the
+[Releases](https://github.com/Ivanprestef2/Monado-Reborn/releases) page):
 
+- **Stability and performance fixes** for heavy shaders, frame drops and crashes, with AMD/Intel GPU refinements.
+- **Streamlined setup:** self-installing build script, a portable folder and dedicated diagnostics launchers.
+- **Quality-of-life** improvements ported from Monado II (cheats, save-slot and menu extras) and a performance UI
+  with dynamic resolution and low-end profiles.
 
-2. **Correcciones y Mejoras de Rendimiento (Fixes):**
-* Parches y soluciones orientados a mitigar problemas de estabilidad, bajones de FPS y crashes (enfocados en la gestión de shaders pesados y compatibilidad mejorada con hardware AMD e Intel).
+## Documentation
 
+| Start here | |
+|---|---|
+| [`docs/README.md`](docs/README.md) | Index of all documentation (guides, ADRs, evidence, dev record) |
+| [`CONTRIBUTING.md`](CONTRIBUTING.md) | Project rules ("the constitution"), build and test loop |
+| [`docs/dev/tasks.md`](docs/dev/tasks.md) | Task ledger: what is done and what is open |
+| [`docs/UPSTREAM.md`](docs/UPSTREAM.md) | Every edit made to the LASRecomp-derived runtime (article X) |
+| [`docs/adr/`](docs/adr/) | Architecture decisions |
+| [`NOTICE.md`](NOTICE.md) | Licences, attribution and third-party components |
 
-3. **Scripts Automatizados y Diagnóstico:**
-* Archivos batch dedicados para facilitar la ejecución y análisis (`Play Monado.bat`, `Play Monado (performance metrics).bat`, `Play Monado (stutter diagnostics).bat`, `Crear Monado Portable.bat`, etc.).
-* Gestión optimizada de precarga de shaders para minimizar el *stuttering*.
+## Credits
 
+- **Original project:** Monado — TheMonadoGuy, continued by [vinitaison](https://github.com/vinitaison/Monado).
+- **Recompilation framework:** [LASRecomp](https://github.com/peiikai/LASRecomp) by Peiikai (MIT) — the AArch64→C
+  lifter and the runtime this project derives from.
+- **Monado II** ([brendonbusker](https://github.com/brendonbusker/Monado-II), MIT) — cheats and menu / save mods.
+- **Development of this fork:** [Ivanprestef2](https://github.com/Ivanprestef2), [Marval53](https://github.com/Marval53),
+  [Cha1N1](https://github.com/Cha1N1), [9e9xh0](https://github.com/9e9xh0), with AI assistance where noted in the
+  repository history.
 
+## Español
 
-### ⚙️ Instrucciones Rápidas de Uso
-
-1. Coloca o vincula tus carpetas `exefs` y `romfs` extraídas (versión 2.0.0) dentro de la estructura de carpetas en `/targets` (o `/targets/Exefs` y `/targets/Romfs`).
-2. Si utilizas una versión portable o precompilada, solo asegúrate de ubicar tus archivos de juego correspondientes e inicia ejecutando `Play Monado.bat`.
-3. Para iniciar desde otro lanzador o acceso directo, `build/xcde.exe --game <carpeta con exefs/ y romfs/>` usa ese volcado; la forma anterior `build/xcde.exe <carpeta>` sigue funcionando.
-4. Si prefieres compilar desde cero, ejecuta `Build Monado.bat` para instalar de forma automatizada las dependencias necesarias y compilar el proyecto.
-
-### 🛠️ Problemas Corregidos (Fixes y Changelog)
-
-*Consulta todas las actualizaciones detalladas en la sección de [Releases](https://github.com/Ivanprestef2/Monado-FIX-Portable/releases).*
-
-* **Optimización de shaders pesados:** Mitigación progresiva de tirones de rendimiento y crashes críticos vinculados a ciertos shaders problemáticos.
-* **Compatibilidad ampliada:** Ajustes orientados a mejorar la estabilidad general en configuraciones de hardware variadas (incluyendo gráficas integradas y componentes AMD/Intel).
-* **Versión Portable sin dependencias obligatorias:** Corrección en la estructuración de directorios y scripts `.bat` para permitir una ejecución directa sin requerir instalaciones de desarrollo adicionales.
-* **Mejoras en el diagnóstico de errores:** Inclusión de scripts dedicados al registro de métricas de rendimiento e identificación de bloqueos por *stuttering*.
-
----
-
-## 🇬🇧 English
-
-### 📌 What is Monado? (Original Project Summary)
-
-**Monado** is a **static recompilation** of *Xenoblade Chronicles: Definitive Edition* (Nintendo Switch, 2020) into a native Windows x86-64 application powered by a Vulkan renderer.
-
-* **Not an emulator:** The game's native ARM64 code is translated ahead-of-time into C and compiled specifically for your PC. The console's operating system and graphics API (NVN) are reimplemented on top of Windows and Vulkan.
-* **Requirements:** Requires your own legally obtained copy of the game (version 2.0.0, base game with the update applied) extracted into plain `exefs` and `romfs` folders. No game files, `.nsp`, `.xci`, or `.nca` packages are included.
-
-### 🚀 Improvements & Features in Monado-FIX-Portable
-
-This repository (`Monado-FIX-Portable`) builds upon `vinitaison/Monado`'s fork (originally pioneered by `TheMonadoGuy`) to provide a much more accessible, streamlined, and optimized experience on Windows:
-
-1. **Portable & Streamlined Setup Options:**
-* Includes automated setup scripts or portable-ready configurations, allowing you to run the game with minimal hassle and zero complex dependency chains.
-
-
-2. **Bug Fixes & Performance Improvements:**
-* Specialized patches and fixes targeting stability issues, frame drops, and crash prevention (with specific refinements for AMD/Intel GPU compatibility and heavy shader handling).
-
-
-3. **Automated Batch Scripts & Diagnostics:**
-* Dedicated `.bat` scripts for seamless launching, performance metrics, and stutter diagnostics (`Play Monado.bat`, `Play Monado (stutter diagnostics).bat`, etc.).
-* Optimized precompiled shader management to reduce hitching during gameplay.
-
-
-
-### ⚙️ Quick Setup Instructions
-
-1. Place your legally dumped game `exefs` and `romfs` folders (version 2.0.0) into the `/targets` directory (`targets/Exefs` and `targets/Romfs`).
-2. If using a portable build, simply drop your game files in place and launch `Play Monado.bat`.
-3. To start from another launcher or shortcut, `build/xcde.exe --game <folder with exefs/ and romfs/>` uses that dump; the old `build/xcde.exe <folder>` form still works.
-4. If building from source, run `Build Monado.bat` to automatically download dependencies and build the application.
-
-### 🛠️ Fixed Issues & Changelog
-
-*Check out all detailed update logs directly in the [Releases](https://github.com/Ivanprestef2/Monado-FIX-Portable/releases) section.*
-
-* **Heavy Shader Optimization:** Progressive mitigation of performance hitches and critical crashes linked to specific heavy shaders.
-* **Expanded Hardware Compatibility:** Adjustments aimed at improving overall stability across diverse hardware configurations (including integrated graphics and AMD/Intel GPUs).
-* **Standalone Portable Build:** Directory structure and `.bat` script refinements allowing straightforward execution without needing extra development toolchains.
-* **Enhanced Diagnostics:** Integration of dedicated scripts for tracking performance metrics and troubleshooting stutter issues.
+Guía del usuario en español: [`docs/user/es/README.md`](docs/user/es/README.md).
 
 ---
 
-### 💡 Créditos / Credits
-
-* **Proyecto Original / Original Project:** `TheMonadoGuy` / `vinitaison` (Monado)
-* **Desarrollo, Fixes y Portability / Development, Fixes & Portable Fork:**
-* `Ivanprestef2` (Ivan Prestef2) — *Asistido por Claude AI y OpenCode/ Assisted by Claude AI and OpenCode*
-* [`Marval53`](https://github.com/Marval53) — *Colaborador / Contributor (Asistido por ChatGPT 6.1 Sol / Assisted by ChatGPT 6.1 Sol)*
-* [`Cha1N1`](https://github.com/Cha1N1) - *Colaborador (Fixes and linux version - Claude AI)*
-* [`9e9xh0`](https://github.com/9e9xh0) - *Colaborador (More resolucions and fixes - Claude AI)*
-* [`Monado II`](https://github.com/brendonbusker/Monado-II)  - *Quality-of-life improvements and cheats*
+Licensed under the MIT licence ([`LICENSE`](LICENSE)); third-party notices in [`NOTICE.md`](NOTICE.md).

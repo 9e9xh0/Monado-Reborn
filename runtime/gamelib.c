@@ -43,7 +43,7 @@ static int candidates(const char *game_dir, char out[5][1100]) {
     if (rt_resource(GAMELIB_NAME, NULL, exe_side, sizeof exe_side) && exists(exe_side))
         snprintf(out[n++], 1100, "%s", exe_side);
     if (game_dir) snprintf(out[n++], 1100, "%s/%s", game_dir, GAMELIB_NAME);
-    // Release packages build it once into the writable data folder (tools/gamebuild.py). That is also the working
+    // Release packages build it once into the writable data folder (tools/gamebuild/gamebuild.py). That is also the working
     // directory the launcher and AppRun enter; rt_data_root() is empty here (rt_paths_init has no caller).
     const char *data = getenv("LARECOMP_DATA_ROOT");
     if (data && *data) snprintf(out[n++], 1100, "%s/gamebuild/%s", data, GAMELIB_NAME);

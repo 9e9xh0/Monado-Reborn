@@ -1022,7 +1022,7 @@ static void pc_poll() {
 
 // ------------------------------------------------------------------ game code (release packages)
 // [XCDE] A release package ships the runtime without recompiled game code (CMake MONADO_RELEASE). On first start the
-// launcher runs the packaged builder (tools/gamebuild.py, frozen as monado-gamebuild): it lifts the code from the
+// launcher runs the packaged builder (tools/gamebuild/gamebuild.py, frozen as monado-gamebuild): it lifts the code from the
 // player's own targets/exefs and links gamebuild/lasgame.{dll,so} in this folder, which the runtime loads
 // (runtime/gamelib.c). Source builds have the code in the executable: no gamebuild/link.json, and everything below
 // reports ready.
@@ -1249,7 +1249,7 @@ static void gc_poll() {
 
 // ------------------------------------------------------------------ FSR 4 Lite model files
 // [XCDE] FSR 4 Lite replays AMD's Lite INT8 network; its model files are recorded on this PC from AMD's own upscaler
-// DLL (downloaded from AMD's GitHub) by the packaged monado-fsr4prep (tools/fsr4_prepare.py, bbport's capture tooling
+// DLL (downloaded from AMD's GitHub) by the packaged monado-fsr4prep (tools/package/fsr4_prepare.py, bbport's capture tooling
 // in third_party/fsr4cap) and kept in fsr4/ here. Nothing of AMD's is shipped. Linux records through the player's
 // Proton; Windows natively on vkd3d-proton.
 #ifdef _WIN32

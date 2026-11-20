@@ -11,10 +11,11 @@ Build in the repository: `scripts/build_fsr4_linux.sh` (Linux, `build/linux/libm
 `scripts/build_fsr4_windows.sh` (Windows, zig c++ from `.venv`, `build/monado_fsr4.dll`; `scripts/build_all.sh` and
 the CMake `windows` preset build it too).
 
-The model files are prepared once with `tools/prepare_fsr4_lite.py`, which needs Linux and Proton. The Windows build
+The model files are prepared on the player's PC by the launcher's *Prepare FSR 4 Lite* (`tools/package/fsr4_prepare.py`,
+frozen into release packages by `tools/build/build_fsr4prep.py`); a Linux dev box can run it too. The Windows build
 reads them from `build/fsr4/lite/` beside `xcde.exe`: copy the prepared `build/fsr4/assets/lite` folder there (the
 Windows build scripts do this when `build/fsr4/assets/lite` exists). They come from AMD's SDK under the terms in
-`LICENSE-AMD-SDK.md`, so `tools/make_portable.py` only packages them with `--with-fsr4-assets`.
+`LICENSE-AMD-SDK.md`, so `tools/package/make_portable.py` only packages them with `--with-fsr4-assets`.
 Build from the flat source folder included in the AppImage (Vulkan headers,
 loader and C++20 compiler required):
 
@@ -26,7 +27,7 @@ clang++ -O2 -std=c++20 -fPIC -shared -fvisibility=hidden -I. \
 The versioned interface header `fsr4_api.h` is included in the package alongside
 this source. No game source, shader or asset is needed to build this component.
 AMD shader/model assets are separate; their full SDK notice is preserved in
-`LICENSE-AMD-SDK.md`. See ADR 0012 (`docs/adr/0012-native-fsr4-lite.md`) and `tools/prepare_fsr4_lite.py` for provenance
+`LICENSE-AMD-SDK.md`. See ADR 0012 (`docs/adr/0012-native-fsr4-lite.md`) and `tools/package/fsr4_prepare.py` for provenance
 and asset preparation. Upstream benchmark logging still says "FSR 4.1.1";
 Monado's `[fsr4]` log identifies the explicitly selected Lite 4.1.2 model.
 
