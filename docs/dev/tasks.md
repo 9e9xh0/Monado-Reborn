@@ -1571,3 +1571,18 @@ Detalle: `docs/PERFORMANCE_UI.md`. Evidencia: `docs/evidence/2026-11-04-performa
   latched, `vc_flush` stages the written pages through the transient ring at submit time; GPU-written-page entries
   unchanged; `XCDE_VC_STAGE=0` is the A/B opt-out. Residual lag-time host reads (SSBOs, `gfast` copy-in) are not
   covered. Detail: [windows-vertex-corruption](../evidence/2026-11-10-vertex-corruption/summary.md).
+- [x] T273 [M10] **GitHub #183: on an ultrawide window the load screen showed the field at the sides.** A skip
+  travel keeps drawing the destination field into the window (the scene composite fills it) and then paints the load
+  screen over that: a 0-texture quad over the whole guest target (the warp fade is the last window draw of those
+  frames). The wide-box
+  classification took it for a UI element and kept it in the centred 16:9 box, so only the box went black while the
+  sides kept the field (5120x1440: black in the centre 2560 px only). Its colour is not in cb0 (that uniform holds a
+  mode, not a colour), so `fade_fill` did not recognise it. Fix: `exec.c` classifies the two screen-fade programs
+  (vs a685500922f4ead7 / fs a7e0523761a10e91 for the warp and menu fade, fs 6a43f4c27a13b6e7 for the boot / save-load
+  screen) as composites, so they fill the window like the black/white fades; `XCDE_LOAD_FADE_WIDE=0` restores the box
+  (A/B). Verified: `XCDE_INPUT_REPLAY=tests/routes/load_a.txt XCDE_TOUR=tests/tours/maps_all.txt XCDE_TOUR_START=2600`
+  (skip travel at frame 2601: fade, load, fade-in), captures every 10 frames: at 5120x1440 frame 2610 was L77/C1/R99
+  before (box black, field at the sides) and L1.3/C1.3/R1.3 after, the fade-in is uniform and the field at frame 2660
+  is unchanged; at 2560x1080 the same frames. A 401-frame before/after over 4100 frames at 1920x810 differs only in
+  the fade/load frames (menus pixel-identical; field frames within the renderer's 1-level run-to-run noise). User
+  check on a 21:9 window (1920x810): looks correct (load-screen edges black; menus and title screen unchanged).

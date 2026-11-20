@@ -6824,6 +6824,24 @@ static void draw_(CmdRec *r, bool indexed) {
             fade_fill = black || white;
         }
         bool composite = reads_scene || fade_fill || (fullscreen_fill && wide_frame == renderer_present_count());
+        {   // [XCDE] GitHub #183: the screen fade the load screen paints over the finished picture (a 0-texture quad over the
+            // whole guest target; the warp fade is the last window draw of those frames). Its colour is not in cb0 (that
+            // uniform holds a mode, not a colour: the fade_fill test cannot see it). Kept in the centred 16:9 box it blacked
+            // out the box only, and during a skip travel the destination field keeps rendering, so the field showed at the
+            // sides of an ultrawide window while the box went black. It fills the window now, like the black/white fades.
+            // Programs: the warp / menu fade (vs a685500922f4ead7, fs a7e0523761a10e91) and the boot / save-load screen
+            // (fs 6a43f4c27a13b6e7). XCDE_LOAD_FADE_WIDE=0 turns it off (the box, as before).
+            static int load_fade = -1;
+            if (load_fade < 0) { const char *e = getenv("XCDE_LOAD_FADE_WIDE"); load_fade = !e || atoi(e) != 0; }
+            if (load_fade && fullscreen_fill) {
+                uint64_t vh = st.program->stages[0].code_hash, fh = st.program->stages[1].code_hash;
+                if ((vh == 0xa685500922f4ead7ull && fh == 0xa7e0523761a10e91ull) || fh == 0x6a43f4c27a13b6e7ull) {
+                    composite = true;
+                    static int logged;
+                    if (!logged++) LOG("[wide] load screen fade fills the window (#183)\n");
+                }
+            }
+        }
         if (!composite) wide_frame = ~0ull;
         // [XCDE] GitHub #97: menus keep the 16:9 box. Their decorations are drawn a little past the Switch's screen to
         // look flush with its edge (the main menu's top-right rule, the selected item's tab) and would hang into the
