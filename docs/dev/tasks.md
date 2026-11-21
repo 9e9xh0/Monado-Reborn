@@ -1601,3 +1601,13 @@ Detalle: `docs/PERFORMANCE_UI.md`. Evidencia: `docs/evidence/2026-11-04-performa
   is unchanged; at 2560x1080 the same frames. A 401-frame before/after over 4100 frames at 1920x810 differs only in
   the fade/load frames (menus pixel-identical; field frames within the renderer's 1-level run-to-run noise). User
   check on a 21:9 window (1920x810): looks correct (load-screen edges black; menus and title screen unchanged).
+- [x] T-RESIZE-PRESERVE (2026-11-21) **Menu / map / load-screen backdrop corruption on dynamic-resolution resize (GitHub #172).**
+  When `res_mode = Dynamic` stepped internal resolution while a paused screen sampled a persistent 16:9 captured render
+  target (`b->scalable == 1`), `tex_backend` in `runtime/nvn/vulkan/textures.c` freed and reallocated the Vulkan image
+  without preserving its contents or clearing new color targets, causing RADV RDNA3 DCC memory to decode as magenta/green/black
+  block noise. Fix: `resize_backend_if_needed` blits GPU-owned color targets across all shared mips before retiring `old.image`
+  (`XCDE_RESIZE_PRESERVE=0` opt-out) and resets upload state on CPU-backed scalable textures; `create_image` zero-clears new
+  uncompressed color render targets (`XCDE_CLEAR_NEW_COLOR_RT=0` opt-out, `XCDE_POISON_NEW_IMAGES=1` diagnostic); `vk_sampler`
+  and `exec.c` `texture_info` restrict `tmp_lod_bias` to CPU-uploaded mipmapped material textures (`XCDE_TMP_LOD_BIAS_ALL=1`
+  opt-out) keyed per quality bucket so live upscaler/quality changes apply cleanly. Covered by `tests/native/test_tex_resize.c`
+  and `tests/unit/test_vk_source_contracts.py`; ROG Ally Z1E / SteamOS in-game verification pending.

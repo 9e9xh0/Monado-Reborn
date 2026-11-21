@@ -85,6 +85,26 @@ class VulkanSourceContracts(unittest.TestCase):
         self.assertIn("g_settings.gpu_profile != GPU_PROFILE_COMPATIBILITY", temporal)
         self.assertIn("g_settings.gpu_profile != GPU_PROFILE_COMPATIBILITY", DEVICE)
 
+    def test_scalable_resize_preserves_gpu_contents_and_clears_new_color_rts(self):
+        textures = (ROOT / "runtime/nvn/vulkan/textures.c").read_text(encoding="utf-8")
+        fn_start = textures.index("static void resize_backend_if_needed(")
+        fn_end = textures.index("static TexBackend *tex_backend(", fn_start)
+        resize_fn = textures[fn_start:fn_end]
+        blit_idx = resize_fn.index("vkCmdBlitImage(cb, old.image, VK_IMAGE_LAYOUT_GENERAL, b->image, VK_IMAGE_LAYOUT_GENERAL,")
+        defer_idx = resize_fn.index("defer((Dead){.img = old.image, .mem = old.mem});")
+        self.assertLess(blit_idx, defer_idx)
+        self.assertIn("b->uploaded = false;", resize_fn)
+        self.assertIn("xcde_tex_should_clear_new_color", textures)
+        self.assertIn("vkCmdClearColorImage", textures)
+        self.assertIn("XCDE_POISON_NEW_IMAGES", textures)
+
+    def test_temporal_lod_bias_is_material_only_and_bucketed(self):
+        textures = (ROOT / "runtime/nvn/vulkan/textures.c").read_text(encoding="utf-8")
+        exec_c = (ROOT / "runtime/nvn/vulkan/exec.c").read_text(encoding="utf-8")
+        self.assertIn("VkSampler variant[5][XCDE_SAMPLER_BIAS_SLOTS];", textures)
+        self.assertIn("xcde_sampler_wants_lod_bias", exec_c)
+        self.assertLess(exec_c.index("xcde_sampler_wants_lod_bias"), exec_c.index("vk_sampler(&((NvnSamplerDesc *)st.spool->entries)[tsc], lod_bias)"))
+
 
 if __name__ == "__main__":
     unittest.main()

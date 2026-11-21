@@ -56,3 +56,7 @@ build/test/test_stick_click.exe
 # [XCDE] GitHub #121: HUD scale anchors and groups (runtime/ui_scale.h).
 $Z -std=c11 -Wall -Wextra -Werror -o build/test/test_ui_scale.exe tests/native/test_ui_scale.c
 build/test/test_ui_scale.exe
+
+# [XCDE] GitHub #172: scalable resize preservation, color RT clear, and material-only LOD bias policy.
+$Z -std=c11 -Wall -Wextra -Werror -Iruntime -o build/test/test_tex_resize.exe tests/native/test_tex_resize.c
+build/test/test_tex_resize.exe

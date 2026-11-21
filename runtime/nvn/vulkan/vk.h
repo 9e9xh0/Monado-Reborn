@@ -154,7 +154,7 @@ VkImageView vk_dummy_storage_view(void);
 VkImageView vk_image_view(TexBackend *b, VkImageViewType type, VkFormat fmt, uint32_t lv0, uint32_t nlv, uint32_t ly0,
                           uint32_t nly, VkComponentMapping sw, VkImageAspectFlags aspect);
 VkImageView vk_dummy_view(int textype);
-VkSampler vk_sampler(NvnSamplerDesc *d);
+VkSampler vk_sampler(NvnSamplerDesc *d, bool apply_lod_bias);
 VkSampler vk_default_sampler(bool linear);
 void vk_image_init_layout(VkCommandBuffer cb, VkImage img, VkImageAspectFlags aspect);
 // Destruction once every submission that may use the object has completed.

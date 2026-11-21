@@ -12,6 +12,8 @@
 #include "vk.h"
 #include "vkq.h"  // [XCDE] the ordered recording worker: uploads, copies and barriers queue in order with the draws
 #include "texture_index.h"
+#include "tex_resize.h"
+#include "temporal.h"
 #include "../../settings.h"  // [XCDE] texture filtering option
 #include "shaders.h"
 void vk_watch(VkImage dst, const char *site);  // [XCDE] debugging: log writes to a watched image
@@ -378,8 +380,26 @@ void vk_collect_dead(void) {
     ndead = k;
 }
 
+static bool is_int_format(VkFormat f) {
+    switch (f) {
+    case VK_FORMAT_R8_UINT: case VK_FORMAT_R8_SINT:
+    case VK_FORMAT_R16_UINT: case VK_FORMAT_R16_SINT:
+    case VK_FORMAT_R32_UINT: case VK_FORMAT_R32_SINT:
+    case VK_FORMAT_R8G8_UINT: case VK_FORMAT_R8G8_SINT:
+    case VK_FORMAT_R16G16_UINT: case VK_FORMAT_R16G16_SINT:
+    case VK_FORMAT_R32G32_UINT: case VK_FORMAT_R32G32_SINT:
+    case VK_FORMAT_R8G8B8A8_UINT: case VK_FORMAT_R8G8B8A8_SINT:
+    case VK_FORMAT_R16G16B16A16_UINT: case VK_FORMAT_R16G16B16A16_SINT:
+    case VK_FORMAT_R32G32B32A32_UINT: case VK_FORMAT_R32G32B32A32_SINT:
+    case VK_FORMAT_A2B10G10R10_UINT_PACK32:
+        return true;
+    default:
+        return false;
+    }
+}
+
 static void tex_bytes_add(TexBackend *b, int sign);
-static void create_image(NvnTexture *t, TexBackend *b) {
+static void create_image(NvnTexture *t, TexBackend *b, bool for_render) {
     VkFmt mf = fmt_of(t->format);
     target_scale(b, &b->sx, &b->sy);
     uint32_t tw = t->width ? t->width : 1, th = t->height ? t->height : 1;
@@ -515,6 +535,29 @@ static void create_image(NvnTexture *t, TexBackend *b) {
                                .dstAccessMask = VK_ACCESS_2_MEMORY_READ_BIT | VK_ACCESS_2_MEMORY_WRITE_BIT};
         VkDependencyInfo di = {.sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO, .memoryBarrierCount = 1, .pMemoryBarriers = &mb};
         vkCmdPipelineBarrier2(cb, &di);
+    } else {
+        // [XCDE] #172: zero-initialize new color render targets (and all mip levels) so unwritten regions/mips cannot
+        // decode as uninitialized DCC/VRAM noise on RADV RDNA3. XCDE_POISON_NEW_IMAGES=1 fills magenta on non-RDNA3 GPUs
+        // to catch unwritten reads locally; XCDE_CLEAR_NEW_COLOR_RT=0 disables the clear for A/B diagnostics.
+        static int clear_rt = -1, poison = -1;
+        if (clear_rt < 0) { const char *e = getenv("XCDE_CLEAR_NEW_COLOR_RT"); clear_rt = !(e && atoi(e) == 0); }
+        if (poison < 0) { const char *e = getenv("XCDE_POISON_NEW_IMAGES"); poison = e && atoi(e) != 0; }
+        if (xcde_tex_should_clear_new_color(depthfmt, samples, (ci.usage & VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT) != 0,
+                                            for_render, b->gpu_owned, t->flags, clear_rt != 0 || poison != 0)) {
+            VkCommandBuffer cb = vk_upload_cmd();
+            VkClearColorValue val = {{0, 0, 0, 0}};
+            if (poison && !is_int_format(b->format)) {
+                val.float32[0] = 1.0f; val.float32[1] = 0.0f; val.float32[2] = 1.0f; val.float32[3] = 1.0f;
+            }
+            VkImageSubresourceRange rg = {VK_IMAGE_ASPECT_COLOR_BIT, 0, VK_REMAINING_MIP_LEVELS, 0, VK_REMAINING_ARRAY_LAYERS};
+            vk_watch(b->image, "textures.c: init vkCmdClearColorImage");
+            vkCmdClearColorImage(cb, b->image, VK_IMAGE_LAYOUT_GENERAL, &val, 1, &rg);
+            VkMemoryBarrier2 mb = {.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER_2, .srcStageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
+                                   .srcAccessMask = VK_ACCESS_2_MEMORY_WRITE_BIT, .dstStageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
+                                   .dstAccessMask = VK_ACCESS_2_MEMORY_READ_BIT | VK_ACCESS_2_MEMORY_WRITE_BIT};
+            VkDependencyInfo di = {.sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO, .memoryBarrierCount = 1, .pMemoryBarriers = &mb};
+            vkCmdPipelineBarrier2(cb, &di);
+        }
     }
 }
 
@@ -570,15 +613,63 @@ static void live_remove(TexBackend *b) {
 }
 
 static TexBackend *shared_backend(NvnTexture *t) { return xcde_texture_index_find(&address_index,g_live,t); }
-static TexBackend *tex_backend(NvnTexture *t) {
+static void resize_backend_if_needed(NvnTexture *t, TexBackend *b, bool for_render) {
+    float wx, wy;
+    target_scale(b, &wx, &wy);
+    if (!b->scalable || (b->sx == wx && b->sy == wy)) return;
+    TexBackend old = *b;
+    views_forget(b);
+    tex_bytes_add(b, -1);
+    b->image = VK_NULL_HANDLE;
+    b->mem = VK_NULL_HANDLE;
+    create_image(t, b, for_render || old.gpu_owned);
+    // [XCDE] #172: dynamic resolution changes target scale while paused screens (Main Menu, Area Map, Load Game) keep
+    // sampling a previously captured 16:9 target. Preserve GPU-owned color contents via blit before retiring old.image,
+    // and invalidate upload state for CPU-backed scalable textures so they re-upload at the new size.
+    static int preserve = -1;
+    if (preserve < 0) { const char *e = getenv("XCDE_RESIZE_PRESERVE"); preserve = !(e && atoi(e) == 0); }
+    XcdeTexDesc od = {old.width, old.height, old.depth, old.levels, old.layers, old.samples,
+                      old.aspect == VK_IMAGE_ASPECT_COLOR_BIT, old.gpu_owned};
+    XcdeTexDesc nd = {b->width, b->height, b->depth, b->levels, b->layers, b->samples,
+                      b->aspect == VK_IMAGE_ASPECT_COLOR_BIT, b->gpu_owned};
+    bool blit_src = old.image && format_supports(old.format, VK_FORMAT_FEATURE_BLIT_SRC_BIT);
+    bool blit_dst = b->image && format_supports(b->format, VK_FORMAT_FEATURE_BLIT_DST_BIT);
+    bool lin_ok = old.image && format_supports(old.format, VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT);
+    XcdeTexResizePlan plan = xcde_tex_plan_resize(&od, &nd, preserve != 0, blit_src, blit_dst, lin_ok);
+    if (plan.invalidate_upload) {
+        b->uploaded = false;
+        b->checked_frame = 0;
+        b->data_hash = 0;
+        b->sample_hash = 0;
+    }
+    if (plan.preserve && old.image && b->image) {
+        VkImageBlit blits[XCDE_TEX_MAX_BLIT_LEVELS];
+        for (uint32_t i = 0; i < plan.level_count; i++) {
+            const XcdeTexBlitLevel *reg = &plan.regions[i];
+            blits[i] = (VkImageBlit){
+                .srcSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, reg->level, 0, plan.layers},
+                .srcOffsets = {{0, 0, 0}, {(int32_t)reg->src_w, (int32_t)reg->src_h, (int32_t)reg->src_d}},
+                .dstSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, reg->level, 0, plan.layers},
+                .dstOffsets = {{0, 0, 0}, {(int32_t)reg->dst_w, (int32_t)reg->dst_h, (int32_t)reg->dst_d}},
+            };
+        }
+        VkCommandBuffer cb = vk_upload_cmd();
+        vk_full_barrier(cb);
+        vk_watch(b->image, "textures.c: resize vkCmdBlitImage");
+        vkCmdBlitImage(cb, old.image, VK_IMAGE_LAYOUT_GENERAL, b->image, VK_IMAGE_LAYOUT_GENERAL,
+                       plan.level_count, blits, plan.linear_filter ? VK_FILTER_LINEAR : VK_FILTER_NEAREST);
+        VkMemoryBarrier2 mb = {.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER_2, .srcStageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
+                               .srcAccessMask = VK_ACCESS_2_MEMORY_WRITE_BIT, .dstStageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
+                               .dstAccessMask = VK_ACCESS_2_MEMORY_READ_BIT | VK_ACCESS_2_MEMORY_WRITE_BIT};
+        VkDependencyInfo di = {.sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO, .memoryBarrierCount = 1, .pMemoryBarriers = &mb};
+        vkCmdPipelineBarrier2(cb, &di);
+    }
+    if (old.image || old.mem) defer((Dead){.img = old.image, .mem = old.mem});
+}
+static TexBackend *tex_backend(NvnTexture *t, bool for_render) {
     TexBackend *b = t->backend;
     if (b) {
-        float wx, wy;
-        target_scale(b, &wx, &wy);
-        if (b->scalable && (b->sx != wx || b->sy != wy)) {  // output resolution changed: reallocate
-            destroy_image(b);
-            create_image(t, b);
-        }
+        resize_backend_if_needed(b->reg ? g_live[b->reg - 1] : t, b, for_render);
         return b;
     }
     // [XCDE] NVN lets several texture objects describe the same storage (a stencil-mode texture over a depth-stencil
@@ -593,13 +684,14 @@ static TexBackend *tex_backend(NvnTexture *t) {
             static int nlog;
             if (nlog++ < 20) LOG("[vk] texture %p shares the image of %p (addr %llx, %ux%u fmt %#x / %#x)\n", (void *)t, (void *)o,
                                  (unsigned long long)t->addr, t->width, t->height, t->format, o->format);
+            resize_backend_if_needed(o, ob, for_render);
             return ob;
         }
     }
     vk_collect_dead();
     b = calloc(1, sizeof *b);
     b->scalable = tex_scalable(t);
-    create_image(t, b);
+    create_image(t, b, for_render);
     t->backend = b;
     live_add(t, b);
     return b;
@@ -1067,7 +1159,7 @@ static void upload_texture_(NvnTexture *t, TexBackend *b) {
 }
 
 TexBackend *vk_tex(NvnTexture *t, bool for_render) {
-    TexBackend *b = tex_backend(t);
+    TexBackend *b = tex_backend(t, for_render);
     if (b->pending_rgba) upload_pending(b);
     if (for_render) b->gpu_owned = true;
     else if (!b->gpu_owned) {
@@ -1079,8 +1171,8 @@ TexBackend *vk_tex(NvnTexture *t, bool for_render) {
     return b;
 }
 
-void renderer_mark_gpu_owned(NvnTexture *t) { tex_backend(t)->gpu_owned = true; }
-bool renderer_is_gpu_owned(NvnTexture *t) { return tex_backend(t)->gpu_owned; }
+void renderer_mark_gpu_owned(NvnTexture *t) { tex_backend(t, true)->gpu_owned = true; }
+bool renderer_is_gpu_owned(NvnTexture *t) { return tex_backend(t, false)->gpu_owned; }
 void backend_pool_written(uint64_t addr, uint64_t size) { (void)addr; (void)size; }
 
 // Host-produced texel data (decoded video, any thread): applied on the render thread at the texture's next use.
@@ -1353,17 +1445,25 @@ static VkCompareOp compare_op(uint32_t f) {
     }
 }
 
-// [XCDE] T-ANISO: one immutable sampler per texture-filtering choice (Original, 2x..16x), so the F1 option applies live.
+// [XCDE] T-ANISO / #172: one immutable sampler per (texture-filtering choice, temporal LOD-bias bucket), so live
+// filtering, upscaler, and quality-mode changes apply immediately and render targets never inherit the scene's bias.
 // All variants are retained until device teardown: command buffers may still reference the previous one.
-typedef struct { VkSampler variant[5]; } SamplerVariants;
-VkSampler vk_sampler(NvnSamplerDesc *d) {
+typedef struct { VkSampler variant[5][XCDE_SAMPLER_BIAS_SLOTS]; } SamplerVariants;
+VkSampler vk_sampler(NvnSamplerDesc *d, bool apply_lod_bias) {
     int filtering = g_settings.graphics.value[GFX_FILTERING];
     if (filtering < 0 || filtering > 4) filtering = 0;
+    uint32_t mf = d->min_filter;
+    float lod_bias = 0.0f;
+    int bias_slot = 0;
+    if (apply_lod_bias && mf > 1 && !d->compare_mode && !d->reduction) {
+        bias_slot = xcde_sampler_bias_bucket(true, mf, d->compare_mode, d->reduction,
+                                             tmp_lod_bias(), tmp_lod_bias_forced(),
+                                             g_settings.upscale_quality, &lod_bias);
+    }
     SamplerVariants *variants = d->backend;
-    if (variants && variants->variant[filtering]) return variants->variant[filtering];
+    if (variants && variants->variant[filtering][bias_slot]) return variants->variant[filtering][bias_slot];
     VkSamplerCreateInfo si = {.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO};
     si.magFilter = d->mag_filter == 1 ? VK_FILTER_LINEAR : VK_FILTER_NEAREST;
-    uint32_t mf = d->min_filter;
     si.minFilter = (mf == 1 || mf == 3 || mf == 5) ? VK_FILTER_LINEAR : VK_FILTER_NEAREST;
     si.mipmapMode = mf == 4 || mf == 5 ? VK_SAMPLER_MIPMAP_MODE_LINEAR : VK_SAMPLER_MIPMAP_MODE_NEAREST;
     VkSamplerAddressMode modes[3];
@@ -1392,11 +1492,7 @@ VkSampler vk_sampler(NvnSamplerDesc *d) {
     si.maxLod = d->lod_max > 1000 ? VK_LOD_CLAMP_NONE : d->lod_max;
     if (mf <= 1) si.maxLod = si.minLod + 0.25f;  // not mipmapped: stay on the base level
     if (si.maxLod < si.minLod) si.maxLod = si.minLod;
-    si.mipLodBias = d->lod_bias;
-    if (mf > 1 && !d->compare_mode && !d->reduction) {  // [XCDE] T260: texture LOD bias for FSR 3 / DLSS (temporal.c tmp_lod_bias)
-        extern float tmp_lod_bias(void);
-        si.mipLodBias += tmp_lod_bias();
-    }
+    si.mipLodBias = d->lod_bias + lod_bias;
     if (d->max_aniso > 1) { si.anisotropyEnable = VK_TRUE; si.maxAnisotropy = fminf(d->max_aniso, 16); }
     static float lodmin = -1;
     if (lodmin < 0) lodmin = getenv("LARECOMP_LOD_MIN") ? (float)atof(getenv("LARECOMP_LOD_MIN")) : 0;
@@ -1443,7 +1539,7 @@ VkSampler vk_sampler(NvnSamplerDesc *d) {
         if (!variants) FATAL("sampler variant allocation failed\n");
         d->backend = variants;
     }
-    variants->variant[filtering] = s;
+    variants->variant[filtering][bias_slot] = s;
     return s;
 }
 
@@ -1485,7 +1581,7 @@ bool vk_tex_add_storage(NvnTexture *t, VkCommandBuffer cb) {
     TexBackend old = *b;
     views_forget(b);
     b->image = VK_NULL_HANDLE; b->mem = VK_NULL_HANDLE;
-    create_image(t, b);
+    create_image(t, b, false);
     if (!b->has_storage || b->width != old.width || b->height != old.height || b->levels != old.levels || b->layers != old.layers ||
         b->depth != old.depth) {
         LOG("[vk] T192: storage re-creation of %llx did not take (fmt %d)\n", (unsigned long long)t->addr, (int)b->format);

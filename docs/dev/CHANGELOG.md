@@ -54,3 +54,18 @@ of `tasks.md`; do not move them, they are the record.
   and the GPL notice for the FSR 4 Lite capture tooling in release packages, pruning merged remote branches and
   normalizing tag names, and pinning GitHub Actions / unifying the CI Python version.
 
+## 2026-11-21 — fix menu/map/load backdrop corruption on dynamic resolution resize (#172)
+
+- Cross-referencing the reporter's `last_game.log` from GitHub #172 showed `res_mode = Dynamic` stepping internal
+  resolution back up (`0.80 -> 1.00`) as soon as a paused screen (Main Menu, Area Map, Load Game) dropped GPU time,
+  triggering `tex_backend` reallocation of persistent 16:9 captured backdrops without preserving pixels.
+- Preserved GPU-owned scalable color textures across all shared mip levels via `vkCmdBlitImage` before deferring old
+  image destruction (`runtime/nvn/vulkan/textures.c`, `runtime/nvn/vulkan/tex_resize.h`), and invalidated upload state
+  for CPU-backed scalable textures (`XCDE_RESIZE_PRESERVE=0` opt-out).
+- Hardened new uncompressed color render-target creation in `create_image` with a zero-clear (`XCDE_CLEAR_NEW_COLOR_RT=0`
+  opt-out) and added `XCDE_POISON_NEW_IMAGES=1` magenta initialization for catching unwritten-RT reads on non-RDNA3 GPUs.
+- Scoped `tmp_lod_bias()` to CPU-uploaded mipmapped material textures in `exec.c` (`XCDE_TMP_LOD_BIAS_ALL=1` escape hatch)
+  and extended `SamplerVariants` in `textures.c` by quality bucket so live upscaler/quality switches take effect cleanly.
+- Added `tests/native/test_tex_resize.c` (wired into `scripts/native_tests.sh`) and source contract assertions in
+  `tests/unit/test_vk_source_contracts.py`.
+

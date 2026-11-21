@@ -623,10 +623,16 @@ static void mv_shot(VkCommandBuffer cb, uint32_t rw, uint32_t rh, const double r
     pend_frame = f;
 }
 
-// [XCDE] T260: FSR / DLSS ask for a negative texture LOD bias of about -log2(output / render size) while the scene is
-// rendered below the output size (the game's textures stay sharp for the upscaler; without it they look soft and shimmer,
-// more the lower the render size). Added to the game's own bias in textures.c vk_sampler (samplers are created once: change
-// the upscale quality, then restart). XCDE_TMP_LOD_BIAS=<value> sets it by hand (0 = off).
+// [XCDE] T260 / #172: FSR / DLSS ask for a negative texture LOD bias of about -log2(output / render size) while the
+// scene is rendered below the output size (the game's textures stay sharp for the upscaler; without it they look soft
+// and shimmer, more the lower the render size). Applied in textures.c vk_sampler to material textures only (never
+// render targets) and keyed per quality bucket so live upscaler/quality switches apply immediately.
+// XCDE_TMP_LOD_BIAS=<value> sets it by hand (0 = off).
+bool tmp_lod_bias_forced(void) {
+    static int forced = -1;
+    if (forced < 0) { const char *e = getenv("XCDE_TMP_LOD_BIAS"); forced = (e && *e) ? 1 : 0; }
+    return forced != 0;
+}
 float tmp_lod_bias(void) {
     static float forced = 1e9f;
     if (forced == 1e9f) { const char *e = getenv("XCDE_TMP_LOD_BIAS"); forced = e && *e ? (float)atof(e) : 1e8f; }
