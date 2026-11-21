@@ -110,15 +110,16 @@ def main():
             print('note: no native FSR 3 component (scripts/build_fsr3_linux.sh): packaged without it')
         dlss_lib = build / 'libmonado_dlss.so'
         dlss_ngx = build / 'libnvidia-ngx-dlss.so.310.9.1'
-        if dlss_lib.is_file() and dlss_ngx.is_file():
+        if dlss_lib.is_file():
             shutil.copy2(dlss_lib, lib / dlss_lib.name)
             payloads.append(dlss_lib)
+        else:
+            print('note: no native Linux DLSS adapter (tools/package/setup_linux_dlss.py, scripts/build_dlss_linux.sh): packaged without it')
+        if dlss_ngx.is_file():
             (share / 'dlss').mkdir(parents=True, exist_ok=True)
             shutil.copy2(dlss_ngx, share / 'dlss' / dlss_ngx.name)
             if (build / 'dlss-LICENSE.txt').is_file():
                 shutil.copy2(build / 'dlss-LICENSE.txt', docs / 'dlss-LICENSE.txt')
-        else:
-            print('note: no native Linux DLSS component (tools/package/setup_linux_dlss.py, scripts/build_dlss_linux.sh): packaged without it')
         assets = a.fsr4_assets.resolve()
         if fsr4.is_file() and (assets / 'provenance.json').is_file():
             manifest = json.loads((assets / 'provenance.json').read_text())

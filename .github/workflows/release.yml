@@ -13,7 +13,8 @@
 #
 # Upscalers: FSR 1 always; FSR 3 (Linux: native component built from AMD's SDK source; Windows: AMD's signed DLL from
 # the official FidelityFX SDK 1.1.4 release); DLSS on Windows (NVIDIA's official Streamline release,
-# tools/package/install_dlss.py, hash-pinned); FSR 4 Lite on both. FSR 4 Lite's model files are NOT packaged (they are
+# tools/package/install_dlss.py, hash-pinned) and Linux (NVIDIA NGX, tools/package/setup_linux_dlss.py, hash-pinned);
+# FSR 4 Lite on both. FSR 4 Lite's model files are NOT packaged (they are
 # derived from AMD's SDK): the packages carry the preparation tool (tools/build/build_fsr4prep.py) and the launcher's
 # "Prepare FSR 4 Lite" makes them once on the player's PC from AMD's own download.
 name: release
@@ -151,11 +152,14 @@ jobs:
           CC: clang-19
           CXX: clang++-19
         run: |
+          .venv/bin/python tools/package/setup_linux_dlss.py
           # clang 19+: runtime/platform/linux.c checks __builtin_cpu_supports("cx16")
           cmake --preset linux -B build/cmake/release -DMONADO_RELEASE=ON "-DMONADO_VERSION=${{ needs.version.outputs.version }}" -DCMAKE_C_COMPILER=clang-19 -DCMAKE_CXX_COMPILER=clang++-19 -DMONADO_PGO=build/pgo/monado.profdata
           cmake --build build/cmake/release
           test -f build/linux/libmonado_fsr3.so || { echo "::error::native FSR 3 was not built"; exit 1; }
           test -f build/linux/libmonado_fsr4.so || { echo "::error::native FSR 4 Lite was not built"; exit 1; }
+          test -f build/linux/libmonado_dlss.so || { echo "::error::native Linux DLSS was not built"; exit 1; }
+          test -f build/linux/libnvidia-ngx-dlss.so.310.9.1 || { echo "::error::Linux DLSS runtime was not staged"; exit 1; }
       - name: Freeze the builder
         run: .venv/bin/python tools/gamebuild/freeze_gamebuild.py --python .venv/bin/python
       - name: FSR 4 Lite preparation tool
