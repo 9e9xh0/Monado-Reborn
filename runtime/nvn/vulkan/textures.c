@@ -969,6 +969,8 @@ static void upload_texture_(NvnTexture *t, TexBackend *b) {
     static int always_full = -1;
     if (always_full < 0) always_full = getenv("LARECOMP_TEX_FULLHASH") || exact ? 1 : 0;
     bool full = b->dynamic || !b->uploaded || always_full;
+    static int64_t periodic_frames = -1;
+    if (periodic_frames < 0) { const char *e = getenv("XCDE_TEX_PERIODIC"); periodic_frames = e ? atoll(e) : 600; }
     bool periodic = frame - b->full_frame >= 120 && full_hash_budget >= total;  // (safety net: a full hash now and then)
     if (!full && periodic) { full = true; full_hash_budget -= total; }
     { uint64_t q = SDL_GetTicksNS(); if (!b->tp) b->tp = texpatch_identify(t) + 1; up_tp_ns += SDL_GetTicksNS() - q; }  // (button prompts / Hero Mode icon: re-uploaded when their look changes)
@@ -987,7 +989,8 @@ static void upload_texture_(NvnTexture *t, TexBackend *b) {
         if (ch >= 0) {
             b->wgen = now;
             if (!ch && b->uploaded && !restyle) {
-                if (!periodic) { prof_tex_watch_skips++; return; }
+                bool watch_periodic = periodic_frames > 0 && (int64_t)(frame - b->full_frame) >= periodic_frames && full_hash_budget >= total;
+                if (!watch_periodic) { prof_tex_watch_skips++; return; }
                 if (b->dynamic) full_hash_budget -= total;  // (the others took theirs above)
             }
         }

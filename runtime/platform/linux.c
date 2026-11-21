@@ -32,6 +32,91 @@
 
 static bool guest_heap_reserved;  // [XCDE] T-LINUX-GTT
 
+// ---- Linux page write tracking (mprotect(PROT_READ) + SIGSEGV)
+#define WW_PAGE 4096ull
+#define WW_NPAGES (HEAP_MAX / WW_PAGE)
+enum { WW_UNTRACKED = 0, WW_WATCHED = 1, WW_DIRTY = 2, WW_HOT = 3, WW_EXTERNAL = 4 };
+static _Atomic uint8_t *ww_state;
+static uint8_t *ww_streak;
+static _Atomic int ww_mode;  // 0 uninit, 1 active, -1 disabled
+static pthread_mutex_t ww_lock = PTHREAD_MUTEX_INITIALIZER;
+static bool ww_sig_installed;
+
+static void crash_handler(int sig, siginfo_t *si, void *ctx);
+
+static bool ww_init(void) {
+    int m = atomic_load_explicit(&ww_mode, memory_order_acquire);
+    if (m != 0) return m > 0;
+    pthread_mutex_lock(&ww_lock);
+    m = atomic_load_explicit(&ww_mode, memory_order_relaxed);
+    if (m != 0) {
+        pthread_mutex_unlock(&ww_lock);
+        return m > 0;
+    }
+    const char *env = getenv("XCDE_LINUX_WRITE_WATCH");
+    if ((env && atoi(env) == 0) || !guest_heap_reserved || (size_t)sysconf(_SC_PAGESIZE) != WW_PAGE) {
+        atomic_store_explicit(&ww_mode, -1, memory_order_release);
+        pthread_mutex_unlock(&ww_lock);
+        return false;
+    }
+    if (!ww_sig_installed) {
+        struct sigaction sa = {0};
+        sa.sa_sigaction = crash_handler;
+        sa.sa_flags = SA_SIGINFO | SA_ONSTACK;
+        sigaction(SIGSEGV, &sa, NULL);
+        ww_sig_installed = true;
+    }
+    // Probe mprotect(PROT_READ) on page 0 (works on both anonymous mmap and amdgpu dma-buf GTT).
+    if (mprotect((void *)(uintptr_t)HEAP_BASE, WW_PAGE, PROT_READ) != 0 ||
+        mprotect((void *)(uintptr_t)HEAP_BASE, WW_PAGE, PROT_READ | PROT_WRITE) != 0) {
+        fprintf(stderr, "[plat] linux write-watch disabled: mprotect probe failed (%s)\n", strerror(errno));
+        atomic_store_explicit(&ww_mode, -1, memory_order_release);
+        pthread_mutex_unlock(&ww_lock);
+        return false;
+    }
+    ww_state = calloc(WW_NPAGES, sizeof *ww_state);
+    ww_streak = calloc(WW_NPAGES, sizeof *ww_streak);
+    if (!ww_state || !ww_streak) {
+        free(ww_state); free(ww_streak);
+        ww_state = NULL; ww_streak = NULL;
+        atomic_store_explicit(&ww_mode, -1, memory_order_release);
+        pthread_mutex_unlock(&ww_lock);
+        return false;
+    }
+    atomic_store_explicit(&ww_mode, 1, memory_order_release);
+    fprintf(stderr, "[plat] linux write-watch active (mprotect + SIGSEGV)\n");
+    pthread_mutex_unlock(&ww_lock);
+    return true;
+}
+
+static bool ww_handle_fault(uint64_t fa, int sig, const siginfo_t *si, const ucontext_t *uc) {
+    (void)si;
+    if (sig != SIGSEGV || atomic_load_explicit(&ww_mode, memory_order_acquire) != 1) return false;
+    if (fa < HEAP_BASE || fa >= HEAP_BASE + HEAP_MAX) return false;
+#if defined(__x86_64__)
+    if (!(uc->uc_mcontext.gregs[REG_ERR] & 2)) return false;
+#elif defined(__aarch64__)
+    (void)uc;
+    if (si->si_code != SEGV_ACCERR) return false;
+#else
+    (void)uc;
+#endif
+    uint64_t p = (fa - HEAP_BASE) >> 12;
+    uint8_t st = atomic_load_explicit(&ww_state[p], memory_order_acquire);
+    if (st == WW_UNTRACKED || st == WW_EXTERNAL) return false;
+    mprotect((void *)(uintptr_t)(HEAP_BASE + (p << 12)), WW_PAGE, PROT_READ | PROT_WRITE);
+    if (st != WW_HOT) atomic_store_explicit(&ww_state[p], WW_DIRTY, memory_order_release);
+    return true;
+}
+
+static void ww_protect_run(uint64_t start, uint64_t end) {
+    if (start >= end) return;
+    if (mprotect((void *)(uintptr_t)(HEAP_BASE + (start << 12)), (end - start) << 12, PROT_READ) != 0) {
+        for (uint64_t p = start; p < end; p++)
+            atomic_store_explicit(&ww_state[p], WW_HOT, memory_order_release);
+    }
+}
+
 // ---- guest address space
 // Everything readable/writable from the start, like macOS: the guest maps at 4K granularity, and untouched pages
 // cost nothing (MAP_NORESERVE: the 12 GB window doesn't count against overcommit).
@@ -52,6 +137,10 @@ int plat_gpu_heap_fd(uint64_t address, uint64_t size, uint64_t *allocation_size)
 
 // Fresh zero pages over the whole window (the old ones are released at once).
 bool plat_reset_guest(uint64_t lo, uint64_t hi) {
+    if (atomic_load_explicit(&ww_mode, memory_order_acquire) == 1 && lo <= HEAP_BASE && hi >= HEAP_BASE + HEAP_MAX) {
+        memset(ww_state, 0, WW_NPAGES);
+        memset(ww_streak, 0, WW_NPAGES);
+    }
     // [XCDE] T-LINUX-GTT: keep the driver-owned heap (and its Vulkan import) across a guest reset; zero it instead.
     // The caller has stopped guest and GPU work.
     if (gpu_heap_fd >= 0 && lo <= gpu_heap_base && hi >= gpu_heap_base + gpu_heap_size) {
@@ -60,6 +149,7 @@ bool plat_reset_guest(uint64_t lo, uint64_t hi) {
         uint64_t end = gpu_heap_base + gpu_heap_size;
         if (hi > end && mmap((void *)(uintptr_t)end, hi - end, PROT_READ | PROT_WRITE,
             MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE | MAP_FIXED, -1, 0) != (void *)(uintptr_t)end) return false;
+        mprotect((void *)gpu_heap_base, gpu_heap_size, PROT_READ | PROT_WRITE);
         memset((void *)gpu_heap_base, 0, gpu_heap_size);
         return true;
     }
@@ -69,14 +159,117 @@ bool plat_reset_guest(uint64_t lo, uint64_t hi) {
 
 void plat_commit(uint64_t addr, uint64_t size) { (void)addr; (void)size; }
 
-int plat_written_pages(uint64_t addr, uint64_t size, uint64_t *pages, int max, uint64_t *page) {  // (no write tracking)
-    (void)addr; (void)size; (void)pages; (void)max; (void)page;
-    return -1;
+int plat_written_pages(uint64_t addr, uint64_t size, uint64_t *pages, int max, uint64_t *page) {
+    if (!size || max <= 0 || addr < HEAP_BASE || addr - HEAP_BASE > HEAP_MAX ||
+        size > HEAP_MAX - (addr - HEAP_BASE) || !ww_init())
+        return -1;
+    *page = WW_PAGE;
+    uint64_t p0 = (addr - HEAP_BASE) >> 12;
+    uint64_t p1 = (addr - HEAP_BASE + size + WW_PAGE - 1) >> 12;
+    int count = 0;
+    uint64_t run_start = 0, run_end = 0;
+    for (uint64_t p = p0; p < p1; p++) {
+        uint8_t st = atomic_load_explicit(&ww_state[p], memory_order_acquire);
+        bool dirty = false, protect = false;
+        switch (st) {
+        case WW_WATCHED:
+            ww_streak[p] = 0;
+            break;
+        case WW_UNTRACKED:
+            dirty = true;
+            ww_streak[p] = 0;
+            atomic_store_explicit(&ww_state[p], WW_WATCHED, memory_order_release);
+            protect = true;
+            break;
+        case WW_DIRTY:
+            dirty = true;
+            if (ww_streak[p] < 16) ww_streak[p]++;
+            if (ww_streak[p] >= 16) {
+                atomic_store_explicit(&ww_state[p], WW_HOT, memory_order_release);
+            } else {
+                atomic_store_explicit(&ww_state[p], WW_WATCHED, memory_order_release);
+                protect = true;
+            }
+            break;
+        case WW_HOT:
+            dirty = true;
+            if (++ww_streak[p] == 0) {
+                atomic_store_explicit(&ww_state[p], WW_WATCHED, memory_order_release);
+                protect = true;
+            }
+            break;
+        case WW_EXTERNAL:
+            dirty = true;
+            break;
+        }
+        if (dirty) {
+            if (count < max) pages[count] = HEAP_BASE + (p << 12);
+            count++;
+        }
+        if (protect) {
+            if (run_start == run_end) { run_start = p; run_end = p + 1; }
+            else if (run_end == p) { run_end = p + 1; }
+            else { ww_protect_run(run_start, run_end); run_start = p; run_end = p + 1; }
+        }
+    }
+    ww_protect_run(run_start, run_end);
+    return count > max ? max : count;
+}
+
+void plat_will_write(uint64_t addr, uint64_t size) {
+    if (!size || atomic_load_explicit(&ww_mode, memory_order_acquire) != 1) return;
+    uint64_t end = addr + size;
+    if (end < addr) end = HEAP_BASE + HEAP_MAX;
+    if (end <= HEAP_BASE || addr >= HEAP_BASE + HEAP_MAX) return;
+    uint64_t lo = addr < HEAP_BASE ? HEAP_BASE : addr;
+    uint64_t hi = end > HEAP_BASE + HEAP_MAX ? HEAP_BASE + HEAP_MAX : end;
+    uint64_t p0 = (lo - HEAP_BASE) >> 12;
+    uint64_t p1 = (hi - HEAP_BASE + WW_PAGE - 1) >> 12;
+    uint64_t run_start = 0, run_end = 0;
+    for (uint64_t p = p0; p < p1; p++) {
+        if (atomic_load_explicit(&ww_state[p], memory_order_acquire) == WW_WATCHED) {
+            if (run_start == run_end) { run_start = p; run_end = p + 1; }
+            else if (run_end == p) { run_end = p + 1; }
+            else {
+                mprotect((void *)(uintptr_t)(HEAP_BASE + (run_start << 12)), (run_end - run_start) << 12, PROT_READ | PROT_WRITE);
+                for (uint64_t q = run_start; q < run_end; q++)
+                    atomic_store_explicit(&ww_state[q], WW_DIRTY, memory_order_release);
+                run_start = p; run_end = p + 1;
+            }
+        }
+    }
+    if (run_start < run_end) {
+        mprotect((void *)(uintptr_t)(HEAP_BASE + (run_start << 12)), (run_end - run_start) << 12, PROT_READ | PROT_WRITE);
+        for (uint64_t q = run_start; q < run_end; q++)
+            atomic_store_explicit(&ww_state[q], WW_DIRTY, memory_order_release);
+    }
 }
 
 int plat_protect(uint64_t addr, uint64_t size, int prot) {
     int p = prot == PLAT_PROT_NONE ? PROT_NONE : prot == PLAT_PROT_READ ? PROT_READ : PROT_READ | PROT_WRITE;
-    return mprotect((void *)(uintptr_t)addr, size, p);
+    uint64_t end = addr + size;
+    if (end < addr) end = HEAP_BASE + HEAP_MAX;
+    bool track = size && atomic_load_explicit(&ww_mode, memory_order_acquire) == 1 &&
+                 end > HEAP_BASE && addr < HEAP_BASE + HEAP_MAX;
+    uint64_t p0 = 0, p1 = 0;
+    if (track) {
+        uint64_t lo = addr < HEAP_BASE ? HEAP_BASE : addr;
+        uint64_t hi = end > HEAP_BASE + HEAP_MAX ? HEAP_BASE + HEAP_MAX : end;
+        p0 = (lo - HEAP_BASE) >> 12;
+        p1 = (hi - HEAP_BASE + WW_PAGE - 1) >> 12;
+        if (prot != PLAT_PROT_RW) {
+            for (uint64_t i = p0; i < p1; i++)
+                atomic_store_explicit(&ww_state[i], WW_EXTERNAL, memory_order_release);
+        }
+    }
+    int rc = mprotect((void *)(uintptr_t)addr, size, p);
+    if (track && rc == 0 && prot == PLAT_PROT_RW) {
+        for (uint64_t i = p0; i < p1; i++) {
+            if (atomic_load_explicit(&ww_state[i], memory_order_acquire) == WW_EXTERNAL)
+                atomic_store_explicit(&ww_state[i], WW_UNTRACKED, memory_order_release);
+        }
+    }
+    return rc;
 }
 
 // ---- time
@@ -248,9 +441,10 @@ void plat_print_backtrace(void) {
 
 static void crash_handler(int sig, siginfo_t *si, void *ctx) {
     ucontext_t *uc = ctx;
+    uint64_t fa = (uint64_t)(uintptr_t)si->si_addr;
+    if (ww_handle_fault(fa, sig, si, uc)) return;
     static volatile int depth;
     if (sig == SIGABRT && depth++ > 0) { signal(SIGABRT, SIG_DFL); abort(); }  // (nested: just die)
-    uint64_t fa = (uint64_t)(uintptr_t)si->si_addr;
 #if defined(__aarch64__)
     uint64_t pc = uc->uc_mcontext.pc, lr = uc->uc_mcontext.regs[30];
 #else
@@ -275,6 +469,7 @@ void plat_crash_handler_install(void) {
     sigaction(SIGILL, &sa, NULL);
     sigaction(SIGFPE, &sa, NULL);
     sigaction(SIGABRT, &sa, NULL);
+    ww_sig_installed = true;
 }
 
 // ---- child processes

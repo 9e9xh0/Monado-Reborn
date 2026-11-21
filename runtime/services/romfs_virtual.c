@@ -377,6 +377,7 @@ static void copy_mem(uint8_t *dst, uint64_t off, uint64_t n, const uint8_t *src,
 int64_t rvfs_read(uint8_t *dst, uint64_t size, uint64_t off) {
     if (off >= g_image_size) return 0;
     if (off + size > g_image_size) size = g_image_size - off;
+    plat_will_write((uint64_t)(uintptr_t)dst, size);
     uint64_t done = 0;
     while (done < size) {
         uint64_t o = off + done, n = size - done;

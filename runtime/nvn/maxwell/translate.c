@@ -88,6 +88,7 @@ typedef struct {
     // [XCDE] SSY/PBK/PCNT stacks resolved at translation (resolve_stacks): per instruction index the pc a SYNC / BRK /
     // CONT jumps to, so the GLSL has no run-time stack arrays. NULL: not resolvable, the arrays as before.
     uint32_t *stk_tgt;
+    bool uses_stk_arr;
 } Ctx;
 
 static uint64_t bits(uint64_t w, int lo, int n) { return (w >> lo) & ((n == 64) ? ~0ull : ((1ull << n) - 1)); }
@@ -1215,22 +1216,25 @@ static void emit_insn(Ctx *c, uint64_t w, uint32_t pc) {
         sp(&c->body, "    pc = %uu; continue;\n", target);
     } else if (OPM(0xe290000000000000ull, 0xfff0000000000020ull)) {  // SSY
         c->uses_branches = true;
-        if (!c->stk_tgt) sp(&c->body, "    ssy[ssy_n++] = %uu;\n", norm_target((int64_t)pc + 8 + sbits(w, 20, 24)));
+        if (!c->stk_tgt) { c->uses_stk_arr = true; sp(&c->body, "    ssy[ssy_n++] = %uu;\n", norm_target((int64_t)pc + 8 + sbits(w, 20, 24))); }
     } else if (OPM(0xe2a0000000000000ull, 0xfff0000000000020ull)) {  // PBK
         c->uses_branches = true;
-        if (!c->stk_tgt) sp(&c->body, "    pbk[pbk_n++] = %uu;\n", norm_target((int64_t)pc + 8 + sbits(w, 20, 24)));
+        if (!c->stk_tgt) { c->uses_stk_arr = true; sp(&c->body, "    pbk[pbk_n++] = %uu;\n", norm_target((int64_t)pc + 8 + sbits(w, 20, 24))); }
     } else if (OPM(0xe2b0000000000000ull, 0xfff0000000000020ull)) {  // PCNT
         c->uses_branches = true;
-        if (!c->stk_tgt) sp(&c->body, "    pcnt[pcnt_n++] = %uu;\n", norm_target((int64_t)pc + 8 + sbits(w, 20, 24)));
+        if (!c->stk_tgt) { c->uses_stk_arr = true; sp(&c->body, "    pcnt[pcnt_n++] = %uu;\n", norm_target((int64_t)pc + 8 + sbits(w, 20, 24))); }
     } else if (OPM(0xf0f8000000000000ull, 0xfff8000000000000ull)) {  // SYNC
         if (c->stk_tgt && c->stk_tgt[pc / 8]) sp(&c->body, "    pc = %uu; continue;\n", c->stk_tgt[pc / 8]);
-        else sp(&c->body, "    pc = ssy[--ssy_n]; continue;\n");  // (resolved programs: only where the walk never got)
+        else if (c->stk_tgt) sp(&c->body, "    exit_now = true; break;\n");
+        else { c->uses_stk_arr = true; sp(&c->body, "    pc = ssy[--ssy_n]; continue;\n"); }  // (resolved programs: only where the walk never got)
     } else if (OPM(0xe340000000000000ull, 0xfff0000000000000ull)) {  // BRK
         if (c->stk_tgt && c->stk_tgt[pc / 8]) sp(&c->body, "    pc = %uu; continue;\n", c->stk_tgt[pc / 8]);
-        else sp(&c->body, "    pc = pbk[--pbk_n]; continue;\n");
+        else if (c->stk_tgt) sp(&c->body, "    exit_now = true; break;\n");
+        else { c->uses_stk_arr = true; sp(&c->body, "    pc = pbk[--pbk_n]; continue;\n"); }
     } else if (OPM(0xe350000000000000ull, 0xfff0000000000000ull)) {  // CONT
         if (c->stk_tgt && c->stk_tgt[pc / 8]) sp(&c->body, "    pc = %uu; continue;\n", c->stk_tgt[pc / 8]);
-        else sp(&c->body, "    pc = pcnt[pcnt_n - 1]; continue;\n");
+        else if (c->stk_tgt) sp(&c->body, "    exit_now = true; break;\n");
+        else { c->uses_stk_arr = true; sp(&c->body, "    pc = pcnt[pcnt_n - 1]; continue;\n"); }
     } else if (OPM(0xf0f0000000000000ull, 0xfff8000000000000ull) || OPM(0x50b0000000000000ull, 0xfff8000000000000ull) ||
                OPM(0xef98000000000000ull, 0xfff8000000000000ull)) {
         // DEPBAR / NOP / MEMBAR
@@ -2287,7 +2291,7 @@ static const char *glsl_sampler_type(const ShaderTexture *t) {
 #include "scaled_gather.h"
 
 // Declarations + entry point around the (rewritten) body; mirrors the MSL assembly in maxwell_translate.
-static ShaderInfo *glsl_finish(Ctx *c, bool any_branch, bool dbg) {
+static ShaderInfo *glsl_finish(Ctx *c, int flow_mode, bool dbg) {
     ShaderInfo *info = c->info;
     const ShaderKey *key = c->key;
     int stage = c->stage;
@@ -2418,12 +2422,17 @@ static ShaderInfo *glsl_finish(Ctx *c, bool any_branch, bool dbg) {
     if (c->uses_cc) sp(&s, "  uint cc = 0u; bool ccz = false, ccs = false;\n");
     if (c->uses_local) sp(&s, "  uint lmem[%d]; for (int li_ = 0; li_ < %d; li_++) lmem[li_] = 0u;\n", LMEM_WORDS, LMEM_WORDS);
     if (dbg) sp(&s, maxwell_dbg_pc == 0xffffffffu ? "  float dbgv = 1.0f;\n" : "  float dbgv = -1.0f;\n");
-    if (any_branch) {
-        sp(&s, "  uint pc = 8u; uint ssy[16]; uint ssy_n = 0u; uint pbk[16]; uint pbk_n = 0u; uint pcnt[16]; uint pcnt_n = 0u;\n");
+    if (flow_mode == 1) {
+        sp(&s, "  uint pc = 8u;\n");
+        if (c->uses_stk_arr)
+            sp(&s, "  uint ssy[16]; uint ssy_n = 0u; uint pbk[16]; uint pbk_n = 0u; uint pcnt[16]; uint pcnt_n = 0u;\n");
         sp(&s, "  bool exit_now = false;\n");
         sp(&s, "  for (uint guard = 0u; guard < 100000u; guard++) {\n  switch (pc) {\n");
         sp(&s, "%s", body.buf ? body.buf : "");
         sp(&s, "    exit_now = true; break;\n  default: exit_now = true; break;\n  }\n  if (exit_now) break;\n  }\n");
+    } else if (flow_mode == 2) {
+        sp(&s, "  bool exit_now = false;\n");
+        sp(&s, "  do {\n%s  } while (false);\n", body.buf ? body.buf : "");
     } else {
         sp(&s, "  do {\n%s  } while (false);\n", body.buf ? body.buf : "");
     }
@@ -2494,6 +2503,297 @@ static ShaderInfo *glsl_finish(Ctx *c, bool any_branch, bool dbg) {
     free(c->body.buf);
     free(c);
     return info;
+}
+
+enum { FLOW_NONE = 0, FLOW_NOP, FLOW_EXIT, FLOW_JUMP };
+typedef struct {
+    uint8_t kind;
+    bool guarded;
+    int pr;
+    bool prn;
+    size_t target;
+    bool reachable;
+} FlowInfo;
+
+static size_t next_inst(size_t i) {
+    size_t n = i + 1;
+    if (n % 4 == 0) n++;
+    return n;
+}
+
+static bool structured_cfg_on(void) {
+    static int on = -1;
+    if (on < 0) {
+        const char *e = getenv("XCDE_STRUCTURED_CFG");
+        on = !(e && atoi(e) == 0);
+    }
+    return on != 0;
+}
+
+static bool struct_has_external_entry(const FlowInfo *f, size_t end, size_t r_start, size_t r_stop, bool allow_head) {
+    for (size_t k = 1; k < end; k++) {
+        if (k % 4 == 0 || !f[k].reachable || f[k].kind != FLOW_JUMP) continue;
+        if (k >= r_start && k < r_stop) continue;
+        size_t t = f[k].target;
+        if (t >= r_start && t < r_stop && !(allow_head && t == r_start)) return true;
+    }
+    return false;
+}
+
+static bool struct_range_dead(const FlowInfo *f, size_t start, size_t stop) {
+    for (size_t k = start; k < stop; k++) {
+        if (k % 4 != 0 && f[k].reachable) return false;
+    }
+    return true;
+}
+
+static size_t struct_find_loop_end(const FlowInfo *f, size_t i, size_t stop) {
+    size_t b_max = 0;
+    for (size_t b = i; b < stop; b++) {
+        if (b % 4 == 0 || !f[b].reachable) continue;
+        if (f[b].kind == FLOW_JUMP && f[b].target == i) b_max = b;
+    }
+    return b_max ? next_inst(b_max) : 0;
+}
+
+static bool struct_check_range(const FlowInfo *f, size_t end, size_t start, size_t stop,
+                               size_t loop_head, size_t loop_exit, int depth) {
+    if (depth > 64) return false;
+    for (size_t i = start; i < stop;) {
+        if (i % 4 == 0) { i++; continue; }
+        if (!f[i].reachable) { i = next_inst(i); continue; }
+        if (i != loop_head) {
+            size_t loop_end = struct_find_loop_end(f, i, stop);
+            if (loop_end) {
+                if (loop_end > stop) return false;
+                if (struct_has_external_entry(f, end, i, loop_end, true)) return false;
+                for (size_t k = i; k < loop_end; k++) {
+                    if (k % 4 == 0 || !f[k].reachable || f[k].kind != FLOW_JUMP) continue;
+                    size_t t = f[k].target;
+                    if (t < i || t > loop_end) return false;
+                }
+                if (!struct_check_range(f, end, i, loop_end, i, loop_end, depth + 1)) return false;
+                i = loop_end;
+                continue;
+            }
+        }
+        if (f[i].kind == FLOW_NONE || f[i].kind == FLOW_NOP || f[i].kind == FLOW_EXIT) {
+            i = next_inst(i);
+            continue;
+        }
+        // FLOW_JUMP
+        size_t t = f[i].target;
+        if (loop_head && t == loop_head) { i = next_inst(i); continue; }
+        if (loop_exit && t == loop_exit) { i = next_inst(i); continue; }
+        if (!f[i].guarded) {
+            if (t > i && t <= stop && struct_range_dead(f, next_inst(i), t)) {
+                i = t;
+                continue;
+            }
+            return false;
+        }
+        if (t <= i || t > stop) return false;
+        size_t then_start = next_inst(i);
+        if (struct_has_external_entry(f, end, then_start, t, false)) return false;
+        size_t last_then = 0;
+        for (size_t k = then_start; k < t; k++) {
+            if (k % 4 != 0 && f[k].reachable) last_then = k;
+        }
+        if (last_then && t < stop && f[last_then].kind == FLOW_JUMP && !f[last_then].guarded &&
+            f[last_then].target > t && f[last_then].target <= stop) {
+            size_t merge = f[last_then].target;
+            if (struct_has_external_entry(f, end, t, merge, true)) return false;
+            // Disallow jumps from the then-branch directly to the else-branch entry `t`.
+            for (size_t k = then_start; k < last_then; k++) {
+                if (k % 4 != 0 && f[k].reachable && f[k].kind == FLOW_JUMP && f[k].target == t) return false;
+            }
+            if (!struct_check_range(f, end, then_start, last_then, loop_head, loop_exit, depth + 1)) return false;
+            if (!struct_check_range(f, end, t, merge, loop_head, loop_exit, depth + 1)) return false;
+            i = merge;
+            continue;
+        }
+        if (!struct_check_range(f, end, then_start, t, loop_head, loop_exit, depth + 1)) return false;
+        i = t;
+    }
+    return true;
+}
+
+static void emit_insn(Ctx *c, uint64_t w, uint32_t pc);
+
+static void struct_emit_range(Ctx *c, const FlowInfo *f, const uint64_t *code, size_t end,
+                              size_t start, size_t stop, size_t loop_head, size_t loop_exit,
+                              bool dbg, const uint8_t *blob, bool annotate) {
+    for (size_t i = start; i < stop;) {
+        if (i % 4 == 0) { i++; continue; }
+        if (!f[i].reachable) { i = next_inst(i); continue; }
+        if (i != loop_head) {
+            size_t loop_end = struct_find_loop_end(f, i, stop);
+            if (loop_end) {
+                sp(&c->body, "  for (uint _lg = 0u; _lg < 100000u; _lg++) {\n");
+                struct_emit_range(c, f, code, end, i, loop_end, i, loop_end, dbg, blob, annotate);
+                sp(&c->body, "  break;\n  }\n  if (exit_now) break;\n");
+                i = loop_end;
+                continue;
+            }
+        }
+        uint32_t pc = (uint32_t)(i * 8);
+        if (f[i].kind == FLOW_NONE || f[i].kind == FLOW_NOP) {
+            if (annotate) sp(&c->body, "    // pc %x: %016llx\n", pc, (unsigned long long)code[i]);
+            emit_insn(c, code[i], pc);
+            if (dbg && pc == maxwell_dbg_pc) {
+                int rr = maxwell_dbg_reg % 1000, half = maxwell_dbg_reg / 1000;
+                c->reg_used[rr] = 1;
+                if (half) sp(&c->body, "    dbgv = unpackHalf2x16(r%d)[%d];\n", rr, half - 1);
+                else sp(&c->body, "    dbgv = as_type<float>(r%d);\n", rr);
+            }
+            i = next_inst(i);
+            continue;
+        }
+        if (f[i].kind == FLOW_EXIT) {
+            if (annotate) sp(&c->body, "    // pc %x: %016llx\n", pc, (unsigned long long)code[i]);
+            if (f[i].guarded) {
+                char pb[32];
+                sp(&c->body, "  if (%s) { exit_now = true; break; }\n", pred(c, f[i].pr, f[i].prn, pb));
+            } else {
+                sp(&c->body, "  exit_now = true; break;\n");
+            }
+            i = next_inst(i);
+            continue;
+        }
+        // FLOW_JUMP
+        size_t t = f[i].target;
+        if (loop_head && t == loop_head) {
+            if (f[i].guarded) {
+                char pb[32];
+                sp(&c->body, "  if (%s) continue;\n", pred(c, f[i].pr, f[i].prn, pb));
+            } else {
+                sp(&c->body, "  continue;\n");
+            }
+            i = next_inst(i);
+            continue;
+        }
+        if (loop_exit && t == loop_exit) {
+            if (f[i].guarded) {
+                char pb[32];
+                sp(&c->body, "  if (%s) break;\n", pred(c, f[i].pr, f[i].prn, pb));
+            } else {
+                sp(&c->body, "  break;\n");
+            }
+            i = next_inst(i);
+            continue;
+        }
+        if (!f[i].guarded) {
+            i = t;
+            continue;
+        }
+        char pb[32];
+        // Branch skips [then_start, t) when cond is true, so the then-block runs when !cond.
+        const char *skip_false = pred(c, f[i].pr, !f[i].prn, pb);
+        size_t then_start = next_inst(i);
+        size_t last_then = 0;
+        for (size_t k = then_start; k < t; k++) {
+            if (k % 4 != 0 && f[k].reachable) last_then = k;
+        }
+        if (last_then && t < stop && f[last_then].kind == FLOW_JUMP && !f[last_then].guarded &&
+            f[last_then].target > t && f[last_then].target <= stop) {
+            size_t merge = f[last_then].target;
+            sp(&c->body, "  if (%s) {\n", skip_false);
+            struct_emit_range(c, f, code, end, then_start, last_then, loop_head, loop_exit, dbg, blob, annotate);
+            sp(&c->body, "  } else {\n");
+            struct_emit_range(c, f, code, end, t, merge, loop_head, loop_exit, dbg, blob, annotate);
+            sp(&c->body, "  }\n");
+            i = merge;
+            continue;
+        }
+        sp(&c->body, "  if (%s) {\n", skip_false);
+        struct_emit_range(c, f, code, end, then_start, t, loop_head, loop_exit, dbg, blob, annotate);
+        sp(&c->body, "  }\n");
+        i = t;
+    }
+}
+
+static bool try_emit_structured(Ctx *c, const uint8_t *code8, size_t end, bool dbg, const uint8_t *blob, bool annotate) {
+    if (!c->glsl || !c->stk_tgt || !structured_cfg_on() || end < 2) return false;
+    const uint64_t *code = (const uint64_t *)code8;
+    FlowInfo *f = calloc(end, sizeof *f);
+    if (!f) return false;
+    bool ok = true;
+    for (size_t i = 1; i < end && ok; i++) {
+        if (i % 4 == 0) continue;
+        uint64_t w = code[i];
+        uint32_t pc = (uint32_t)(i * 8);
+        int pr = (int)bits(w, 16, 3);
+        bool prn = bits(w, 19, 1);
+        uint64_t top12 = w & 0xfff0000000000000ull;
+        if (top12 == 0xe290000000000000ull || top12 == 0xe2a0000000000000ull ||
+            top12 == 0xe2b0000000000000ull || top12 == 0xe270000000000000ull) {
+            pr = PT;
+            prn = false;
+        }
+        if (pr == PT && prn) {
+            f[i].kind = FLOW_NOP;
+            continue;
+        }
+        f[i].pr = pr;
+        f[i].prn = prn;
+        f[i].guarded = !(pr == PT && !prn);
+        if ((w & 0xfff0000000000000ull) == 0xe300000000000000ull) {
+            f[i].kind = FLOW_EXIT;
+        } else if ((w & 0xfff0000000000020ull) == 0xe240000000000000ull) {
+            uint32_t target = norm_target((int64_t)pc + 8 + sbits(w, 20, 24));
+            if ((size_t)(target / 8) >= end) { ok = false; break; }
+            f[i].kind = FLOW_JUMP;
+            f[i].target = target / 8;
+        } else if ((w & 0xfff0000000000020ull) == 0xe290000000000000ull ||
+                   (w & 0xfff0000000000020ull) == 0xe2a0000000000000ull ||
+                   (w & 0xfff0000000000020ull) == 0xe2b0000000000000ull) {
+            f[i].kind = FLOW_NOP;
+        } else if ((w & 0xfff8000000000000ull) == 0xf0f8000000000000ull ||
+                   (w & 0xfff0000000000000ull) == 0xe340000000000000ull ||
+                   (w & 0xfff0000000000000ull) == 0xe350000000000000ull) {
+            if (c->stk_tgt[i]) {
+                if ((size_t)(c->stk_tgt[i] / 8) >= end) { ok = false; break; }
+                f[i].kind = FLOW_JUMP;
+                f[i].target = c->stk_tgt[i] / 8;
+            } else {
+                f[i].kind = FLOW_EXIT;
+            }
+        } else if ((w & 0xfff0000000000000ull) == 0xe250000000000000ull) {
+            ok = false;
+        } else {
+            f[i].kind = FLOW_NONE;
+        }
+    }
+    if (ok) {
+        size_t *work = malloc(end * sizeof *work);
+        size_t nw = 0;
+        if (!work) ok = false;
+        else {
+            if (1 < end) { f[1].reachable = true; work[nw++] = 1; }
+            while (nw) {
+                size_t i = work[--nw];
+                if (f[i].kind == FLOW_JUMP) {
+                    size_t t = f[i].target;
+                    if (t < end && !f[t].reachable) { f[t].reachable = true; work[nw++] = t; }
+                }
+                if (f[i].kind == FLOW_NONE || f[i].kind == FLOW_NOP || f[i].guarded) {
+                    size_t nxt = next_inst(i);
+                    if (nxt < end && !f[nxt].reachable) { f[nxt].reachable = true; work[nw++] = nxt; }
+                }
+            }
+            free(work);
+        }
+    }
+    if (ok) ok = struct_check_range(f, end, 1, end, 0, 0, 0);
+    if (ok) {
+        c->branchy = false;
+        struct_emit_range(c, f, code, end, 1, end, 0, 0, dbg, blob, annotate);
+        for (size_t i = 0; i < end; i++) {
+            if (i % 4 != 0) c->info->num_insts++;
+        }
+    }
+    free(f);
+    return ok;
 }
 
 ShaderInfo *maxwell_translate(const uint8_t *blob, size_t max_size, int stage, const ShaderKey *key) {
@@ -2595,25 +2895,30 @@ ShaderInfo *maxwell_translate(const uint8_t *blob, size_t max_size, int stage, c
     if (annotate < 0) annotate = getenv("LARECOMP_SAVE_MSL") != NULL;
     c->branchy = any_branch;
     c->stk_tgt = any_branch ? resolve_stacks(code, end) : NULL;
-    for (size_t i = 0; i < end && !c->fail; i++) {
-        if (i % 4 == 0) continue;
-        uint32_t pc = (uint32_t)(i * 8);
-        if (any_branch && label[i]) sp(&c->body, "  case %uu:\n", pc);
-        if (annotate) sp(&c->body, "    // pc %x: %016llx\n", pc, (unsigned long long)((const uint64_t *)code)[i]);
-        emit_insn(c, ((const uint64_t *)code)[i], pc);
-        if (dbg && pc == maxwell_dbg_pc) {
-            int rr = maxwell_dbg_reg % 1000, half = maxwell_dbg_reg / 1000;  // +1000: low f16, +2000: high f16
-            c->reg_used[rr] = 1;
-            if (half) sp(&c->body, c->glsl ? "    dbgv = unpackHalf2x16(r%d)[%d];\n" : "    dbgv = float(as_type<half2>(r%d)[%d]);\n", rr, half - 1);
-            else sp(&c->body, "    dbgv = as_type<float>(r%d);\n", rr);
+    int flow_mode = any_branch ? 1 : 0;
+    if (any_branch && try_emit_structured(c, code, end, dbg, blob, annotate)) {
+        flow_mode = 2;
+    } else {
+        for (size_t i = 0; i < end && !c->fail; i++) {
+            if (i % 4 == 0) continue;
+            uint32_t pc = (uint32_t)(i * 8);
+            if (any_branch && label[i]) sp(&c->body, "  case %uu:\n", pc);
+            if (annotate) sp(&c->body, "    // pc %x: %016llx\n", pc, (unsigned long long)((const uint64_t *)code)[i]);
+            emit_insn(c, ((const uint64_t *)code)[i], pc);
+            if (dbg && pc == maxwell_dbg_pc) {
+                int rr = maxwell_dbg_reg % 1000, half = maxwell_dbg_reg / 1000;  // +1000: low f16, +2000: high f16
+                c->reg_used[rr] = 1;
+                if (half) sp(&c->body, c->glsl ? "    dbgv = unpackHalf2x16(r%d)[%d];\n" : "    dbgv = float(as_type<half2>(r%d)[%d]);\n", rr, half - 1);
+                else sp(&c->body, "    dbgv = as_type<float>(r%d);\n", rr);
+            }
+            info->num_insts++;
         }
-        info->num_insts++;
     }
     free(label);
     free(c->stk_tgt);
     c->stk_tgt = NULL;
     if (c->fail) { free(c->body.buf); free(c); return info; }
-    if (c->glsl) return glsl_finish(c, any_branch, dbg);
+    if (c->glsl) return glsl_finish(c, flow_mode, dbg);
 
     // ---------------------------------------------------------- MSL source
     Str s = {0};
@@ -2715,7 +3020,9 @@ ShaderInfo *maxwell_translate(const uint8_t *blob, size_t max_size, int stage, c
     if (c->uses_local) sp(&s, "  uint lmem[%d] = {};\n", LMEM_WORDS);
     if (dbg) sp(&s, maxwell_dbg_pc == 0xffffffffu ? "  float dbgv = 1.0f;\n" : "  float dbgv = -1.0f;\n");
     if (any_branch) {
-        sp(&s, "  uint pc = 8u; uint ssy[16]; uint ssy_n = 0; uint pbk[16]; uint pbk_n = 0; uint pcnt[16]; uint pcnt_n = 0;\n");
+        sp(&s, "  uint pc = 8u;\n");
+        if (c->uses_stk_arr)
+            sp(&s, "  uint ssy[16]; uint ssy_n = 0; uint pbk[16]; uint pbk_n = 0; uint pcnt[16]; uint pcnt_n = 0;\n");
         sp(&s, "  bool exit_now = false;\n");
         sp(&s, "  for (uint guard = 0; guard < 100000u; guard++) {\n  switch (pc) {\n");
         sp(&s, "%s", c->body.buf ? c->body.buf : "");

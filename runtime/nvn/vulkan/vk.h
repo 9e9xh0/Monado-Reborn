@@ -82,6 +82,7 @@ void vk_full_barrier(VkCommandBuffer cb);
 void vk_end_pass(void);
 void vk_external_state_changed(void); // restore tracked state after a vendor SDK dispatch
 double vk_native_gpu_ms(void); // latest complete native-frame GPU sum, -1 if unavailable/stale; never waits
+void vk_gp_mark(VkCommandBuffer cb, const char *fmt, ...);
 void vk_overlay_gpu_timing(bool on); // GitHub #39: GPU timestamps for the performance overlay
 void vk_overlay_wait_totals(uint64_t *gpu_wait_ns, uint64_t *shader_wait_ns); // GitHub #39: running totals, ns
 const char *vk_present_mode_name(void); // GitHub #39: the swapchain's present mode, for the performance overlay
