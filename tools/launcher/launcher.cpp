@@ -2022,10 +2022,9 @@ static void tab_graphics() {
     static const char *cut_ui[] = {"Como el resto del juego", "30 estables (como en Switch)"};
     ImGui::SetNextItemWidth(320 * g_scale);
     monado_combo(T("Cinemáticas"), &g.cutscenes, TL(cut_ui, 2).p, 2);
-    ImGui::SetItemTooltip(T("En las cinemáticas el juego anima a los personajes a 30 aunque juegues a más FPS: con la\n"
-                          "cámara a 60 encima se notan saltos (p. ej. el pelo de Dickson).\n"
-                          "30 estables: las cinemáticas van a 30 parejos, cámara y personajes juntos (con V-Sync en un\n"
-                          "monitor de 60 Hz cada imagen dura exactamente dos refrescos).\n"
+    ImGui::SetItemTooltip(T("Como el resto del juego: las cinemáticas en tiempo real se animan suavemente a tus FPS.\n"
+                          "30 estables: las cinemáticas van a 30 parejos como en Switch (con V-Sync en un monitor\n"
+                          "de 60 Hz cada imagen dura exactamente dos refrescos).\n"
                           "Con 'Generación de frames solo en cinemáticas' también van a 30, con generación encima."));
     editable=quality_settings();
     if (g.quality_preset==preset_before && !xcde_quality_equal(before,xcde_quality_current(&editable))) g.quality_preset=QUALITY_CUSTOM;
