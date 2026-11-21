@@ -69,6 +69,79 @@ def _scene_aspect(gen, addr):
 PATCHES[0x70006f7ea0] = Patch(0xbd04c264, _scene_aspect, 'T265', 'store scene projection aspect')
 
 
+# [XCDE] GitHub #182: targeting reticle screen-bounds clamp. The battle HUD projects the targeted enemy to
+# 1280x720 UI coordinates ([sp+0x30], [sp+0x34]) and clamps to [0, screen_w] x [0, screen_h] (or snaps to
+# 0 / screen_w when behind the camera). On ultrawide / taller aspect ratios, widen those bounds to match
+# the active scene aspect ratio so the reticle stays on the enemy outside the central 16:9 area.
+def _reticle_clamp(axis, sp_off, dst_v):
+    def emit(gen, addr):
+        return (f'{{ extern float xcde_reticle_clamp_{axis}(float, float); '
+                f'uint32_t raw_bits_ = LD32(c->sp + {sp_off:#x}ull), lim_bits_ = VS32(8), out_bits_; '
+                f'float raw_, lim_, out_; '
+                f'memcpy(&raw_, &raw_bits_, 4); memcpy(&lim_, &lim_bits_, 4); '
+                f'out_ = xcde_reticle_clamp_{axis}(raw_, lim_); '
+                f'memcpy(&out_bits_, &out_, 4); c->v[{dst_v}] = out_bits_; '
+                f'ST32(c->sp + {sp_off:#x}ull, out_bits_); }}')
+    return emit
+
+
+def _reticle_edge_x(gen, addr):
+    return ('{ extern float xcde_reticle_edge_x(float); '
+            'uint32_t edge_bits_ = VS32(0), out_bits_; float edge_, out_; '
+            'memcpy(&edge_, &edge_bits_, 4); out_ = xcde_reticle_edge_x(edge_); '
+            'memcpy(&out_bits_, &out_, 4); c->v[0] = out_bits_; '
+            'ST32(c->sp + 0x30ull, out_bits_); }')
+
+
+PATCHES[0x70003bf090] = Patch(0xbd0033e0, _reticle_clamp('x', 0x30, 0), 'T274',
+                              'str s0, [sp, #0x30] - reticle X clamp (in front of camera)')
+PATCHES[0x70003bf0d0] = Patch(0xbd0037e9, _reticle_clamp('y', 0x34, 9), 'T274',
+                              'str s9, [sp, #0x34] - reticle Y clamp (in front of camera)')
+PATCHES[0x70003bf398] = Patch(0xbd0033e0, _reticle_edge_x, 'T274',
+                              'str s0, [sp, #0x30] - reticle X edge snap (behind camera)')
+PATCHES[0x70003bf3dc] = Patch(0xbd0037e9, _reticle_clamp('y', 0x34, 9), 'T274',
+                              'str s9, [sp, #0x34] - reticle Y clamp (behind camera)')
+
+
+# [XCDE] GitHub #182: UI pane 2D frustum cull in main_174.c. Every UI pane subclass culls its normalized
+# 16:9 bounding box ([+0x184]=max_x, [+0x188]=max_y, [+0x18c]=min_x, [+0x190]=min_y) against [0, 1] x [0, 1],
+# hiding world-space UI (targeting reticle, enemy icons) once completely outside the central 16:9 region.
+# Shift the loaded bound by +/- 0.5*(wide_factor - 1) so the existing 0.0 / 1.0 comparisons match the widened view.
+def _ui_cull_adjust(axis, is_min, vreg):
+    def emit(gen, addr):
+        ins = gen.lift(addr)
+        if ins.kind != 'op':
+            raise ValueError(f'{addr:#x}: ui cull patch needs a plain instruction, got {ins.kind}')
+        return (ins.code + f' {{ extern float xcde_ui_cull_adjust_{axis}(float, int); '
+                f'uint32_t b_ = VS32({vreg}); float v_; memcpy(&v_, &b_, 4); '
+                f'v_ = xcde_ui_cull_adjust_{axis}(v_, {is_min}); '
+                f'memcpy(&b_, &v_, 4); c->v[{vreg}] = b_; }}')
+    return emit
+
+
+# 19 sites with: ldr s0,[xN,#0x184]; ... ldr s0,[xN,#0x188]; ... ldr s1,[xN,#0x18c]; ... ldr s1,[xN,#0x190]
+for _base, _rn in (
+    (0x7000756594, 0), (0x700075662c, 1), (0x7000757fec, 0), (0x70007580e4, 1),
+    (0x7000758544, 0), (0x70007585ec, 1), (0x700075a7ac, 0), (0x700075a9ac, 1),
+    (0x700075ad9c, 0), (0x700075ae3c, 1), (0x700075b7dc, 0), (0x700075b87c, 1),
+    (0x700075bf04, 0), (0x700075bfc4, 1), (0x700075cc3c, 0), (0x700075cd0c, 1),
+    (0x700075f70c, 0), (0x700075fadc, 1), (0x7000760f7c, 0),
+):
+    PATCHES[_base + 0x00] = Patch(0xbd418400 | (_rn << 5), _ui_cull_adjust('x', 0, 0), 'T274', 'UI cull max_x')
+    PATCHES[_base + 0x0c] = Patch(0xbd418800 | (_rn << 5), _ui_cull_adjust('y', 0, 0), 'T274', 'UI cull max_y')
+    PATCHES[_base + 0x18] = Patch(0xbd418c01 | (_rn << 5), _ui_cull_adjust('x', 1, 1), 'T274', 'UI cull min_x')
+    PATCHES[_base + 0x28] = Patch(0xbd419001 | (_rn << 5), _ui_cull_adjust('y', 1, 1), 'T274', 'UI cull min_y')
+
+# 3 sites with s8=1.0f: ldr s0,[xA,#0x184]; ... ldr s0,[xB,#0x188]; ... ldr s0,[xA,#0x18c]; ... ldr s0,[xB,#0x190]
+for _base, _ra, _rb in (
+    (0x7000761040, 0, 0), (0x70007610c8, 26, 24), (0x70007611e8, 0, 0),
+):
+    PATCHES[_base + 0x00] = Patch(0xbd418400 | (_ra << 5), _ui_cull_adjust('x', 0, 0), 'T274', 'UI cull max_x')
+    PATCHES[_base + 0x0c] = Patch(0xbd418800 | (_rb << 5), _ui_cull_adjust('y', 0, 0), 'T274', 'UI cull max_y')
+    PATCHES[_base + 0x18] = Patch(0xbd418c00 | (_ra << 5), _ui_cull_adjust('x', 1, 0), 'T274', 'UI cull min_x')
+    PATCHES[_base + 0x24] = Patch(0xbd419000 | (_rb << 5), _ui_cull_adjust('y', 1, 0), 'T274', 'UI cull min_y')
+
+
 # [XCDE] Grass draw distance presets (runtime/hle/foliage_distance.c, foliage_pool.c).
 # T-FOLIAGE-DISTANCE: apply the preset's separate MPF visibility and shading
 # ranges. Original retains High shading at 1x visibility; Low halves visibility.

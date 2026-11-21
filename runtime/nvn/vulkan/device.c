@@ -1072,6 +1072,11 @@ uint32_t vk_scene_aspect(uint32_t original, uint32_t camera) {
     return original;
 }
 
+float vk_scene_aspect_ratio(void) {
+    float a = atomic_load(&aspect_for_render);
+    return a > 0.0f ? a : (16.0f / 9.0f);
+}
+
 const float *vk_shot_crop(void) { return g_shot_crop; }
 
 void backend_present(NvnTexture *t);

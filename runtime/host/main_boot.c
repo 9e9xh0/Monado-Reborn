@@ -40,6 +40,61 @@ uint32_t xcde_scene_aspect(uint32_t original, uint32_t camera) {
 #endif
 }
 
+// [XCDE] GitHub #182: the targeting reticle clamps its projected screen position to the 16:9 UI bounds
+// ([0, 1280] x [0, 720]), pinning it to the 16:9 edge once the target leaves the central 16:9 area on wider
+// (or taller) windows. Widen the clamp to the active scene aspect ratio so the reticle stays on the enemy.
+static float xcde_wide_factor_x(void) {
+#if defined(XCDE_GFX)
+    extern float vk_scene_aspect_ratio(void);
+    float f = vk_scene_aspect_ratio() / (16.0f / 9.0f);
+    return f > 1.0f ? f : 1.0f;
+#else
+    return 1.0f;
+#endif
+}
+
+static float xcde_wide_factor_y(void) {
+#if defined(XCDE_GFX)
+    extern float vk_scene_aspect_ratio(void);
+    float a = vk_scene_aspect_ratio();
+    float f = a > 0.0f ? (16.0f / 9.0f) / a : 1.0f;
+    return f > 1.0f ? f : 1.0f;
+#else
+    return 1.0f;
+#endif
+}
+
+float xcde_reticle_clamp_x(float x, float w) {
+    float f = xcde_wide_factor_x();
+    float lo = w * 0.5f * (1.0f - f);
+    float hi = w * 0.5f * (1.0f + f);
+    return x < lo ? lo : x > hi ? hi : x;
+}
+
+float xcde_reticle_clamp_y(float y, float h) {
+    float f = xcde_wide_factor_y();
+    float lo = h * 0.5f * (1.0f - f);
+    float hi = h * 0.5f * (1.0f + f);
+    return y < lo ? lo : y > hi ? hi : y;
+}
+
+float xcde_reticle_edge_x(float edge) {
+    float f = xcde_wide_factor_x();
+    return edge <= 0.0f ? 640.0f * (1.0f - f) : edge * 0.5f * (1.0f + f);
+}
+
+// [XCDE] GitHub #182: widen the UI pane 2D frustum cull ([0, 1] x [0, 1] normalized 16:9 bounds)
+// to match the active widened aspect ratio so off-16:9 world markers and edge-clamped reticles are not culled.
+float xcde_ui_cull_adjust_x(float v, int is_min) {
+    float pad = 0.5f * (xcde_wide_factor_x() - 1.0f);
+    return is_min ? v - pad : v + pad;
+}
+
+float xcde_ui_cull_adjust_y(float v, int is_min) {
+    float pad = 0.5f * (xcde_wide_factor_y() - 1.0f);
+    return is_min ? v - pad : v + pad;
+}
+
 static void run_array(Cpu *c, uint64_t arr, uint64_t size) {
     for (uint64_t i = 0; i < size / 8; i++) {
         uint64_t fn = ((uint64_t *)arr)[i];
