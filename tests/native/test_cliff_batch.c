@@ -92,6 +92,37 @@ int main(void) {
     used = 0; CmdRec *first = draw(100); bind(base + 52, 1000); stream(); draw(100);
     CmdRec *uncommitted = bind(base + 156, 1000); stream(); draw(100); append(CMD_END, 0);
     VkCliffBatch b = vk_cliff_batch_scan(first, (VkCliffRange){base, 1000}, streams, 64);
-    assert(b.draws == 2 && b.next == uncommitted && b.last.addr == base + 52);
+    assert(b.draws == 2 && b.next == uncommitted && b.last.addr == base + 52 && b.inst_stream == 1);
+
+    // Generalized instanced batching: 3 streams, inst_stream = 2, 64-byte stride.
+    static const uint32_t streams3[3][2] = {{32, 0}, {16, 0}, {64, 1}};
+    used = 0; first = draw(200);
+    for (unsigned i = 1; i < 5; i++) {
+        CmdRec *vb3 = append(CMD_BIND_VERTEX_BUFFERS, sizeof(VkCliffRange));
+        vb3->x[0] = 2; vb3->x[1] = 1;
+        VkCliffRange r3 = {base + 64 * i, 4000}; memcpy(vb3->extra, &r3, sizeof r3);
+        CmdRec *vs3 = append(CMD_BIND_VERTEX_STREAM, sizeof streams3);
+        vs3->x[0] = 3; memcpy(vs3->extra, streams3, sizeof streams3);
+        draw(200);
+    }
+    CmdRec *wrong_vb = append(CMD_BIND_VERTEX_BUFFERS, sizeof(VkCliffRange));
+    wrong_vb->x[0] = 1; wrong_vb->x[1] = 1;
+    VkCliffRange r_bad = {base + 64 * 5, 4000}; memcpy(wrong_vb->extra, &r_bad, sizeof r_bad);
+    draw(200); append(CMD_END, 0);
+    b = vk_inst_batch_scan(first, (VkCliffRange){base, 4000}, streams3, 3, 2, 64);
+    assert(b.draws == 5 && b.inst_stream == 2 && b.next == wrong_vb &&
+           b.last.addr == base + 64 * 4 && b.vertex_binds == 4 && b.stream_binds == 4);
+
+    // Mismatched stream bind count ends the generalized batch.
+    used = 0; first = draw(200);
+    CmdRec *vb_ok = append(CMD_BIND_VERTEX_BUFFERS, sizeof(VkCliffRange));
+    vb_ok->x[0] = 2; vb_ok->x[1] = 1;
+    VkCliffRange r_ok = {base + 64, 4000}; memcpy(vb_ok->extra, &r_ok, sizeof r_ok);
+    CmdRec *vs_bad = append(CMD_BIND_VERTEX_STREAM, sizeof streams);
+    vs_bad->x[0] = 2; memcpy(vs_bad->extra, streams, sizeof streams);
+    draw(200); append(CMD_END, 0);
+    b = vk_inst_batch_scan(first, (VkCliffRange){base, 4000}, streams3, 3, 2, 64);
+    assert(b.draws == 1 && b.inst_stream == 2 && b.next == vb_ok && b.last.addr == base);
+
     printf("PASS: %llu source instance fetches, state/sync boundaries, index changes, bounds and final state\n", (unsigned long long)checked);
 }
