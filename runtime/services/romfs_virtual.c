@@ -84,7 +84,7 @@ static void edit_ini(File *f, const char *edits) {
     free(src);
     f->mem = (uint8_t *)out;
     f->size = len;
-    fprintf(stderr, "[romfs] %s: %d settings edited (%s)\n", f->path, changed, edits);
+    rt_logf("[romfs] %s: %d settings edited (%s)\n", f->path, changed, edits);
 }
 static void maybe_edit(File *f) {
     extern bool kbicons_wanted(const char *path), kbicons_init(void), settings_mod_enabled(const char *name);
@@ -221,7 +221,7 @@ static void overlay(Dir *dst, const char *path, int depth, int *replaced, int *a
                 dst->files[dst->nfiles++] = f;
             }
             f->path = p, f->size = (uint64_t)st.st_size;
-            fprintf(stderr, "[mods]   %s\n", p);
+            rt_logf("[mods]   %s\n", p);
             maybe_edit(f);
         } else {
             free(p);
@@ -249,11 +249,11 @@ static void apply_mods(Dir *root) {
         snprintf(p, sizeof p, "%s/%s/romfs", base, names[i]);
         struct stat st;
         if (stat(p, &st) != 0 || !S_ISDIR(st.st_mode)) { free(names[i]); continue; }
-        if (!settings_mod_enabled(names[i])) { fprintf(stderr, "[mods] %s: off (xcde.ini)\n", names[i]); free(names[i]); continue; }
+        if (!settings_mod_enabled(names[i])) { rt_logf("[mods] %s: off (xcde.ini)\n", names[i]); free(names[i]); continue; }
         int rep_ = 0, add = 0;
-        fprintf(stderr, "[mods] %s:\n", names[i]);
+        rt_logf("[mods] %s:\n", names[i]);
         overlay(root, p, 0, &rep_, &add);
-        fprintf(stderr, "[mods] %s: %d files replaced, %d added\n", names[i], rep_, add);
+        rt_logf("[mods] %s: %d files replaced, %d added\n", names[i], rep_, add);
         free(names[i]);
     }
 }
@@ -402,7 +402,7 @@ int64_t rvfs_read(uint8_t *dst, uint64_t size, uint64_t off) {
                         if (strstr(f->path, tok)) {
                             extern uint64_t vk_frame_counter(void);
                             f->traced = true;
-                            fprintf(stderr, "[file] frame %llu: %s\n", (unsigned long long)vk_frame_counter(), f->path);
+                            rt_logf("[file] frame %llu: %s\n", (unsigned long long)vk_frame_counter(), f->path);
                             if (getenv("XCDE_TRACE_FILE_BT")) plat_print_backtrace();
                             break;
                         }
@@ -418,7 +418,7 @@ int64_t rvfs_read(uint8_t *dst, uint64_t size, uint64_t off) {
                 int slot, fd = file_fd(hit, &slot);
                 ssize_t r = fd >= 0 ? pread(fd, dst + done, (size_t)n, (off_t)in) : -1;
                 file_fd_release(fd, slot);
-                if (r < 0) fprintf(stderr, "[romfs] read error %s +%llx (%llu bytes): zero-filled\n", g_files[hit]->path, (unsigned long long)in, (unsigned long long)n);
+                if (r < 0) rt_logf("[romfs] read error %s +%llx (%llu bytes): zero-filled\n", g_files[hit]->path, (unsigned long long)in, (unsigned long long)n);
                 if (r < 0) r = 0;
                 if ((uint64_t)r < n) memset(dst + done + r, 0, (size_t)(n - r));
             } else {  // padding between files

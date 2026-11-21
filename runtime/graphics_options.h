@@ -4,6 +4,16 @@
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
+
+// [XCDE] T275: timestamped diagnostics log (runtime/log.c). The launcher, which shares this header, provides a
+// plain passthrough so the two retired-value warnings below keep their destination.
+#ifdef __cplusplus
+extern "C" {
+#endif
+void rt_logf(const char *fmt, ...);
+#ifdef __cplusplus
+}
+#endif
 enum { GFX_SHADOWS, GFX_SHADOW_MASK, GFX_EFFECTS_RES, GFX_CLOUD, GFX_AO,
        GFX_REFLECTIONS, GFX_BLOOM, GFX_GODRAYS, GFX_SHAFTS, GFX_MOTION_BLUR,
        GFX_FUR_BLUR, GFX_FILTERING, GFX_SHADOW_MAPS, GFX_PROP_LOD, GFX_COUNT };
@@ -46,11 +56,11 @@ static inline int gfx_load_key(GraphicsOptions *o,const char *key,const char *va
         o->value[i]=0;
         if(i==GFX_SHADOW_MAPS && !strcmp(value,"4096")) {
             o->value[i]=1;
-            fprintf(stderr,"[graphics] 4096px shadow maps exceed the supported native render-pool layout; using 2048px\n");
+            rt_logf("[graphics] 4096px shadow maps exceed the supported native render-pool layout; using 2048px\n");
             return 1;
         }
         if(i==GFX_EFFECTS_RES && !strcmp(value,"full")) {
-            fprintf(stderr,"[graphics] full effects resolution is no longer offered (it broke the game's occlusion culling); using original\n");
+            rt_logf("[graphics] full effects resolution is no longer offered (it broke the game's occlusion culling); using original\n");
             return 1;
         }
         for(int v=0;v<gfx_count(i);v++) if(!strcmp(value,gfx_choice(i,v)))o->value[i]=v;

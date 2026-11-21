@@ -72,7 +72,7 @@ def main():
             print((output / f'{name}.log').read_text(encoding='utf-8', errors='replace')[-3000:])
         return code == 0
 
-    sources = ['host/settings_ini.c', 'hle/framepace.c', 'hle/party.c', 'hle/bindings.c', 'services/fs.c', 'diag/diag.c', 'nvn/objects.c', 'services/romfs_virtual.c', 'nvn/output_scale.c',
+    sources = ['host/settings_ini.c', 'hle/framepace.c', 'hle/party.c', 'hle/bindings.c', 'services/fs.c', 'diag/diag.c', 'log.c', 'nvn/objects.c', 'services/romfs_virtual.c', 'nvn/output_scale.c',
                'nvn/vulkan/device.c', 'nvn/vulkan/exec.c', 'nvn/vulkan/shaders.c',
                'nvn/vulkan/textures.c', 'nvn/vulkan/precompile.c', 'nvn/vulkan/temporal.c', 'nvn/vulkan/vkq.c', 'nvn/vulkan/fsr4.c',
                'nvn/vulkan/imgui_glue.cpp', 'ui/menu_vk.cpp', 'nvn/vulkan/dlss.cpp']
@@ -85,6 +85,7 @@ def main():
         'test_settings_roundtrip': ['runtime/host/settings_ini.c', 'runtime/hle/cheats_options.c', 'runtime/hle/graphics.c', 'runtime/hle/foliage_distance.c',
                                     str(sdk / 'lib/libwinpthread.dll.a')],
         'test_output_scale': ['runtime/nvn/output_scale.c'],
+        'test_log_timestamp': ['runtime/log.c'],
         'test_host_fma': ['-O1', '-fno-strict-aliasing'],  # [XCDE] FMA3 path vs the library fma
         'test_texture_index': ['-O1', '-ffunction-sections', '-fdata-sections', '-Wl,--gc-sections'],
         'test_romfs_cache': ['-O1', '-ffunction-sections', '-fdata-sections', '-Wl,--gc-sections', str(sdk / 'lib/libwinpthread.dll.a')],

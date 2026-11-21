@@ -36,7 +36,9 @@ The launcher alone: `tools/launcher/build_linux.sh`. Its reports are zipped with
 - DLSS (NVIDIA Streamline) is Windows-only. FSR 3.1 and FSR 4 Lite are native Linux components (below).
   Everything else (FSR 1, SMAA, the F1 menu, mods, controls) is the same code.
 - Logs go to the terminal or wherever stderr is redirected (the launcher: `build/last_game.log`); started from a
-  desktop without either, to `~/.local/share/monado/lasrecomp.log`.
+  desktop without either, to `~/.local/share/monado/lasrecomp.log`. Runtime log lines start with their local wall-clock time
+  (`[2026-11-21 18:36:13.123]`), which makes a pasted log easy to correlate with what happened; `XCDE_LOG_TIME=0`
+  turns the prefix off.
 - The watchdog (`XCDE_STALL`, `XCDE_WATCHDOG`) samples one PC per guest thread instead of a full host stack.
 
 ## Native temporal upscalers (optional)

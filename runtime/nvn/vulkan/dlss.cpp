@@ -1,3 +1,5 @@
+#include "../../platform.h"  // [XCDE] T275: timestamped diagnostics log (rt_logf)
+
 #ifdef _WIN32  // [XCDE] T-LINUX: the Streamline integration below is Windows-only
 #define VK_USE_PLATFORM_WIN32_KHR
 // [XCDE] NVIDIA DLSS Super Resolution through Streamline 2.x (third_party/streamline, MIT; sl.interposer.dll,
@@ -29,7 +31,7 @@ extern "C" {
 #include "../../settings.h"
 
 }
-#define DLOG(...) fprintf(stderr, __VA_ARGS__)
+#define DLOG(...) rt_logf(__VA_ARGS__)
 
 static HMODULE sl_mod;
 static bool sl_ok, dlss_ok, sl_initialized, sl_surface_ready;
@@ -420,7 +422,7 @@ static decltype(&ngx_linux_reset) p_ngx_reset;
 static decltype(&ngx_linux_shutdown) p_ngx_shutdown;
 
 extern "C" const char *dlss_status(void) { return dlss_note; }
-static void dlss_note_set(const char *text) { snprintf(dlss_note, sizeof dlss_note, "%s", text); fprintf(stderr, "[dlss] %s\n", text); }
+static void dlss_note_set(const char *text) { snprintf(dlss_note, sizeof dlss_note, "%s", text); rt_logf("[dlss] %s\n", text); }
 
 static void dlss_shutdown_linux(void) {
     if (p_ngx_shutdown) {
@@ -476,7 +478,7 @@ static bool load_dlss_module(void) {
         if (!dlss_mod) dlss_mod = dlopen("libmonado_dlss.so", RTLD_NOW | RTLD_LOCAL);
     }
     if (!dlss_mod) {
-        fprintf(stderr, "[dlss] libmonado_dlss.so unavailable: %s\n", dlerror());
+        rt_logf("[dlss] libmonado_dlss.so unavailable: %s\n", dlerror());
         return false;
     }
 #define GET(f, sym) f = (decltype(f))dlsym(dlss_mod, sym)

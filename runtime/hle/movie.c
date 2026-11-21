@@ -114,10 +114,10 @@ HLE_FUNC("_ZNK5movie9MediaData10FindStringEPKcPS2_", md_find_string) {
     const char *k = (const char *)(uintptr_t)c->x[1];
     for (int i = 0; i < m->n; i++)
         if (m->e[i].is_str && !strcmp(m->e[i].key, k)) {
-            if (getenv("XCDE_LOG_MOVIE")) fprintf(stderr, "[movie] FindString %s = %s" "%c", k, m->e[i].sval, 10);
+            if (getenv("XCDE_LOG_MOVIE")) rt_logf("[movie] FindString %s = %s" "%c", k, m->e[i].sval, 10);
             *(uint64_t *)(uintptr_t)c->x[2] = (uint64_t)(uintptr_t)m->e[i].sval; c->x[0] = 1; return;
         }
-    if (getenv("XCDE_LOG_MOVIE")) fprintf(stderr, "[movie] FindString %s: NOT FOUND" "%c", k, 10);
+    if (getenv("XCDE_LOG_MOVIE")) rt_logf("[movie] FindString %s: NOT FOUND" "%c", k, 10);
     c->x[0] = 0;
 }
 

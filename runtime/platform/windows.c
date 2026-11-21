@@ -10,6 +10,7 @@
 #include <timeapi.h>
 #include <io.h>
 #include <signal.h>
+#include <stdatomic.h>
 
 #include "../platform.h"
 #include "../pgo.h"
@@ -102,7 +103,7 @@ void plat_commit(uint64_t addr, uint64_t size) {
     if (!size) return;
     uint64_t a = addr & ~0xFFFull, e = (addr + size + 0xFFF) & ~0xFFFull;
     if (!VirtualAlloc((void *)(uintptr_t)a, e - a, MEM_COMMIT, PAGE_READWRITE))
-        fprintf(stderr, "[plat] commit %llx+%llx failed (%lu)\n", (unsigned long long)addr,
+        rt_logf("[plat] commit %llx+%llx failed (%lu)\n", (unsigned long long)addr,
                 (unsigned long long)size, GetLastError());
 }
 
@@ -158,7 +159,7 @@ static void clock_pick(void) {
         g_tc_next = qb + 2000000000ull;
     }
     (void)t0;
-    fprintf(stderr, "[clock] QPC read %.0f ns, invariant TSC %s: using %s\n", per_read, inv ? "yes" : "no", c ? "the TSC" : "QPC");
+    rt_logf("[clock] QPC read %.0f ns, invariant TSC %s: using %s\n", per_read, inv ? "yes" : "no", c ? "the TSC" : "QPC");
     g_clock = c;
 }
 
@@ -197,6 +198,26 @@ uint64_t plat_now_ns(void) {
     }
     if (g_clock == 1) return tsc_ns();
     return qpc_ns();
+}
+
+// [XCDE] T275: wall clock for the diagnostics log. GetSystemTimePreciseAsFileTime (100 ns, Windows 8+) is resolved
+// at run time: mingw-w64 hides it unless _WIN32_WINNT says 8.0, which this project does not set. Windows 7 and older
+// fall back to the ~15.6 ms system clock (the log stays correct, its ms digits just step).
+typedef VOID(WINAPI *PreciseFileTimeFn)(LPFILETIME);
+static _Atomic(PreciseFileTimeFn) g_wall_precise;
+
+uint64_t plat_wall_ns(void) {
+    FILETIME ft;
+    PreciseFileTimeFn fn = atomic_load_explicit(&g_wall_precise, memory_order_relaxed);
+    if (!fn) {
+        HMODULE k = GetModuleHandleW(L"kernel32.dll");
+        fn = k ? (PreciseFileTimeFn)(void *)GetProcAddress(k, "GetSystemTimePreciseAsFileTime") : NULL;
+        atomic_store_explicit(&g_wall_precise, fn, memory_order_relaxed);
+    }
+    if (fn) fn(&ft);
+    else GetSystemTimeAsFileTime(&ft);
+    ULARGE_INTEGER t = {.LowPart = ft.dwLowDateTime, .HighPart = ft.dwHighDateTime};
+    return (t.QuadPart - 116444736000000000ull) * 100ull;  // 1601-01-01 -> 1970-01-01, 100 ns ticks -> ns
 }
 
 static uint64_t qpc_ns(void) {
@@ -329,7 +350,7 @@ static void pcores_init(void) {
         if (ec > hi) hi = ec;
         n++;
     }
-    if (getenv("XCDE_PCORES_LOG")) fprintf(stderr, "[cpu] %lu logical CPUs, efficiency classes %d..%d\n", n, lo, hi);
+    if (getenv("XCDE_PCORES_LOG")) rt_logf("[cpu] %lu logical CPUs, efficiency classes %d..%d\n", n, lo, hi);
     if (hi <= lo) { free(buf); return; }  // (one class of cores)
     ULONG *fast = malloc(n * sizeof *fast), nfast = 0;
     g_all_sets = malloc(n * sizeof *g_all_sets);
@@ -342,10 +363,10 @@ static void pcores_init(void) {
     // (only with enough fast logical CPUs for the game's busy threads: a Core Ultra 5 125U has 2 P-cores = 4 of them,
     // too few for the game, render, job and our render threads, which then queue behind each other)
     if (nfast < 8) {
-        fprintf(stderr, "[cpu] hybrid CPU: only %lu fastest logical CPUs - game threads stay on every core\n", nfast);
+        rt_logf("[cpu] hybrid CPU: only %lu fastest logical CPUs - game threads stay on every core\n", nfast);
         g_nall_sets = 0;
     } else if (SetProcessDefaultCpuSets(GetCurrentProcess(), fast, nfast))
-        fprintf(stderr, "[cpu] hybrid CPU: game threads on the %lu fastest logical CPUs (efficiency class %d), shader workers on all %lu\n",
+        rt_logf("[cpu] hybrid CPU: game threads on the %lu fastest logical CPUs (efficiency class %d), shader workers on all %lu\n",
                 nfast, hi, g_nall_sets);
     else g_nall_sets = 0;
     free(fast);
@@ -376,7 +397,7 @@ void plat_init(void) {
         GetProcessAffinityMask(GetCurrentProcess(), &proc, &sys);
         int want = atoi(ls), got = 0;
         for (int i = 0; i < 64 && got < want; i += 2) if (sys >> i & 1) { mask |= (DWORD_PTR)1 << i; got++; }
-        if (mask && SetProcessAffinityMask(GetCurrentProcess(), mask)) fprintf(stderr, "[lowspec] process on %d cores (mask %#llx)\n", got, (unsigned long long)mask);
+        if (mask && SetProcessAffinityMask(GetCurrentProcess(), mask)) rt_logf("[lowspec] process on %d cores (mask %#llx)\n", got, (unsigned long long)mask);
     }
     pcores_init();
 }
@@ -424,9 +445,9 @@ void plat_mem_map(void) {
     }
     for (int i = 0; i < n; i++)  // (largest first)
         for (int j = i + 1; j < n; j++) if (g[j].bytes > g[i].bytes) { Grp t = g[i]; g[i] = g[j]; g[j] = t; }
-    fprintf(stderr, "[memmap] private committed outside the guest window: %.0f MB in %d allocations (%.0f MB in regions under 1 MB)\n",
+    rt_logf("[memmap] private committed outside the guest window: %.0f MB in %d allocations (%.0f MB in regions under 1 MB)\n",
             total / 1048576.0, n, heapish / 1048576.0);
-    for (int i = 0; i < n && i < 24; i++) fprintf(stderr, "[memmap]   %#llx  %8.1f MB\n", (unsigned long long)g[i].base, g[i].bytes / 1048576.0);
+    for (int i = 0; i < n && i < 24; i++) rt_logf("[memmap]   %#llx  %8.1f MB\n", (unsigned long long)g[i].base, g[i].bytes / 1048576.0);
     {   // [XCDE] T242: the Win32 heaps (malloc / the CRT is the process heap; DLLs may have their own) vs the rest
         HANDLE hs[64];
         DWORD nh = GetProcessHeaps(64, hs);
@@ -437,10 +458,10 @@ void plat_mem_map(void) {
             if (!HeapSummary(hs[i], 0, &sm)) continue;
             heaps += sm.cbCommitted;
             if (sm.cbCommitted >= (16u << 20) || hs[i] == def)
-                fprintf(stderr, "[memmap] heap %p%s: committed %.0f MB, allocated %.0f MB\n", hs[i], hs[i] == def ? " (process heap: malloc)" : "",
+                rt_logf("[memmap] heap %p%s: committed %.0f MB, allocated %.0f MB\n", hs[i], hs[i] == def ? " (process heap: malloc)" : "",
                         sm.cbCommitted / 1048576.0, sm.cbAllocated / 1048576.0);
         }
-        fprintf(stderr, "[memmap] %lu heaps: %.0f MB committed; outside heaps %.0f MB\n", nh, heaps / 1048576.0,
+        rt_logf("[memmap] %lu heaps: %.0f MB committed; outside heaps %.0f MB\n", nh, heaps / 1048576.0,
                 (total > heaps ? total - heaps : 0) / 1048576.0);
     }
 }
@@ -552,8 +573,8 @@ void plat_print_backtrace(void) {
         uint64_t pc = (uint64_t)(uintptr_t)bt[i], off = 0;
         const char *s = plat_symbol(pc, &off);
         if (!s) s = rt_host_fn_name(pc, &off);
-        if (s) fprintf(stderr, "  #%-2d %016llx %s+%llx\n", i, (unsigned long long)pc, s, (unsigned long long)off);
-        else fprintf(stderr, "  #%-2d %016llx lasrecomp+%llx\n", i, (unsigned long long)pc,
+        if (s) rt_logf("  #%-2d %016llx %s+%llx\n", i, (unsigned long long)pc, s, (unsigned long long)off);
+        else rt_logf("  #%-2d %016llx lasrecomp+%llx\n", i, (unsigned long long)pc,
                      (unsigned long long)(pc - exe));
     }
 }
@@ -578,7 +599,7 @@ static LONG WINAPI unhandled_filter(EXCEPTION_POINTERS *ep) {
 static void abort_handler(int sig) {
     (void)sig;
     signal(SIGABRT, SIG_DFL);
-    fprintf(stderr, "[crash] abort() called\n");
+    rt_logf("[crash] abort() called\n");
     plat_print_backtrace();
     fflush(stderr);
 }
@@ -586,7 +607,7 @@ static void invalid_parameter(const wchar_t *expr, const wchar_t *fn, const wcha
     (void)expr; (void)fn; (void)file; (void)line; (void)r;
     static int n;
     if (n++ >= 5) return;
-    fprintf(stderr, "[crash] C runtime invalid parameter (the call fails with EINVAL; logged 5 times at most)\n");
+    rt_logf("[crash] C runtime invalid parameter (the call fails with EINVAL; logged 5 times at most)\n");
     plat_print_backtrace();
     fflush(stderr);
 }
@@ -648,7 +669,7 @@ PlatProc plat_spawn(const char *const argv[], const char *log_path, bool append_
     for (wchar_t *p = wprog; *p; p++) if (*p == L'/') *p = L'\\';
     const wchar_t *app = GetFullPathNameW(wprog, MAX_PATH, wfull, NULL) ? wfull : NULL;
     BOOL ok = CreateProcessW(app, wcmd, NULL, NULL, TRUE, CREATE_NO_WINDOW | CREATE_SUSPENDED, NULL, NULL, &si, &pi);
-    if (!ok) fprintf(stderr, "[plat] could not start %s (error %lu)\n", argv[0], GetLastError());
+    if (!ok) rt_logf("[plat] could not start %s (error %lu)\n", argv[0], GetLastError());
     CloseHandle(log);
     if (!ok) return 0;
     // every child in one job that ends with this process (a compiler's own children too: no leftovers on quit)

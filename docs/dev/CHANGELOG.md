@@ -85,3 +85,17 @@ of `tasks.md`; do not move them, they are the record.
   boots dropped from `1.69-2.60` (`±1 px` shift per frame) to `0.105-0.169` (`(0, 0)` shift), character sharpness gradient
   rose from `1.732` to `1.886`, and Title (400), Field (2500), and Main Menu (2700) remained intact.
 
+## 2026-11-21 — timestamps in the game log (T275)
+
+- `build/last_game.log` now dates the runtime's lines: `runtime/log.c` adds `[YYYY-MM-DD HH:MM:SS.mmm]` (local
+  time) to the `LOG`/`FATAL` macros, the watchdog header, crash/backtrace output and the direct diagnostics that wrote
+  to stderr directly (the multi-line thread dumps of a stall stay under their timestamped header).
+  The calendar text is cached per thread per second, so the per-line work is a vDSO wall-clock read plus three
+  millisecond digits; one `vsnprintf` and one `fwrite` per line (about 110 ns over `fprintf` in a 200,000-line
+  microbenchmark, far below the write itself). A partial line keeps one prefix and multi-line messages get one per
+  line. `XCDE_LOG_TIME=0` restores the un-prefixed output.
+- `runtime/platform.h`/`platform/linux.c`/`platform/windows.c`: `plat_wall_ns()` (UTC since the Unix epoch) and the
+  `rt_logf` declaration; the new unit is in `RT_UNITS`, `scripts/build_*` and the link lists.
+- `tests/native/test_log_timestamp.c` (wired into `scripts/native_tests.sh` and `tools/diag/validate_port.py`) checks
+  first-line, partial-line and multi-line prefixes; the focused native tests that link a runtime unit using `LOG` got
+  a one-line `rt_logf` stub.

@@ -172,7 +172,7 @@ static uint64_t resolve(Module *m, uint32_t symidx) {
     uint64_t a = loader_find_symbol(name);
     if (a) return a;
     if ((s->info >> 4) == 2) return 0;  // weak undefined
-    if (getenv("XCDE_LIST_IMPORTS")) fprintf(stderr, "[import] unimplemented %s: %s" "%c", m->name, name, 10);  // [XCDE] T033: static census
+    if (getenv("XCDE_LIST_IMPORTS")) rt_logf("[import] unimplemented %s: %s" "%c", m->name, name, 10);  // [XCDE] T033: static census
     return hle_register(name, NULL);
 }
 

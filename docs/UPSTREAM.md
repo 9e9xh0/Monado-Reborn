@@ -123,3 +123,24 @@ the raw un-dejittered render-size image.
   that scene has reached the presented image (`tmp_presented_scene_frame`, `XCDE_TMP_SCENE_PROVENANCE=0` fallback).
 - `tests/native/test_tex_resize.c`, `tests/unit/test_vk_source_contracts.py`: unit and source-contract coverage for
   temporal HUD snapshot provenance.
+
+## Timestamps in the game log (T275, 2026-11-21)
+
+`build/last_game.log` now starts the runtime's lines with their local wall-clock time, to correlate a hang/hitch
+report with the events in the log.
+
+- `runtime/log.c` (new): `rt_logf`, the timestamped `LOG` implementation. One `vsnprintf` + one `fwrite` per line; the
+  calendar text is cached per thread for the current second (one vDSO `CLOCK_REALTIME` read /
+  `GetSystemTimePreciseAsFileTime` per line, then three millisecond digits). Partial lines keep one prefix, multi-line
+  messages get one at every line. `XCDE_LOG_TIME=0` disables it.
+- `runtime/rt.h` (`LOG`/`FATAL`), `runtime/platform.h` (+`plat_wall_ns`, `rt_logf`),
+  `runtime/platform/linux.c`/`windows.c` (`plat_wall_ns`), `runtime/platform/linux_gpu.h`: the log and time plumbing.
+- Direct `fprintf(stderr, ...)` diagnostics in `runtime/{diag,dispatch,fnprof,hle,host,kernel,loader,nvn,paths,services}`
+  and `runtime/graphics_options.h` now use `rt_logf` too (fatal traces, the `[stall]` header and backtrace lines, settings,
+  module and graphics-option messages), so the runtime's lines carry the same prefix. The launcher, which shares
+  `graphics_options.h`, gets a plain passthrough. The precompile/`last_precompile.log` stdout progress and the optional
+  separate `libmonado_dlss.so` component are unchanged.
+- Build/test wiring: `CMakeLists.txt` (`RT_UNITS`), `scripts/build_rt_gfx.sh`, `scripts/link_gfx.sh`,
+  `scripts/build_boot.sh`, `scripts/link_boot.sh`, `scripts/build_linux.sh`, `scripts/native_tests.sh`,
+  `tools/diag/validate_port.py`; new `tests/native/test_log_timestamp.c`, and stubs in the focused native tests that
+  link a logging runtime unit.

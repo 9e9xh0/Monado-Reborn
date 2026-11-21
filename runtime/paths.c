@@ -72,7 +72,7 @@ static bool writable(const char *dir) {
 }
 
 static void fail(const char *msg) {
-    fprintf(stderr, "%s\n", msg);
+    rt_logf("%s\n", msg);
     SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "LAS Recomp", msg, NULL);
     exit(1);
 }
@@ -115,7 +115,7 @@ void rt_paths_init(void) {
         fail(msg);
     }
     if (!getcwd(g_root, sizeof g_root)) snprintf(g_root, sizeof g_root, "%s", root);
-    fprintf(stderr, "[paths] data: %s\n", g_root);
+    rt_logf("[paths] data: %s\n", g_root);
 }
 
 const char *rt_data_root(void) { return g_root; }
@@ -158,14 +158,14 @@ bool rt_remove_game_file(const char *game_dir, const char *name) {
     bool known = false;
     for (size_t i = 0; i < sizeof GAME_FILES / sizeof *GAME_FILES; i++) known |= !strcmp(name, GAME_FILES[i]);
     if (!known || !game_dir_ok(game_dir)) {
-        fprintf(stderr, "[paths] refusing to delete %s/%s (not app-created game files in the data root)\n", game_dir, name);
+        rt_logf("[paths] refusing to delete %s/%s (not app-created game files in the data root)\n", game_dir, name);
         return false;
     }
     char p[1100];
     snprintf(p, sizeof p, "%s" SEP "%s", game_dir, name);
     if (!exists(p) && !is_link(p)) return true;
     if (is_link(p)) {
-        fprintf(stderr, "[paths] refusing to delete %s (a link)\n", p);
+        rt_logf("[paths] refusing to delete %s (a link)\n", p);
         return false;
     }
     return is_dir(p) ? plat_remove_tree(p) : remove(p) == 0;  // (plat_remove_tree doesn't follow links inside)
@@ -173,7 +173,7 @@ bool rt_remove_game_file(const char *game_dir, const char *name) {
 
 bool rt_remove_game_files(const char *game_dir) {
     if (!game_dir_ok(game_dir)) {
-        fprintf(stderr, "[paths] refusing to delete game files in %s (not <data root>/extracted)\n", game_dir);
+        rt_logf("[paths] refusing to delete game files in %s (not <data root>/extracted)\n", game_dir);
         return false;
     }
     bool ok = true;

@@ -1,6 +1,8 @@
 // T-PROP-LOD: synthetic material groups, no game data required.
 #include "../../runtime/prop_lod.h"
 #include "../../runtime/graphics_options.h"
+// [XCDE] T275: runtime/log.c is not linked into this focused test.
+void rt_logf(const char *fmt, ...) { (void)fmt; }
 #include <assert.h>
 #include <stdio.h>
 #include <sys/mman.h>

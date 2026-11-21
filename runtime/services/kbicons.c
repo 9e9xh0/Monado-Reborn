@@ -23,6 +23,7 @@
 #endif
 
 #include "../input_bind.h"
+#include "../platform.h"  // [XCDE] T275: rt_logf, the timestamped diagnostics log
 
 #define BCDEC_IMPLEMENTATION
 #define BCDEC_STATIC
@@ -31,7 +32,7 @@
 #define STB_TRUETYPE_IMPLEMENTATION
 #include "../../third_party/imgui/imstb_truetype.h"
 
-#define LOGK(...) fprintf(stderr, "[kbicons] " __VA_ARGS__)
+#define LOGK(...) rt_logf("[kbicons] " __VA_ARGS__)
 
 // cells (8 a row): which one shows what, in the white / cream atlases and in the glowing one (button.wilay: the
 // d-pad first, a second ZL / ZR, no single d-pad directions); -1 none

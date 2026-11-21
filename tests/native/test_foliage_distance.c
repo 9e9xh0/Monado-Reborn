@@ -2,6 +2,8 @@
 #include "../../runtime/hle/foliage_distance.h"
 #include <assert.h>
 #include <stdio.h>
+// [XCDE] T275: runtime/log.c is not linked into this focused test.
+void rt_logf(const char *fmt, ...) { (void)fmt; }
 
 int main(void) {
     assert(xcde_foliage_far_scaled(0, 50, .5f) == 25);

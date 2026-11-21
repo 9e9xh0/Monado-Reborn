@@ -33,6 +33,15 @@
 #include "../../runtime/grass_lod.h"
 #include "../../runtime/graphics_options.h"
 #include "update_check.h"  // GitHub #119
+
+// [XCDE] T275: the launcher does not link runtime/log.c; the shared settings code (graphics_options.h) logs through it.
+// Keep the launcher's output as before (no timestamp): its console/log is the launcher's, not the game's.
+extern "C" void rt_logf(const char *fmt, ...) {
+    va_list ap;
+    va_start(ap, fmt);
+    vfprintf(stderr, fmt, ap);
+    va_end(ap);
+}
 // GitHub #119: this package's version (the release workflow passes the tag: cmake -DMONADO_VERSION=14.0.1) and the
 // repository whose releases the launcher checks. "dev" (a local build) checks only when asked.
 #ifndef MONADO_VERSION

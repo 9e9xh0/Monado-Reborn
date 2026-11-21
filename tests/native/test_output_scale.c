@@ -7,8 +7,8 @@
 #include "../../runtime/nvn/output_scale.h"
 Settings g_settings;
 int xcde_present_fps(void) { return g_settings.fps; }
-// output_scale's LOG uses rt_log.
-void rt_log(const char *fmt, ...) { (void)fmt; }
+// [XCDE] T275: output_scale's LOG and the direct diagnostics use rt_logf.
+void rt_logf(const char *fmt, ...) { (void)fmt; }
 int main(void) {
     OutScale o; output_scale_set_base(1280,720);
     g_settings.fps=30; xcde_quality_apply(&g_settings,QUALITY_POTATO);

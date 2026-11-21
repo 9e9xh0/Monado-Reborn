@@ -4,7 +4,7 @@
 cd "$(dirname "$0")/.."
 Z=".venv/Scripts/python -m ziglang c++"
 M=/c/msys64/ucrt64
-RT="build/rt/loader.o build/rt/dispatch.o build/rt/kernel.o build/rt/ipc.o build/rt/fnprof.o build/rt/platform_windows.o \
+RT="build/rt/loader.o build/rt/dispatch.o build/rt/kernel.o build/rt/ipc.o build/rt/fnprof.o build/rt/log.o build/rt/platform_windows.o \
  build/rt/services_fs.o build/rt/services_romfs_virtual.o build/rt/services_am.o build/rt/services_acc.o build/rt/services_time.o \
  build/rt/services_hid_set.o build/rt/services_kbicons.o build/rt/services_misc.o build/rt/hle_heaps.o build/rt/hle_pl.o build/rt/hle_vi.o build/rt/hle_nvn_boot.o build/rt/hle_fibers.o \
  build/rt/host_stubs.o build/rt/host_settings_ini.o build/rt/host_stubs_gfx.o build/rt/services_audio.o build/rt/services_hwopus.o build/rt/hle_input.o build/rt/hle_party.o build/rt/hle_bindings.o build/rt/hle_movie.o build/rt/hle_framepace.o build/rt/hle_foliage_distance.o build/rt/hle_foliage_pool.o build/rt/hle_graphics.o build/rt/hle_cheats_options.o build/rt/hle_cheats_combat.o build/rt/hle_cheats_rewards.o build/rt/hle_cheats_enemy_health.o build/rt/hle_title_exit.o build/rt/hle_system_exit.o build/rt/hle_desktop_exit_caption.o build/rt/hle_expanded_saves.o build/rt/hle_expanded_save_scan.o build/rt/hle_quickstep_native.o build/rt/hle_quickstep_picker.o build/rt/hle_quickstep_save.o build/rt/hle_quickstep_slot.o build/rt/hle_quickstep_stats.o build/rt/hle_quickstep_stats_ui.o build/rt/hle_quickstep_ui_memory.o build/rt/host_gamelib_static.o build/rt/host_main_boot_gfx.o build/rt/diag_diag.o build/rt/diag_sampler.o build/rt/diag_watchdog.o build/rt/diag_crashdump.o"

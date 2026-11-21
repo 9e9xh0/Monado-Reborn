@@ -264,7 +264,7 @@ static void det_dispatch(void) {
             static int tr = -1;
             static unsigned long ntr;
             if (tr < 0) tr = getenv("XCDE_DET_TRACE") != NULL;
-            if (tr && ntr++ < 400) fprintf(stderr, "[det] -> t%llu (prio %d) vnow %llu\n", (unsigned long long)n->id, n->prio, (unsigned long long)kernel_vnow(0));
+            if (tr && ntr++ < 400) rt_logf("[det] -> t%llu (prio %d) vnow %llu\n", (unsigned long long)n->id, n->prio, (unsigned long long)kernel_vnow(0));
             n->det_state = 2, g_baton = n, n->det_granted = true;
             pthread_cond_signal(&n->cond);
             return;
@@ -295,7 +295,7 @@ static bool det_block(int64_t deadline_vns) {
     static int tr2 = -1;
     static unsigned long ntr2;
     if (tr2 < 0) tr2 = getenv("XCDE_DET_TRACE") != NULL;
-    if (tr2 && ntr2++ < 400) fprintf(stderr, "[det] t%llu blocks (svc %02x, deadline %lld)\n", (unsigned long long)t->id, t->last_svc, (long long)deadline_vns);
+    if (tr2 && ntr2++ < 400) rt_logf("[det] t%llu blocks (svc %02x, deadline %lld)\n", (unsigned long long)t->id, t->last_svc, (long long)deadline_vns);
     t->det_state = 3, t->det_deadline = deadline_vns, t->det_timed_out = false, t->det_granted = false;
     det_dispatch();
     while (!t->det_granted) pthread_cond_wait(&t->cond, &g_klock);
@@ -682,8 +682,8 @@ out:
 
 // ------------------------------------------------------------------ debug output
 static void debug_string(uint64_t p, uint64_t len) {
-    fprintf(stderr, "[guest] %.*s", (int)len, (const char *)(uintptr_t)p);
-    if (len && ((const char *)(uintptr_t)p)[len - 1] != '\n') fputc('\n', stderr);
+    rt_logf("[guest] %.*s", (int)len, (const char *)(uintptr_t)p);
+    if (len && ((const char *)(uintptr_t)p)[len - 1] != '\n') rt_logf("%c", 10);
 }
 
 // ------------------------------------------------------------------ SVC dispatch

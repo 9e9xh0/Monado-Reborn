@@ -224,21 +224,21 @@ const char *rt_host_sym(uint64_t pc, uint64_t *offset) {
 }
 
 void rt_fatal_trace(void) {
-    fprintf(stderr, "host backtrace (guest functions are f_<addr>):\n");
+    rt_logf("host backtrace (guest functions are f_<addr>):\n");
     plat_print_backtrace();
     Cpu *c = kernel_current_cpu();
     if (c) {
-        fprintf(stderr, "guest: sp=%llx lr=%llx\n", c->sp, c->x[30]);
+        rt_logf("guest: sp=%llx lr=%llx\n", c->sp, c->x[30]);
         for (int i = 0; i < 31; i += 4)
-            fprintf(stderr, "  x%-2d %016llx  x%-2d %016llx  x%-2d %016llx  x%-2d %016llx\n", i, c->x[i], i + 1,
+            rt_logf("  x%-2d %016llx  x%-2d %016llx  x%-2d %016llx  x%-2d %016llx\n", i, c->x[i], i + 1,
                     c->x[i + 1], i + 2, c->x[i + 2], i + 3, c->x[i + 3]);
         const char *dx = getenv("XCDE_CRASH_DUMP_REG");  // debug: hex dump of 0x80 bytes at guest register x<N>
         if (dx && atoi(dx) >= 0 && atoi(dx) < 31) {
             uint64_t a = c->x[atoi(dx)];
             if (a >= GUEST_LO && a + 0x80 <= GUEST_HI) {
-                fprintf(stderr, "dump at x%s=%llx:", dx, (unsigned long long)a);
-                for (int i = 0; i < 0x80; i += 4) fprintf(stderr, "%s%08x", (i % 32) ? " " : "\n  ", *(volatile uint32_t *)(uintptr_t)(a + i));
-                fprintf(stderr, "\n");
+                rt_logf("dump at x%s=%llx:", dx, (unsigned long long)a);
+                for (int i = 0; i < 0x80; i += 4) rt_logf("%s%08x", (i % 32) ? " " : "\n  ", *(volatile uint32_t *)(uintptr_t)(a + i));
+                rt_logf("\n");
             }
         }
     }
@@ -276,7 +276,7 @@ static uint64_t watch_page;
 static void *watch_thread(void *a) {
     (void)a;
     int r = plat_protect(watch_page, PLAT_PAGE, PLAT_PROT_NONE);
-    fprintf(stderr, "[watch] page %llx protect -> %d\n", (unsigned long long)watch_page, r);
+    rt_logf("[watch] page %llx protect -> %d\n", (unsigned long long)watch_page, r);
     for (;;) { plat_protect(watch_page, PLAT_PAGE, PLAT_PROT_NONE); usleep(100); }
     return NULL;
 }
@@ -308,7 +308,7 @@ bool rt_fault_watch(uint64_t fa, uint64_t pc) {
         for (int i = 0; i < nseen; i++) found |= !strcmp(seen[i], key);
         if (!found && nseen < 64) {
             snprintf(seen[nseen++], 48, "%s", key);
-            fprintf(stderr, "[watch] +%#llx by %s\n", fa - g_watch_lo, nm);
+            rt_logf("[watch] +%#llx by %s\n", fa - g_watch_lo, nm);
             static int bt = -1;  // [XCDE] XCDE_WATCH_BT=1: also who called it (the guest functions on the host stack)
             if (bt < 0) bt = getenv("XCDE_WATCH_BT") != NULL;
             if (bt) plat_print_backtrace();
@@ -321,7 +321,7 @@ bool rt_fault_watch(uint64_t fa, uint64_t pc) {
 void rt_fault_report(const char *what, uint64_t fa, uint64_t pc, uint64_t lr) {
     uint64_t po = 0, lo = 0;
     const char *ps = host_sym(pc, &po), *ls = host_sym(lr, &lo);
-    fprintf(stderr, "\n*** %s accessing %#llx\n    host pc %llx (%s+%llx)\n    host lr %llx (%s)\n", what,
+    rt_logf("\n*** %s accessing %#llx\n    host pc %llx (%s+%llx)\n    host lr %llx (%s)\n", what,
             (unsigned long long)fa, (unsigned long long)pc, ps ? ps : "?", (unsigned long long)po,
             (unsigned long long)lr, ls ? ls : "?");
     rt_fatal_trace();

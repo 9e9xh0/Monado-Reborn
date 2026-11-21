@@ -1617,3 +1617,19 @@ Detalle: `docs/PERFORMANCE_UI.md`. Evidencia: `docs/evidence/2026-11-04-performa
   maximizada, se restaura primero); a pantalla completa el cambio queda pendiente hasta salir. "Aplicar" guarda
   `window = WxH` con el lector/escritor de `runtime/host/settings_ini.c` que ya existía. Pruebas:
   `tests/native/test_window_size.c` (presets, parseo e índice) y captura del menú a 1280x720 mostrando el control.
+
+## Log timestamps — 2026-11-21 (T275)
+
+- [~] T275 [M8] **Timestamps in the game log.** `build/last_game.log` had no per-line time: a report could say when
+  the game hung but not what else happened at that moment, and `[vk] t=` only covers one periodic line. Every runtime
+  log line now starts with its local wall-clock time, `[2026-11-21 18:36:13.123] `: the `LOG`/`FATAL`
+  macros, the watchdog header, crash and backtrace paths and the direct diagnostics that previously bypassed `LOG`.
+  `runtime/log.c` formats once (`vsnprintf`) and writes one `fwrite`; the calendar text is cached per thread for the
+  current second, so a line costs one `clock_gettime(CLOCK_REALTIME)` (vDSO) or
+  `GetSystemTimePreciseAsFileTime` plus the three millisecond digits. A line written in pieces gets one prefix, a
+  multi-line message one per line (blank lines and the multi-line guest-thread dumps stay under their header's
+  timestamp). `XCDE_LOG_TIME=0` disables the prefix (byte-exact log comparisons).
+  Measured overhead on the dev Linux machine (200,000 lines to `/dev/null`, `-O2`): about 110 ns per emitted line over
+  `fprintf`, while the logger itself is faster than `fprintf` when timestamps are off. Native test:
+  `tests/native/test_log_timestamp.c` passes, as do the runtime-only and launcher builds. Pending: one launcher run to
+  see the prefix in `build/last_game.log` on the target machine.

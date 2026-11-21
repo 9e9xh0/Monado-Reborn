@@ -593,7 +593,7 @@ int vk_precompile_main(const char *root) {
     vkey_guess.depth_minus_one = true;  // (the game's depth mode and window origin, as exec.c sets them per draw)
     list_dir(romfs);
     files_total = npaths;
-    if (!npaths) { fprintf(stderr, "[precompile] no shader files under %s%c", romfs, 10); return 1; }
+    if (!npaths) { rt_logf("[precompile] no shader files under %s%c", romfs, 10); return 1; }
     qsort(paths, npaths, sizeof *paths, path_cmp);
     { const char *e = getenv("XCDE_PRECOMPILE_LIBS"); use_libs = !e || atoi(e) != 0; }
     setenv("XCDE_PRECOMPILING", "1", 1);  // (shaders.c: no cache-miss log lines)
