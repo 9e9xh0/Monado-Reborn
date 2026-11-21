@@ -1864,15 +1864,21 @@ static void tab_graphics() {
     bool dlss_files=exists("build/sl.interposer.dll") && exists("build/sl.common.dll") && exists("build/sl.dlss.dll") && exists("build/nvngx_dlss.dll");
 #else
     auto linux_dlss_runtime_present = []() {
+        auto file_exists = [](const char *p) {
+            if (!p || !*p) return false;
+            struct stat st{};
+            if (p[0] == '/') return stat(p, &st) == 0 && S_ISREG(st.st_mode);
+            return exists(p);
+        };
         bool has_adapter = false, has_ngx = false;
         const char *env_lib = getenv("MONADO_DLSS_LIBRARY");
-        if (env_lib && *env_lib && exists(env_lib)) has_adapter = true;
-        if (!has_adapter && exists("build/linux/libmonado_dlss.so")) has_adapter = true;
+        if (file_exists(env_lib)) has_adapter = true;
+        if (!has_adapter && file_exists("build/linux/libmonado_dlss.so")) has_adapter = true;
         const char *env_dir = getenv("MONADO_DLSS_DIR");
         char probe[4096];
-        if (env_dir && *env_dir && snprintf(probe, sizeof probe, "%s/libnvidia-ngx-dlss.so.310.9.1", env_dir) < (int)sizeof probe && exists(probe))
+        if (env_dir && *env_dir && snprintf(probe, sizeof probe, "%s/libnvidia-ngx-dlss.so.310.9.1", env_dir) < (int)sizeof probe && file_exists(probe))
             has_ngx = true;
-        if (!has_ngx && (exists("dlss/libnvidia-ngx-dlss.so.310.9.1") || exists("build/linux/libnvidia-ngx-dlss.so.310.9.1")))
+        if (!has_ngx && (file_exists("dlss/libnvidia-ngx-dlss.so.310.9.1") || file_exists("build/linux/libnvidia-ngx-dlss.so.310.9.1")))
             has_ngx = true;
         char exe[4096];
         ssize_t n = readlink("/proc/self/exe", exe, sizeof exe - 1);
@@ -1881,14 +1887,14 @@ static void tab_graphics() {
             if (char *slash = strrchr(exe, '/')) {
                 *slash = 0;
                 if (!has_adapter) {
-                    if ((snprintf(probe, sizeof probe, "%s/libmonado_dlss.so", exe) < (int)sizeof probe && exists(probe)) ||
-                        (snprintf(probe, sizeof probe, "%s/../lib/libmonado_dlss.so", exe) < (int)sizeof probe && exists(probe)))
+                    if ((snprintf(probe, sizeof probe, "%s/libmonado_dlss.so", exe) < (int)sizeof probe && file_exists(probe)) ||
+                        (snprintf(probe, sizeof probe, "%s/../lib/libmonado_dlss.so", exe) < (int)sizeof probe && file_exists(probe)))
                         has_adapter = true;
                 }
                 if (!has_ngx) {
-                    if ((snprintf(probe, sizeof probe, "%s/libnvidia-ngx-dlss.so.310.9.1", exe) < (int)sizeof probe && exists(probe)) ||
-                        (snprintf(probe, sizeof probe, "%s/../share/monado/dlss/libnvidia-ngx-dlss.so.310.9.1", exe) < (int)sizeof probe && exists(probe)) ||
-                        (snprintf(probe, sizeof probe, "%s/../lib/libnvidia-ngx-dlss.so.310.9.1", exe) < (int)sizeof probe && exists(probe)))
+                    if ((snprintf(probe, sizeof probe, "%s/libnvidia-ngx-dlss.so.310.9.1", exe) < (int)sizeof probe && file_exists(probe)) ||
+                        (snprintf(probe, sizeof probe, "%s/../share/monado/dlss/libnvidia-ngx-dlss.so.310.9.1", exe) < (int)sizeof probe && file_exists(probe)) ||
+                        (snprintf(probe, sizeof probe, "%s/../lib/libnvidia-ngx-dlss.so.310.9.1", exe) < (int)sizeof probe && file_exists(probe)))
                         has_ngx = true;
                 }
             }
