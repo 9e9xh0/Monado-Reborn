@@ -1079,3 +1079,24 @@ PATCHES[0x70004f55f8] = Patch(0x540010e0, _cutscene_cam_interp, 'T224',
                               'b.eq L_70004f5814 - use built-in sub-frame camera lerp+slerp above 30 fps')
 PATCHES[0x700050c374] = Patch(0x1e201901, _cutscene_track_unquantize, 'T224',
                               'fdiv s1, s8, s0 - skip 30 Hz sequence track time quantization above 30 fps')
+
+
+# [XCDE] GitHub #179: volumetric cloud scroll speed above 30 FPS.
+# f_700062f860 (ml::Scn::update) passes Scene+0x3848 (Scene+0x37d4 * Scene+0x3844)
+# to CloudManager::update (f_700061cb70) before per-view setup (f_7000631a20)
+# multiplies by the slot's elapsed authored frames at Scene+0x37e0 (UpdateInfo+0xc:
+# 1.0 at 30 fps, 0.5 at 60 fps, 0.25 at 120 fps). Multiply by Scene+0x37e0 here so
+# volumetric clouds advance at 1x real-time speed at any FPS while staying
+# bit-identical at 30 fps (where Scene+0x37e0 == 1.0f) and still pausing when
+# Scene+0x37d4 == 0.0f.
+def _cloud_dt_scale(gen, addr):
+    return ('{ uint32_t step_bits_ = LD32(c->x[19] + 0x3848ull), '
+            'dt_bits_ = LD32(c->x[19] + 0x37e0ull), out_bits_; '
+            'float step_, dt_, out_; '
+            'memcpy(&step_, &step_bits_, 4); memcpy(&dt_, &dt_bits_, 4); '
+            'out_ = step_ * dt_; memcpy(&out_bits_, &out_, 4); '
+            'c->v[0] = out_bits_; }')
+
+
+PATCHES[0x700062fa60] = Patch(0xbd784a60, _cloud_dt_scale, 'GH-179',
+                              'ldr s0, [x19, #0x3848] -> scale CloudManager dt by Scene+0x37e0 (UpdateInfo+0xc)')
