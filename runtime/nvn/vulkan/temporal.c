@@ -156,7 +156,7 @@ static float halton(uint32_t i, uint32_t b) {
 // with it; validated on RADV); XCDE_TMP_NOJITTER=1 turns it off for comparison. Windows keeps #14's zero-jitter default.
 static bool native_temporal(void) {
 #ifdef __linux__
-    return g_settings.upscaler == UPSCALE_FSR4_LITE || g_settings.upscaler == UPSCALE_FSR3;
+    return g_settings.upscaler == UPSCALE_FSR4_LITE || g_settings.upscaler == UPSCALE_FSR3 || g_settings.upscaler == UPSCALE_DLSS;
 #else
     return false;
 #endif

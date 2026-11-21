@@ -36,6 +36,7 @@ rtdir=build/linux/rt
 if [[ ${XCDE_NATIVE_FSR:-1} != 0 ]]; then
   scripts/build_fsr3_linux.sh || echo 'warning: native FSR 3 not built (needs git, glslangValidator; see third_party/fsr3_native/README.md)' >&2
   scripts/build_fsr4_linux.sh || echo 'warning: native FSR 4 Lite not built (see third_party/fsr4_native/README.md)' >&2
+  scripts/build_dlss_linux.sh || echo 'warning: native Linux DLSS not built (run python3 tools/package/setup_linux_dlss.py)' >&2
   # FSR 4 Lite model assets (tools/package/fsr4_prepare.py, once) are looked up beside the executable
   [[ ! -d build/fsr4/assets/lite || -e build/linux/fsr4 ]] || ln -s ../fsr4/assets build/linux/fsr4
 fi

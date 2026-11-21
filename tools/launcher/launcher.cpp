@@ -1851,7 +1851,43 @@ static void tab_graphics() {
     static uint32_t loader_api=xcde_vk_loader_version();
     bool route_fallback;
     int route=selected_gpu ? xcde_vulkan_route(selected_gpu->vulkan_routes,10+(int)VK_API_VERSION_MINOR(loader_api),g.vulkan_api,&route_fallback) : 0;
+#ifdef _WIN32
     bool dlss_files=exists("build/sl.interposer.dll") && exists("build/sl.common.dll") && exists("build/sl.dlss.dll") && exists("build/nvngx_dlss.dll");
+#else
+    auto linux_dlss_runtime_present = []() {
+        bool has_adapter = false, has_ngx = false;
+        const char *env_lib = getenv("MONADO_DLSS_LIBRARY");
+        if (env_lib && *env_lib && exists(env_lib)) has_adapter = true;
+        if (!has_adapter && exists("build/linux/libmonado_dlss.so")) has_adapter = true;
+        const char *env_dir = getenv("MONADO_DLSS_DIR");
+        char probe[4096];
+        if (env_dir && *env_dir && snprintf(probe, sizeof probe, "%s/libnvidia-ngx-dlss.so.310.9.1", env_dir) < (int)sizeof probe && exists(probe))
+            has_ngx = true;
+        if (!has_ngx && (exists("dlss/libnvidia-ngx-dlss.so.310.9.1") || exists("build/linux/libnvidia-ngx-dlss.so.310.9.1")))
+            has_ngx = true;
+        char exe[4096];
+        ssize_t n = readlink("/proc/self/exe", exe, sizeof exe - 1);
+        if (n > 0 && (size_t)n < sizeof exe) {
+            exe[n] = 0;
+            if (char *slash = strrchr(exe, '/')) {
+                *slash = 0;
+                if (!has_adapter) {
+                    if ((snprintf(probe, sizeof probe, "%s/libmonado_dlss.so", exe) < (int)sizeof probe && exists(probe)) ||
+                        (snprintf(probe, sizeof probe, "%s/../lib/libmonado_dlss.so", exe) < (int)sizeof probe && exists(probe)))
+                        has_adapter = true;
+                }
+                if (!has_ngx) {
+                    if ((snprintf(probe, sizeof probe, "%s/libnvidia-ngx-dlss.so.310.9.1", exe) < (int)sizeof probe && exists(probe)) ||
+                        (snprintf(probe, sizeof probe, "%s/../share/monado/dlss/libnvidia-ngx-dlss.so.310.9.1", exe) < (int)sizeof probe && exists(probe)) ||
+                        (snprintf(probe, sizeof probe, "%s/../lib/libnvidia-ngx-dlss.so.310.9.1", exe) < (int)sizeof probe && exists(probe)))
+                        has_ngx = true;
+                }
+            }
+        }
+        return has_adapter && has_ngx;
+    };
+    bool dlss_files=linux_dlss_runtime_present();
+#endif
     bool dlss_candidate=selected_gpu && selected_gpu->vendor==0x10de && route>=13 && dlss_files;
     if (ImGui::CollapsingHeader(g.ui_lang ? "Advanced GPU / Vulkan (restart)" : "GPU / Vulkan avanzado (reiniciar)")) {
     ImGui::SeparatorText("GPU / Vulkan");
@@ -1923,12 +1959,22 @@ static void tab_graphics() {
             if (ImGui::Selectable(T(ups[i]), !g.upscaler_auto && g.upscaler == i)) { g.upscaler_auto = false; g.upscaler = i; }
             ImGui::EndDisabled();
             if (i == 3 && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+#ifdef _WIN32
                 ImGui::SetTooltip("%s", g.ui_lang ? "Requires NVIDIA RTX, Vulkan 1.3+ and official DLLs. SDK confirms support at launch." :
                     "Requiere NVIDIA RTX, Vulkan 1.3+ y DLL oficiales. El SDK confirma compatibilidad al iniciar.");
+#else
+                ImGui::SetTooltip("%s", g.ui_lang ? "Requires NVIDIA RTX, Vulkan 1.3+ and the Linux NVIDIA NGX DLSS runtime. SDK confirms support at launch." :
+                    "Requiere NVIDIA RTX, Vulkan 1.3+ y el runtime NVIDIA NGX DLSS para Linux. El SDK confirma compatibilidad al iniciar.");
+#endif
         }
         ImGui::EndCombo();
     }
+#ifdef _WIN32
     if (!dlss_files) ImGui::TextDisabled(g.ui_lang ? "DLSS: official NVIDIA runtime not installed." : "DLSS: falta el paquete oficial NVIDIA.");
+#else
+    if (!dlss_files) ImGui::TextDisabled(g.ui_lang ? "DLSS: Linux NVIDIA NGX runtime not installed (run setup_linux_dlss.py or place libnvidia-ngx-dlss.so.310.9.1 in dlss/)."
+                                                   : "DLSS: falta el runtime NVIDIA NGX para Linux (ejecuta setup_linux_dlss.py o coloca libnvidia-ngx-dlss.so.310.9.1 en dlss/).");
+#endif
     if (!g.upscaler_auto && g.upscaler == 4) fp_section();  // [XCDE] FSR 4 Lite's model files (prepared on this PC)
     else if (dlss_candidate) ImGui::TextDisabled(g.ui_lang ? "DLSS runtime installed; GPU/driver checked on launch." : "DLSS instalado; la GPU/controlador se comprueba al iniciar.");
     ImGui::SetItemTooltip(T("FSR 1.0: escalado espacial, solo cuando la resolución interna es menor que la ventana.\n"

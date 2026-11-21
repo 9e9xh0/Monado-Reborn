@@ -8196,7 +8196,7 @@ static VkImageView post_process(VkCommandBuffer cb, TexBackend *b, double ow_d, 
         VkImageView t = tmp_upscale(cb, b, v, cam ? (TexBackend *)tmp_depth_tex->backend : NULL, cam ? &tmp_cam : NULL, tmp_jit,
                                     tmp_dm1, ow, oh);
 #ifdef __linux__
-        if (t && (g_settings.upscaler == UPSCALE_FSR4_LITE || g_settings.upscaler == UPSCALE_FSR3)) {  // [XCDE] linear -> sRGB
+        if (t && (g_settings.upscaler == UPSCALE_FSR4_LITE || g_settings.upscaler == UPSCALE_FSR3 || g_settings.upscaler == UPSCALE_DLSS)) {  // [XCDE] linear -> sRGB
             TexBackend *encoded = post_image(6, ow, oh);
             float pe[8] = {1.0f / ow, 1.0f / oh};
             post_pass(cb, "tmp_srgb.frag", &t, 1, encoded, pe, false);

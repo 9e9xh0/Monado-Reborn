@@ -175,8 +175,10 @@ extern "C" void dlss_validate_adapter(VkPhysicalDevice phys, uint32_t api, uint3
 }
 
 // The device's extensions (appended to ext[*n]) and features (OR-ed into f12 / f13); extra queues it asks for.
-extern "C" void dlss_device_requirements(const char **ext, uint32_t *n, uint32_t max, VkPhysicalDeviceVulkan12Features *f12,
-                                         VkPhysicalDeviceVulkan13Features *f13, uint32_t *extra_gfx, uint32_t *extra_compute) {
+extern "C" void dlss_device_requirements(VkInstance inst, VkPhysicalDevice phys, const char **ext, uint32_t *n, uint32_t max,
+                                         VkPhysicalDeviceVulkan12Features *f12, VkPhysicalDeviceVulkan13Features *f13,
+                                         uint32_t *extra_gfx, uint32_t *extra_compute) {
+    (void)inst; (void)phys;
     *extra_gfx = *extra_compute = 0;
     if (!sl_ok) return;
     uint32_t additional = 0;
@@ -381,21 +383,335 @@ extern "C" bool dlss_evaluate(VkCommandBuffer cb, const TexBackend *color, const
     if (r != sl::Result::eOk) { snprintf(dlss_note, sizeof dlss_note, "DLSS dispatch falló (SDK %d); frame con escalado alternativo", (int)r); static int n; if (n++ < 5) DLOG("[dlss] %s\n", dlss_note); return false; }
     return true;
 }
+extern "C" void dlss_reset(void) {}
+#elif defined(__linux__)
+// [XCDE] LINUX-017: native Linux NVIDIA NGX DLSS SR/DLAA via optional libmonado_dlss.so (dlopen).
+#include <SDL3/SDL_filesystem.h>
+#include <dlfcn.h>
+#include <errno.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <sys/stat.h>
+#include <unistd.h>
+#include <vulkan/vulkan.h>
+
+#include "dlss_linux.h"
+#include "gpu_scan.h"
+
+extern "C" {
+#include "temporal.h"
+#include "../../settings.h"
+#include "../../paths.h"
+}
+
+static void *dlss_mod;
+static bool ngx_prepared, ngx_ok;
+static char dlss_note[256] = "Not initialized; checked at launch";
+static VkDevice ngx_device;
+
+static decltype(&ngx_linux_init) p_ngx_init;
+static decltype(&ngx_linux_instance_exts) p_ngx_instance_exts;
+static decltype(&ngx_linux_device_exts) p_ngx_device_exts;
+static decltype(&ngx_linux_device_created) p_ngx_device_created;
+static decltype(&ngx_linux_available) p_ngx_available;
+static decltype(&ngx_linux_evaluate) p_ngx_evaluate;
+static decltype(&ngx_linux_reset) p_ngx_reset;
+static decltype(&ngx_linux_shutdown) p_ngx_shutdown;
+
+extern "C" const char *dlss_status(void) { return dlss_note; }
+static void dlss_note_set(const char *text) { snprintf(dlss_note, sizeof dlss_note, "%s", text); fprintf(stderr, "[dlss] %s\n", text); }
+
+static void dlss_shutdown_linux(void) {
+    if (p_ngx_shutdown) {
+        if (ngx_device) vkDeviceWaitIdle(ngx_device);
+        p_ngx_shutdown();
+    }
+    ngx_prepared = ngx_ok = false;
+    ngx_device = VK_NULL_HANDLE;
+    if (dlss_mod) {
+        dlclose(dlss_mod);
+        dlss_mod = nullptr;
+    }
+    p_ngx_init = nullptr; p_ngx_instance_exts = nullptr; p_ngx_device_exts = nullptr;
+    p_ngx_device_created = nullptr; p_ngx_available = nullptr; p_ngx_evaluate = nullptr;
+    p_ngx_reset = nullptr; p_ngx_shutdown = nullptr;
+}
+
+static bool file_exists_regular(const char *p) {
+    struct stat st{};
+    return p && *p && stat(p, &st) == 0 && S_ISREG(st.st_mode);
+}
+
+static bool is_ascii_path(const char *s) {
+    if (!s || !*s) return false;
+    for (const unsigned char *p = (const unsigned char *)s; *p; ++p)
+        if (*p >= 0x80) return false;
+    return true;
+}
+
+static bool exe_dir(char *out, size_t cap) {
+    ssize_t n = readlink("/proc/self/exe", out, cap - 1);
+    if (n <= 0 || (size_t)n >= cap) return false;
+    out[n] = 0;
+    char *slash = strrchr(out, '/');
+    if (!slash) return false;
+    *slash = 0;
+    return true;
+}
+
+static bool load_dlss_module(void) {
+    if (dlss_mod) return true;
+    const char *override = getenv("MONADO_DLSS_LIBRARY");
+    if (override && *override) {
+        dlss_mod = dlopen(override, RTLD_NOW | RTLD_LOCAL);
+    } else {
+        char dir[4096], cand[4096];
+        if (exe_dir(dir, sizeof dir)) {
+            if (snprintf(cand, sizeof cand, "%s/libmonado_dlss.so", dir) < (int)sizeof cand && file_exists_regular(cand))
+                dlss_mod = dlopen(cand, RTLD_NOW | RTLD_LOCAL);
+            if (!dlss_mod && snprintf(cand, sizeof cand, "%s/../lib/libmonado_dlss.so", dir) < (int)sizeof cand && file_exists_regular(cand))
+                dlss_mod = dlopen(cand, RTLD_NOW | RTLD_LOCAL);
+        }
+        if (!dlss_mod) dlss_mod = dlopen("libmonado_dlss.so", RTLD_NOW | RTLD_LOCAL);
+    }
+    if (!dlss_mod) {
+        fprintf(stderr, "[dlss] libmonado_dlss.so unavailable: %s\n", dlerror());
+        return false;
+    }
+#define GET(f, sym) f = (decltype(f))dlsym(dlss_mod, sym)
+    GET(p_ngx_init, "ngx_linux_init");
+    GET(p_ngx_instance_exts, "ngx_linux_instance_exts");
+    GET(p_ngx_device_exts, "ngx_linux_device_exts");
+    GET(p_ngx_device_created, "ngx_linux_device_created");
+    GET(p_ngx_available, "ngx_linux_available");
+    GET(p_ngx_evaluate, "ngx_linux_evaluate");
+    GET(p_ngx_reset, "ngx_linux_reset");
+    GET(p_ngx_shutdown, "ngx_linux_shutdown");
+#undef GET
+    if (!p_ngx_init || !p_ngx_instance_exts || !p_ngx_device_exts || !p_ngx_device_created ||
+        !p_ngx_available || !p_ngx_evaluate || !p_ngx_reset || !p_ngx_shutdown) {
+        dlclose(dlss_mod);
+        dlss_mod = nullptr;
+        return false;
+    }
+    return true;
+}
+
+static bool find_feature_dir(char *out, size_t cap) {
+    static const char *const k_lib = "libnvidia-ngx-dlss.so.310.9.1";
+    const char *env_dir = getenv("MONADO_DLSS_DIR");
+    char probe[4096], dir[4096];
+    if (env_dir && *env_dir && snprintf(probe, sizeof probe, "%s/%s", env_dir, k_lib) < (int)sizeof probe && file_exists_regular(probe)) {
+        snprintf(out, cap, "%s", env_dir);
+        return true;
+    }
+    const char *root = rt_data_root();
+    if (root && *root && snprintf(probe, sizeof probe, "%s/dlss/%s", root, k_lib) < (int)sizeof probe && file_exists_regular(probe)) {
+        snprintf(out, cap, "%s/dlss", root);
+        return true;
+    }
+    if (exe_dir(dir, sizeof dir)) {
+        const char *rels[] = {"%s/%s", "%s/../share/monado/dlss/%s", "%s/../lib/%s"};
+        const char *dirs[] = {"%s", "%s/../share/monado/dlss", "%s/../lib"};
+        for (int i = 0; i < 3; i++) {
+            if (snprintf(probe, sizeof probe, rels[i], dir, k_lib) < (int)sizeof probe && file_exists_regular(probe)) {
+                snprintf(out, cap, dirs[i], dir);
+                return true;
+            }
+        }
+    }
+    if (snprintf(probe, sizeof probe, "build/linux/%s", k_lib) < (int)sizeof probe && file_exists_regular(probe)) {
+        snprintf(out, cap, "build/linux");
+        return true;
+    }
+    return false;
+}
+
+extern "C" bool dlss_init_early(void) {
+    if ((!g_settings.upscaler_auto && g_settings.upscaler != UPSCALE_DLSS) || getenv("XCDE_TMP_OFF") || getenv("XCDE_PRECOMPILING")) {
+        dlss_note_set(g_settings.ui_lang ? "DLSS not requested (choose Automatic or DLSS and restart)"
+                                         : "DLSS no solicitado (elige Automático o DLSS y reinicia)");
+        return false;
+    }
+    uint32_t count = 0; char error[512];
+    XcdeGpu *adapters = xcde_gpu_scan(&count, error, sizeof error);
+    XcdeGpuInfo *infos = count ? (XcdeGpuInfo *)calloc(count, sizeof *infos) : nullptr;
+    if (!adapters || !infos) {
+        free(adapters); free(infos);
+        dlss_note_set(g_settings.ui_lang ? "Could not probe Vulkan adapter" : "No se pudo comprobar el adaptador Vulkan");
+        return false;
+    }
+    for (uint32_t i = 0; i < count; ++i) infos[i] = adapters[i].info;
+    bool fallback;
+    int selected = xcde_gpu_choose(infos, count, getenv("LARECOMP_GPU"), g_settings.gpu_uuid, g_settings.gpu_index, &fallback);
+    int route = selected >= 0 ? xcde_vulkan_route(infos[selected].vulkan_routes,
+        10 + (int)VK_API_VERSION_MINOR(xcde_vk_loader_version()), g_settings.vulkan_api, &fallback) : 0;
+    bool nvidia = selected >= 0 && infos[selected].vendor == 0x10de;
+    free(adapters); free(infos);
+    if (!nvidia) {
+        dlss_note_set(g_settings.ui_lang ? "Selected GPU is not NVIDIA RTX; DLSS disabled"
+                                         : "La GPU seleccionada no es NVIDIA RTX; DLSS desactivado");
+        return false;
+    }
+    if (route < 13) {
+        dlss_note_set(g_settings.ui_lang ? "DLSS requires Vulkan 1.3 or 1.4 route"
+                                         : "DLSS requiere la ruta Vulkan 1.3 o 1.4");
+        return false;
+    }
+    char feature_dir[4096];
+    if (!find_feature_dir(feature_dir, sizeof feature_dir) || !load_dlss_module()) {
+        dlss_note_set(g_settings.ui_lang ? "Linux NVIDIA NGX DLSS runtime not installed"
+                                         : "Falta el runtime NVIDIA NGX DLSS para Linux");
+        return false;
+    }
+    char cache[4096];
+    const char *root = rt_data_root();
+    if (is_ascii_path(root) && snprintf(cache, sizeof cache, "%s/cache/dlss", root) < (int)sizeof cache && SDL_CreateDirectory(cache)) {
+        // Use private ASCII data root cache/dlss when possible.
+    } else {
+        snprintf(cache, sizeof cache, "/tmp/monado-dlss-%u", (unsigned)getuid());
+        if (mkdir(cache, 0700) != 0 && errno != EEXIST) {
+            dlss_note_set("Failed to create NGX cache directory");
+            return false;
+        }
+    }
+    if (!p_ngx_init(feature_dir, cache)) {
+        dlss_note_set(g_settings.ui_lang ? "NVIDIA NGX initialization failed"
+                                         : "No se pudo iniciar NVIDIA NGX");
+        return false;
+    }
+    ngx_prepared = true;
+    atexit(dlss_shutdown_linux);
+    dlss_note_set(g_settings.ui_lang ? "NVIDIA NGX runtime loaded; checking RTX GPU/driver"
+                                     : "Runtime NVIDIA NGX cargado; comprobando GPU/controlador RTX");
+    return true;
+}
+
+extern "C" int dlss_instance_exts(const char **out, int max) {
+    return ngx_prepared && p_ngx_instance_exts ? p_ngx_instance_exts(out, max) : 0;
+}
+
+extern "C" void dlss_validate_adapter(VkPhysicalDevice phys, uint32_t api, uint32_t qfam) {
+    (void)qfam;
+    if (!ngx_prepared) return;
+    VkPhysicalDeviceProperties props{};
+    vkGetPhysicalDeviceProperties(phys, &props);
+    if (api < VK_API_VERSION_1_3 || props.vendorID != 0x10de) {
+        ngx_prepared = ngx_ok = false;
+        if (p_ngx_shutdown) p_ngx_shutdown();
+        dlss_note_set(g_settings.ui_lang ? "GPU/driver lacks Vulkan 1.3+ NVIDIA RTX support for DLSS"
+                                         : "GPU/controlador sin los requisitos DLSS de Vulkan; se usa escalado alternativo");
+    }
+}
+
+extern "C" void dlss_device_requirements(VkInstance inst, VkPhysicalDevice phys, const char **ext, uint32_t *n, uint32_t max,
+                                         VkPhysicalDeviceVulkan12Features *f12, VkPhysicalDeviceVulkan13Features *f13,
+                                         uint32_t *extra_gfx, uint32_t *extra_compute) {
+    (void)f13;
+    *extra_gfx = *extra_compute = 0;
+    if (!ngx_prepared || !p_ngx_device_exts) return;
+    const uint32_t original_count = n ? *n : 0;
+    if (!p_ngx_device_exts(inst, phys, ext, n, max)) {
+        ngx_prepared = false;
+        if (p_ngx_shutdown) p_ngx_shutdown();
+        dlss_note_set(g_settings.ui_lang ? "DLSS device requirements unsupported on this GPU/driver"
+                                         : "Requisitos de dispositivo DLSS no compatibles en esta GPU/controlador");
+        return;
+    }
+    bool needs_address = false;
+    for (uint32_t i = 0; i < *n; i++) needs_address |= !strcmp(ext[i], VK_KHR_BUFFER_DEVICE_ADDRESS_EXTENSION_NAME);
+    if (!needs_address) return;
+    VkPhysicalDeviceVulkan12Features supported{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES};
+    VkPhysicalDeviceFeatures2 have{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2};
+    have.pNext = &supported;
+    if (f12) vkGetPhysicalDeviceFeatures2(phys, &have);
+    if (!f12 || !supported.bufferDeviceAddress) {
+        *n = original_count;
+        ngx_prepared = false;
+        if (p_ngx_shutdown) p_ngx_shutdown();
+        dlss_note_set(g_settings.ui_lang ? "Required bufferDeviceAddress unavailable; using fallback"
+                                         : "Falta bufferDeviceAddress requerido para DLSS; se usa escalado alternativo");
+        return;
+    }
+    f12->bufferDeviceAddress = VK_TRUE;
+}
+
+extern "C" void dlss_device_created(VkInstance inst, VkPhysicalDevice phys, VkDevice dev, uint32_t qfam) {
+    if (!ngx_prepared || !p_ngx_device_created || !p_ngx_available) return;
+    ngx_device = dev;
+    p_ngx_device_created(inst, phys, dev, qfam);
+    ngx_ok = p_ngx_available();
+    if (ngx_ok) {
+        dlss_note_set(g_settings.ui_lang ? "DLSS Super Resolution / DLAA available on active GPU"
+                                         : "DLSS Super Resolution / DLAA disponible en la GPU activa");
+    } else {
+        dlss_note_set(g_settings.ui_lang ? "DLSS unavailable on this GPU or driver update required"
+                                         : "DLSS no compatible con esta GPU o requiere actualizar controlador");
+    }
+}
+
+extern "C" bool dlss_create_surface(void *sdl_window, VkInstance instance, VkPhysicalDevice phys,
+                                    uint32_t qfam, VkSurfaceKHR *surface) {
+    (void)sdl_window; (void)instance; (void)phys; (void)qfam; (void)surface;
+    return false;
+}
+
+extern "C" PFN_vkVoidFunction dlss_proxy(VkDevice dev, const char *name) {
+    (void)dev; (void)name;
+    return nullptr;
+}
+
+extern "C" bool dlss_available(void) {
+    return ngx_ok && p_ngx_available && p_ngx_available();
+}
+
+static DlssImage ngx_image(const TexBackend *b) {
+    static const VkComponentMapping id = {};
+    VkImageView v = vk_image_view((TexBackend *)b, VK_IMAGE_VIEW_TYPE_2D, b->format, 0, 1, 0, 1, id, VK_IMAGE_ASPECT_COLOR_BIT);
+    return {b->image, v, b->format, b->width, b->height};
+}
+
+extern "C" bool dlss_evaluate(VkCommandBuffer cb, const TexBackend *color, const TexBackend *mv, const TexBackend *depth,
+                              const TexBackend *out, const TexBackend *hud, const float jitter[2], bool reset, const TmpCamera *cam,
+                              const double reproj[16]) {
+    (void)cam; (void)reproj;
+    if (!ngx_ok || !p_ngx_evaluate || !color || !mv || !depth || !out || !jitter) return false;
+    DlssFrame f{};
+    f.color = ngx_image(color);
+    f.motion = ngx_image(mv);
+    f.depth = ngx_image(depth);
+    f.output = ngx_image(out);
+    f.jitter[0] = jitter[0];
+    f.jitter[1] = jitter[1];
+    f.reset = reset;
+    f.quality = g_settings.upscale_quality;
+    f.recording_seq = vk_pending_seq();
+    f.completed_seq = vk_completed_seq();
+    if (hud) f.reactive = ngx_image(hud);
+    bool ok = p_ngx_evaluate(cb, &f);
+    vk_external_state_changed();
+    return ok;
+}
+
+extern "C" void dlss_reset(void) {
+    if (p_ngx_reset) p_ngx_reset();
+}
 #else
-// [XCDE] T-LINUX: NVIDIA ships Streamline/DLSS only as signed Windows DLLs. This build reports DLSS as unavailable
-// (temporal.c then uses another upscaler) and adds no extensions, queues or features to the device.
+// Fallback for unsupported platforms: DLSS is unavailable and adds no extensions, queues, or features.
 #include <stdio.h>
 #include <vulkan/vulkan.h>
 extern "C" {
 #include "temporal.h"
 #include "../../settings.h"
-const char *dlss_status(void) { return "DLSS is only available on Windows"; }
+const char *dlss_status(void) { return "DLSS is not available on this platform"; }
 bool dlss_init_early(void) { return false; }
 int dlss_instance_exts(const char **out, int max) { (void)out; (void)max; return 0; }
 void dlss_validate_adapter(VkPhysicalDevice phys, uint32_t api, uint32_t qfam) { (void)phys; (void)api; (void)qfam; }
-void dlss_device_requirements(const char **ext, uint32_t *n, uint32_t max, VkPhysicalDeviceVulkan12Features *f12,
-                              VkPhysicalDeviceVulkan13Features *f13, uint32_t *extra_gfx, uint32_t *extra_compute) {
-    (void)ext; (void)n; (void)max; (void)f12; (void)f13;
+void dlss_device_requirements(VkInstance inst, VkPhysicalDevice phys, const char **ext, uint32_t *n, uint32_t max,
+                              VkPhysicalDeviceVulkan12Features *f12, VkPhysicalDeviceVulkan13Features *f13,
+                              uint32_t *extra_gfx, uint32_t *extra_compute) {
+    (void)inst; (void)phys; (void)ext; (void)n; (void)max; (void)f12; (void)f13;
     *extra_gfx = *extra_compute = 0;
 }
 void dlss_device_created(VkInstance inst, VkPhysicalDevice phys, VkDevice dev, uint32_t qfam) { (void)inst; (void)phys; (void)dev; (void)qfam; }
@@ -411,5 +727,6 @@ bool dlss_evaluate(VkCommandBuffer cb, const TexBackend *color, const TexBackend
     (void)cb; (void)color; (void)mv; (void)depth; (void)out; (void)hud; (void)jitter; (void)reset; (void)cam; (void)reproj;
     return false;
 }
+void dlss_reset(void) {}
 }
-#endif  // _WIN32
+#endif  // _WIN32 / __linux__
