@@ -20,10 +20,12 @@ import argparse
 import datetime
 import gzip
 import hashlib
+import io
 import json
 import shutil
 import subprocess
 import sys
+import tokenize
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -32,11 +34,42 @@ HEADERS = ('runtime/cpu.h', 'runtime/simd.h', 'runtime/simd_fp.h')
 PUBLISHED = ROOT / 'data/pgo/monado.proftext.gz'
 
 
+def _py_code_digest(data):
+    """Hash a Python source's executable tokens (ignores comments, blank lines and docstrings)."""
+    tokens = [t for t in tokenize.tokenize(io.BytesIO(data).readline)
+              if t.type not in (tokenize.COMMENT, tokenize.NL, tokenize.ENCODING, tokenize.ENDMARKER)]
+    h = hashlib.sha256()
+    stmt_start = True
+    for i, t in enumerate(tokens):
+        nxt = tokens[i + 1].type if i + 1 < len(tokens) else tokenize.NEWLINE
+        if stmt_start and t.type == tokenize.STRING and nxt == tokenize.NEWLINE:
+            continue  # standalone docstring
+        if t.type == tokenize.NEWLINE:
+            if not stmt_start:
+                h.update(b'\n')
+            stmt_start = True
+            continue
+        if t.type in (tokenize.INDENT, tokenize.DEDENT):
+            h.update(f'{t.type}\0'.encode())
+            stmt_start = True
+            continue
+        h.update(f'{t.type}:{t.string}\0'.encode())
+        stmt_start = False
+    return h.hexdigest()
+
+
+def _lifter_code_digest():
+    """Combined digest of top-level tools/lifter/*.py codegen sources (excludes tests, comments, docstrings)."""
+    h = hashlib.sha256()
+    for p in sorted((ROOT / 'tools/lifter').glob('*.py')):
+        h.update(f'{p.name}:{_py_code_digest(p.read_bytes())}\n'.encode())
+    return h.hexdigest()
+
+
 def fingerprint():
     tree = subprocess.run(['git', 'rev-parse', 'HEAD:tools/lifter'], cwd=ROOT, capture_output=True, text=True)
-    dirty = subprocess.run(['git', 'status', '--porcelain', '--', 'tools/lifter', *HEADERS], cwd=ROOT,
-                           capture_output=True, text=True).stdout.strip()
-    return {'lifter_tree': tree.stdout.strip() or None, 'lifter_or_headers_modified': bool(dirty),
+    return {'lifter_code': _lifter_code_digest(),
+            'lifter_tree': tree.stdout.strip() or None,
             'headers': {h: hashlib.sha256((ROOT / h).read_bytes()).hexdigest() for h in HEADERS}}
 
 
@@ -63,8 +96,6 @@ def merge(args):
     record.update(created=datetime.datetime.now().isoformat(timespec='seconds'), profraw=[p.name for p in raws],
                   bytes=args.out.stat().st_size)
     args.out.with_suffix('.json').write_text(json.dumps(record, indent=2) + '\n', encoding='utf-8')
-    if record['lifter_or_headers_modified']:
-        print('warning: the lifter or the inlined runtime headers have uncommitted changes; the record names HEAD')
     print(f'{args.out} ({record["bytes"] // 1024} KiB) from {len(raws)} .profraw file(s)')
 
 
@@ -106,7 +137,10 @@ def check(args):
     record = json.loads(record_path.read_text(encoding='utf-8'))
     now = fingerprint()
     stale = []
-    if record.get('lifter_tree') != now['lifter_tree'] or now['lifter_or_headers_modified']:
+    if 'lifter_code' in record:
+        if record['lifter_code'] != now['lifter_code']:
+            stale.append('the lifter changed since the training')
+    elif record.get('lifter_tree') != now['lifter_tree']:
         stale.append('the lifter changed since the training')
     stale += [f'{h} changed since the training' for h, d in record['headers'].items() if now['headers'].get(h) != d]
     for line in stale:
