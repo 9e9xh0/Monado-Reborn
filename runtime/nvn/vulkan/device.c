@@ -1500,7 +1500,9 @@ void backend_present(NvnTexture *t) {
         if (b) menu_frame_info(b->width, b->height);  // [XCDE] GitHub #39: the game image size, for the overlay
         menu_fps_tick(SDL_GetTicksNS()); // once per native frame, outside repeat/FG paths
         vkq_drain();  // [XCDE] ImGui records directly into this command buffer
+        vk_gp_mark(cb, "post: imgui");
         menu_render((void *)cb, g_vk.sc_extent.width, g_vk.sc_extent.height);
+        vk_gp_mark(cb, "(frame end)");
         vk_frame_end(shot ? "build/window.png" : xshot);
         {   // XCDE_PRESENT_STATS=1: game frame intervals (first present of each), every 120 frames
             static int on = -1;

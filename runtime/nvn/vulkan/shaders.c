@@ -20,13 +20,23 @@ static shaderc_shader_kind kind_of(int stage) {
          : stage == STAGE_GEOMETRY ? shaderc_geometry_shader : shaderc_compute_shader;  // [XCDE] geometry
 }
 
+static bool stage_opt(int stage) {
+    const char *e = getenv("LARECOMP_VK_OPT");
+    if (e) return atoi(e) != 0;
+    if (stage == STAGE_FRAGMENT || stage == STAGE_COMPUTE) {
+        const char *fe = getenv("XCDE_FS_OPT");
+        return !fe || atoi(fe) != 0;
+    }
+    return false;
+}
+
 // SPIR-V disk cache: cache/spirv/<hash of stage + source>.spv, so a known shader costs a file read instead of a
 // GLSL compile (the driver's pipeline cache only covers the step after this one).
 static uint64_t src_hash(const char *src, int stage) {
     uint64_t h = (0xcbf29ce484222325ull ^ (uint64_t)stage) + 3;  // + version of the post-processing (no_contraction)
     // T250: target environment, optimization and translator/postprocess revision belong in the cache key.
     h ^= (uint64_t)g_vk.api_version << 17;
-    h ^= getenv("LARECOMP_VK_OPT") ? 0x6f7074696d697a65ull : 0;
+    h ^= stage_opt(stage) ? 0x6f7074696d697a65ull : 0;
     h ^= 0x544B323530000001ull;
     for (const char *p = src; *p; p++) { h ^= (uint8_t)*p; h *= 0x100000001B3ull; }
     return h;
@@ -339,8 +349,8 @@ uint32_t *vk_glsl_to_spirv(const char *src, int stage, const char *name, size_t 
     shaderc_compile_options_t o = shaderc_compile_options_initialize();
     shaderc_compile_options_set_target_env(o, shaderc_target_env_vulkan, g_vk.api_version >= VK_API_VERSION_1_3 ? shaderc_env_version_vulkan_1_3 : shaderc_env_version_vulkan_1_2);
     shaderc_compile_options_set_target_spirv(o, g_vk.api_version >= VK_API_VERSION_1_3 ? shaderc_spirv_version_1_6 : shaderc_spirv_version_1_5);
-    shaderc_compile_options_set_optimization_level(o, getenv("LARECOMP_VK_OPT") ? shaderc_optimization_level_performance
-                                                                                  : shaderc_optimization_level_zero);
+    shaderc_compile_options_set_optimization_level(o, stage_opt(stage) ? shaderc_optimization_level_performance
+                                                                     : shaderc_optimization_level_zero);
     shaderc_compilation_result_t r = shaderc_compile_into_spv(comp, src, strlen(src), kind_of(stage), name, "main", o);
     shaderc_compile_options_release(o);
     if (shaderc_result_get_compilation_status(r) != shaderc_compilation_status_success) {
@@ -500,12 +510,18 @@ static const char *builtin_src(const char *name, int *stage) {
                "layout(set = 0, binding = 2) uniform sampler2D sceneTex;\n"
                "layout(push_constant) uniform P { vec4 a; vec4 b; } pc;\n"
                "layout(location = 0) out vec4 o;\n"
+               "vec3 lin2srgb(vec3 c) {\n"
+               "  c = max(c, vec3(0.0));\n"
+               "  return mix(1.055 * pow(c, vec3(1.0 / 2.4)) - 0.055, c * 12.92, lessThanEqual(c, vec3(0.0031308)));\n"
+               "}\n"
                "void main() {\n"
                "  vec2 uv = gl_FragCoord.xy * pc.a.xy;\n"
                "  vec3 up = texture(upTex, uv).rgb;\n"
+               "  if (pc.b.y != 0.0) up = lin2srgb(up);\n"
                "  vec3 fin = texture(finalTex, uv).rgb;\n"
                "  vec3 d = fin - texture(sceneTex, uv).rgb;\n"
                "  float m = max(abs(d.r), max(abs(d.g), abs(d.b)));\n"
+               "  if (pc.b.x == 0.0 && m <= 1.5 / 255.0) { o = vec4(up, 1.0); return; }\n"
                // [XCDE] T220: the weight from the HUD change around the pixel (one render texel each way): the
                // anti-aliased edge of a letter took the upscaled scene under it, and FSR 3's sharp grass showed
                // through text edges (frayed letters on the title screen); DLSS's smoother output hid it
@@ -531,7 +547,6 @@ static const char *builtin_src(const char *name, int *stage) {
                //    scene does not shake anyway.
                // Pixels the HUD did not change stay the upscaled scene. XCDE_TMP_HUD_OLD=1: the composite before #103.
                "  if (pc.b.x != 0.0) { o = vec4(mm > 1.5 / 255.0 ? mix(clamp(up + d, 0.0, 1.0), fin, w) : up, 1.0); return; }\n"
-               "  if (m <= 1.5 / 255.0) { o = vec4(up, 1.0); return; }\n"
                "  vec3 s0 = fin - d;\n"
                "  vec3 lo = max(d / max(1.0 - s0, vec3(1.0 / 255.0)), -d / max(s0, vec3(1.0 / 255.0)));\n"
                "  float aMin = clamp(max(lo.r, max(lo.g, lo.b)), 0.0, 1.0);\n"

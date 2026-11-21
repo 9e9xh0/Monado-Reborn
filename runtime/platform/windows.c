@@ -94,6 +94,8 @@ int plat_written_pages(uint64_t addr, uint64_t size, uint64_t *pages, int max, u
     return (int)n;
 }
 
+void plat_will_write(uint64_t addr, uint64_t size) { (void)addr; (void)size; }
+
 // Decommit everything: the range stays reserved, and pages come back zeroed when committed again (lazily).
 bool plat_reset_guest(uint64_t lo, uint64_t hi) {
     return VirtualFree((void *)(uintptr_t)lo, hi - lo, MEM_DECOMMIT) != 0;

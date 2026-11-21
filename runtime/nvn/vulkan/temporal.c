@@ -352,6 +352,7 @@ VkImageView tmp_hud_scene_view(uint32_t w, uint32_t h) {
 }
 void tmp_hud_snapshot(VkCommandBuffer cb, TexBackend *b) {
     if (!b || !b->image || (b->aspect & ~VK_IMAGE_ASPECT_COLOR_BIT) || snap_frame == renderer_present_count()) return;
+    vk_gp_mark(cb, "post: tmp_hud_snapshot %ux%u", b->width, b->height);
     img_make(&img[4], b->format, b->width, b->height, VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT);
     vk_full_barrier(cb);
     VkImageCopy c = {.srcSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1}, .dstSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1},
@@ -743,6 +744,7 @@ VkImageView tmp_upscale(VkCommandBuffer cb, TexBackend *color, VkImageView color
                 (unsigned long long)game_vel_frame, (unsigned long long)renderer_present_count(), game_vel ? (int)game_vel->format : -1, have_prev);
         }
     }
+    vk_gp_mark(cb, "post: tmp_prep %ux%u", rw, rh);
     if (!getenv("XCDE_TMP_VEL_FIT")) {
         prep(cb, snap ? img[4].v : color_view, snap ? img[4].v : color_view, vel_view, depth, reproj, have_prev, jitter, dm1, rw, rh);
     } else {
@@ -758,6 +760,7 @@ VkImageView tmp_upscale(VkCommandBuffer cb, TexBackend *color, VkImageView color
     bool ok = false;
     float jit_out[2];  // what the upscalers are told (the draws keep the raw jitter; XCDE_TMP_JIT_SIGN)
     jit_upscale_out(jitter, jit_out);
+    vk_gp_mark(cb, "post: tmp_upscale %ux%u -> %ux%u", rw, rh, ow, oh);
     if (g_settings.upscaler == UPSCALE_FSR4_LITE) {  // [XCDE] T-FSR4-LITE (fsr4.c: the optional native component)
         // [XCDE] #96: sharpness was a hardcoded 0.3 - RCAS always on (also at 1:1, where the layer is only reconstructing
         // the sample grid), and neither the launcher's slider nor `upscale_sharpness` in xcde.ini reached it. RCAS at a fog
