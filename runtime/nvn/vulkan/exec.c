@@ -154,7 +154,13 @@ static uint64_t submit_seq;  // last submitted
 static pthread_mutex_t seq_lock = PTHREAD_MUTEX_INITIALIZER;
 static bool in_pass;
 static uint64_t tmp_scene_frame = ~0ull;  // [XCDE] T213: the last frame with a scene draw (jittered)
+static uint64_t tmp_presented_scene_frame = ~0ull;  // [XCDE] #168: the last frame whose jittered 3D scene reached the presented image
 static TexBackend *pass_dbg_rt;  // [XCDE] colour 0 of the open pass (the debug dump must save the pass's own target, not st.rt's)
+static bool tmp_provenance_on(void) {
+    static int on = -1;
+    if (on < 0) { const char *e = getenv("XCDE_TMP_SCENE_PROVENANCE"); on = !e || atoi(e) != 0; }
+    return on != 0;
+}
 
 uint64_t vk_completed_seq(void) {
     uint64_t v = 0;
@@ -1630,10 +1636,11 @@ static void vk_end_pass_at(int line) {
     in_pass = false;
     feedback_layout(false);  // [XCDE] #7
     pass_nfeedback = 0;
-    // [XCDE] T213: the first pass this frame that drew into the presented image (the scene composite: the HUD follows)
-    // (only once this frame's scene was drawn: the game writes the window image earlier in the frame too - a snapshot
-    // there turned the jitter off for the whole scene and DLSS / FSR got no sub-pixel detail: jagged edges)
-    if (pass_dbg_rt && pass_dbg_rt->presented && tmp_enabled() && tmp_scene_frame == renderer_present_count())
+    // [XCDE] T213 / #168: the first pass this frame that composited the jittered 3D scene into the presented image
+    // (the HUD follows). Waits until the scene has actually reached the presented image so 3D menus that draw stale
+    // field HUD or a blurred backdrop before the 3D scene target do not snapshot before the 3D model is composited.
+    if (pass_dbg_rt && pass_dbg_rt->presented && tmp_enabled() &&
+        xcde_tmp_hud_snap_ready(tmp_provenance_on(), tmp_scene_frame, tmp_presented_scene_frame, renderer_present_count()))
         tmp_hud_snapshot(vk_cmd(), pass_dbg_rt);
     if (renderer_present_count() != pass_frame_seen) { pass_frame_seen = renderer_present_count(); pass_no_in_frame = 0; }
     pass_no_in_frame++;
@@ -6275,7 +6282,22 @@ static void tmp_draw(const Prog *pr, float *jx, float *jy) {
             }
         }
     }
-    if (scene && world && !nojit && !tmp_hud_started()) { *jx = tmp_jit[0]; *jy = tmp_jit[1]; tmp_scene_frame = fr; }
+    if (scene && world && !nojit && !tmp_hud_started()) {
+        *jx = tmp_jit[0]; *jy = tmp_jit[1]; tmp_scene_frame = fr;
+        if (pass_dbg_rt && pass_dbg_rt->presented) {
+            tmp_presented_scene_frame = fr;
+        } else {
+            for (int i = 0; i < st.rt.ncolor && i < 8; i++)
+                if (st.rt.color[i] && st.rt.color[i]->backend) {
+                    TexBackend *rb = (TexBackend *)st.rt.color[i]->backend;
+                    if (!rb->presented) rb->tmp_scene_frame = fr;
+                }
+            if (st.rt.depth && st.rt.depth->backend) {
+                TexBackend *db_ = (TexBackend *)st.rt.depth->backend;
+                if (!db_->presented) db_->tmp_scene_frame = fr;
+            }
+        }
+    }
     if (getenv("XCDE_TMP_LOG")) {  // (debugging) per frame: draws jittered / scene draws not jittered (after the HUD began) / others
         static uint64_t fr; static int nj, nh, no, nl;
         if (fr != renderer_present_count()) {
@@ -6724,20 +6746,54 @@ static void draw_(CmdRec *r, bool indexed) {
             }
         }
     }
-    {   // [XCDE] T220: the pass that composites the scene into the presented image can go on with the HUD in the same
-        // pass (the title screen: composite, then "Press any button" / the copyright as instanced glyphs). The image
-        // before the HUD (tmp_hud_snapshot, at the pass end) then held the text, FSR 3 / DLSS took it as scene and
-        // FSR 3 frayed the letters with the grass behind them. The pass ends after its first draw instead, so the
-        // snapshot is the scene alone and the rest is the HUD (composited back by tmp_hud.frag).
+    {   // [XCDE] T220 / #168: the pass that composites the scene into the presented image can go on with the HUD in the
+        // same pass (the title screen: composite, then "Press any button" / the copyright as instanced glyphs). In 3D
+        // menus (Change Equipment) the game renders the jittered 3D stage to an offscreen target first, draws stale
+        // field HUD and the blurred field backdrop into the presented image, then composites the 3D scene target onto
+        // the presented image before the 2D menu UI. Track which offscreen targets carry this frame's jittered 3D scene
+        // so the pre-HUD snapshot waits until that scene has reached the presented image.
         static int pass_draws;
         static uint64_t last_pass_seq;
-        if (in_pass && tmp_enabled() && pass_dbg_rt && pass_dbg_rt->presented && tmp_scene_frame == renderer_present_count() &&
-            !tmp_hud_started() && pass_draws >= 1 && last_pass_seq == pass_seq_no)
+        uint64_t fr_ = renderer_present_count();
+        bool reads_tmp_scene = false;
+        if (tmp_enabled() && tmp_scene_frame == fr_ && !tmp_hud_started()) {
+            ShaderInfo *sis[3] = {pr->vi, pr->fi, pr->gi};
+            for (int s = 0; s < 3 && !reads_tmp_scene; s++) {
+                ShaderInfo *si = sis[s];
+                if (!si) continue;
+                for (int i = 0; i < si->ntex; i++) {
+                    NvnTexture *t = shader_texture_object(s == 2 ? 2 : s, &si->tex[i]);
+                    if (!t) continue;
+                    NvnTexture *rt = naliases ? alias_read(t) : t;
+                    TexBackend *b1 = (TexBackend *)t->backend, *b2 = rt ? (TexBackend *)rt->backend : NULL;
+                    if (xcde_tmp_tex_carries_scene(b1 != NULL, b1 && b1->presented, b1 ? b1->tmp_scene_frame : ~0ull, fr_) ||
+                        xcde_tmp_tex_carries_scene(b2 != NULL, b2 && b2->presented, b2 ? b2->tmp_scene_frame : ~0ull, fr_)) {
+                        reads_tmp_scene = true;
+                        break;
+                    }
+                }
+            }
+        }
+        if (xcde_tmp_should_split_before_hud_draw(in_pass, tmp_enabled(), pass_dbg_rt && pass_dbg_rt->presented,
+                                                  tmp_hud_started(), pass_draws, last_pass_seq == pass_seq_no,
+                                                  tmp_provenance_on(), tmp_scene_frame, tmp_presented_scene_frame,
+                                                  reads_tmp_scene, fr_))
             st.rt_dirty = true;
         if (last_pass_seq != pass_seq_no || st.rt_dirty || !in_pass) pass_draws = 0;
         begin_pass();
         last_pass_seq = pass_seq_no;
         pass_draws++;
+        if (reads_tmp_scene) {
+            if (pass_dbg_rt && pass_dbg_rt->presented) {
+                tmp_presented_scene_frame = fr_;
+            } else {
+                for (int i = 0; i < st.rt.ncolor && i < 8; i++)
+                    if (st.rt.color[i] && st.rt.color[i]->backend) {
+                        TexBackend *rb = (TexBackend *)st.rt.color[i]->backend;
+                        if (!rb->presented) rb->tmp_scene_frame = fr_;
+                    }
+            }
+        }
     }
     // [XCDE] T162 part 2: guest memory this draw reads (vertex / index fetch, heap loads) and writes
     mem_rd |= VK_PIPELINE_STAGE_2_DRAW_INDIRECT_BIT | VK_PIPELINE_STAGE_2_INDEX_INPUT_BIT | VK_PIPELINE_STAGE_2_VERTEX_ATTRIBUTE_INPUT_BIT |
@@ -7815,6 +7871,13 @@ static void copy_texture(const TexRefRec *src, const TexRefRec *dst, uint64_t fl
     dl_note("copy texture %ux%u f%#x -> %ux%u f%#x (%p -> %p)", st_->width, st_->height, st_->format, dt->width, dt->height,
             dt->format, (void *)st_, (void *)dt);
     TexBackend *s = vk_tex(st_, false), *d = vk_tex(dt, true);
+    {
+        uint64_t fr_ = renderer_present_count();
+        if (s && d && xcde_tmp_tex_carries_scene(true, s->presented, s->tmp_scene_frame, fr_) && !tmp_hud_started()) {
+            if (d->presented) tmp_presented_scene_frame = fr_;
+            else d->tmp_scene_frame = fr_;
+        }
+    }
     renderer_mark_gpu_owned(dt);
     if (renderer_texture_presented(dt) && st_->width == dt->width && st_->height == dt->height) renderer_texture_mark_presented(st_);
     renderer_texture_first_write(dt);

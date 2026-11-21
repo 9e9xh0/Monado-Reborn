@@ -82,6 +82,29 @@ int main(void) {
     assert(xcde_sampler_bias_bucket(true, 5, false, 0, -1.585f, false, UQ_ULTRA, &bias) == 4 && fabsf(bias + 1.585f) < 1e-6f);
     assert(xcde_sampler_bias_bucket(true, 5, false, 0, -0.5f, true, UQ_QUALITY, &bias) == 5 && fabsf(bias + 0.5f) < 1e-6f);
 
-    puts("tex resize policy: preservation, color RT clear, and material-only LOD bias passed");
+    // 4. Temporal HUD snapshot provenance (#168): offscreen 3D scene targets propagate provenance to the presented
+    //    composite so stale field HUD / blurred menu backdrops drawn into presented earlier do not trigger the snapshot.
+    const uint64_t fr = 2900;
+    assert(xcde_tmp_tex_carries_scene(true, false, fr, fr));
+    assert(!xcde_tmp_tex_carries_scene(false, false, fr, fr));      // unbound texture
+    assert(!xcde_tmp_tex_carries_scene(true, true, fr, fr));        // presented image feedback read never counts as offscreen scene
+    assert(!xcde_tmp_tex_carries_scene(true, false, fr - 1, fr));   // persistent backdrop from an earlier frame
+
+    // Before the offscreen 3D scene target (pass 198) is composited into presented (pass 201 draw 2), stale field HUD
+    // (passes 199-200) and the blurred backdrop (pass 201 draw 0) must not arm or split the pre-HUD snapshot.
+    assert(!xcde_tmp_hud_snap_ready(true, fr, ~0ull, fr));
+    assert(xcde_tmp_hud_snap_ready(false, fr, ~0ull, fr));          // XCDE_TMP_SCENE_PROVENANCE=0 legacy gate
+    assert(!xcde_tmp_should_split_before_hud_draw(true, true, true, false, 1, true, true, fr, ~0ull, false, fr));
+    assert(xcde_tmp_should_split_before_hud_draw(true, true, true, false, 1, true, false, fr, ~0ull, false, fr));
+
+    // Once the 3D scene composite has written to presented (presented_scene_frame == fr), a second scene layer in the
+    // same pass stays in the pass, while the first non-scene HUD draw splits the pass so vk_end_pass snapshots first.
+    assert(xcde_tmp_hud_snap_ready(true, fr, fr, fr));
+    assert(!xcde_tmp_should_split_before_hud_draw(true, true, true, false, 1, true, true, fr, fr, true, fr));
+    assert(xcde_tmp_should_split_before_hud_draw(true, true, true, false, 1, true, true, fr, fr, false, fr));
+    assert(!xcde_tmp_should_split_before_hud_draw(true, true, true, true, 1, true, true, fr, fr, false, fr));   // HUD already snapshotted
+    assert(!xcde_tmp_should_split_before_hud_draw(true, true, false, false, 1, true, true, fr, fr, false, fr)); // offscreen pass
+
+    puts("tex resize policy: preservation, color RT clear, material-only LOD bias, and temporal HUD provenance passed");
     return 0;
 }

@@ -98,3 +98,19 @@ reallocated image, exposing uninitialized VRAM (decoding as tiled magenta/green/
   tracks manual `XCDE_TMP_LOD_BIAS` overrides.
 - `tests/native/test_tex_resize.c`, `scripts/native_tests.sh`, `tests/unit/test_vk_source_contracts.py`: unit and
   source-contract coverage for resize preservation, color render-target initialization, and material-only LOD bias.
+
+## 3D menu character jitter under temporal upscalers (GitHub #168, 2026-11-21)
+
+In 3D character menus (Change Equipment, View Character, Appearance), the game renders the jittered 3D stage and
+character into an offscreen target (`pass 198`), draws stale field HUD (`passes 199-200`) and the blurred field
+backdrop (`pass 201 draw 0`) into the presented image, and only then composites the offscreen 3D scene target onto the
+presented image (`pass 201 draw 2`) before drawing the 2D menu UI (`pass 202`). Previously, `tmp_hud_snapshot()`
+fired on the first pass into the presented image after any jittered 3D draw (`pass 199`, pitch black), so the temporal
+upscaler upscaled an empty image and `tmp_hud.frag` treated 100% of the 3D stage and character as opaque HUD, outputting
+the raw un-dejittered render-size image.
+
+- `runtime/nvn/vulkan/vk.h`, `tex_resize.h`, `exec.c`: track per-frame jittered 3D scene provenance across offscreen
+  render targets (`TexBackend.tmp_scene_frame`) and arm `tmp_hud_snapshot()` / the `T220` pre-HUD pass split only once
+  that scene has reached the presented image (`tmp_presented_scene_frame`, `XCDE_TMP_SCENE_PROVENANCE=0` fallback).
+- `tests/native/test_tex_resize.c`, `tests/unit/test_vk_source_contracts.py`: unit and source-contract coverage for
+  temporal HUD snapshot provenance.

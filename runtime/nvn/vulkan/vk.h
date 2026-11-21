@@ -111,6 +111,7 @@ typedef struct TexBackend {
     uint8_t scalable;  // 0 fixed size, 1 the 16:9 scene targets (sx, sy), 2 [XCDE] T182 portrait targets (uniform)
     bool presented;
     uint64_t touched_frame, frame_cleared;
+    uint64_t tmp_scene_frame;  // [XCDE] #168: last present frame in which jittered 3D scene content reached this offscreen image
     uint32_t level_gen;
     float sx, sy;
     void *pending_rgba;  // host-produced pixels (video) waiting to be uploaded on the render thread

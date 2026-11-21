@@ -94,3 +94,29 @@ static inline int xcde_sampler_bias_bucket(bool apply_bias, uint32_t min_filter,
     default: return 5;
     }
 }
+
+// [XCDE] #168: temporal HUD snapshot provenance. In menus with 3D models (Change Equipment, View Character, Appearance)
+// the game renders the jittered 3D stage and character into an offscreen target, then draws stale field HUD and the
+// blurred field backdrop into the presented image before compositing the 3D scene target onto the presented image, and
+// finally draws the menu's 2D UI on top. Arming the pre-HUD snapshot only once this frame's jittered 3D scene has
+// reached the presented image prevents capturing the pre-backdrop / backdrop pass as the "scene before HUD".
+static inline bool xcde_tmp_tex_carries_scene(bool has_tex, bool presented, uint64_t tex_scene_frame, uint64_t frame) {
+    return has_tex && !presented && tex_scene_frame == frame;
+}
+
+static inline bool xcde_tmp_hud_snap_ready(bool provenance_enabled, uint64_t scene_frame,
+                                           uint64_t presented_scene_frame, uint64_t frame) {
+    return (provenance_enabled ? presented_scene_frame : scene_frame) == frame;
+}
+
+static inline bool xcde_tmp_should_split_before_hud_draw(bool in_pass, bool tmp_on, bool rt_presented,
+                                                         bool hud_started, int pass_draws, bool same_pass_seq,
+                                                         bool provenance_enabled, uint64_t scene_frame,
+                                                         uint64_t presented_scene_frame, bool draw_reads_scene,
+                                                         uint64_t frame) {
+    if (!in_pass || !tmp_on || !rt_presented || hud_started || pass_draws < 1 || !same_pass_seq)
+        return false;
+    if (!provenance_enabled)
+        return scene_frame == frame;
+    return presented_scene_frame == frame && !draw_reads_scene;
+}

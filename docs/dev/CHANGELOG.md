@@ -69,3 +69,19 @@ of `tasks.md`; do not move them, they are the record.
 - Added `tests/native/test_tex_resize.c` (wired into `scripts/native_tests.sh`) and source contract assertions in
   `tests/unit/test_vk_source_contracts.py`.
 
+## 2026-11-21 — fix 3D menu model jitter under temporal upscalers (#168)
+
+- Traced frame 2900 of `tests/routes/menu_all.txt` (Change Equipment): the game tonemaps the jittered 3D stage and
+  character into an offscreen target (`pass 198`), draws stale field HUD into a fresh presented target (`passes 199-200`),
+  overwrites the presented target with the blurred field backdrop and dim overlay (`pass 201 draws 0-1`), composites the
+  offscreen 3D scene target onto the presented target (`pass 201 draw 2`), and then draws the 2D menu UI (`pass 202`).
+- Because `tmp_scene_frame` was already set by the earlier 3D draws, `T220`/`T213` took `tmp_hud_snapshot()` on
+  `pass 199` (pitch black), causing FSR 3 / FSR 4 Lite / DLSS to upscale a blank image and `tmp_hud.frag` to replace
+  the entire 3D character and room with the raw un-dejittered render-size image (`fin`).
+- Added offscreen-to-presented scene provenance tracking (`TexBackend.tmp_scene_frame`, `tmp_presented_scene_frame`,
+  and pure-C11 helpers in `runtime/nvn/vulkan/tex_resize.h`, with `XCDE_TMP_SCENE_PROVENANCE=0` fallback) so the
+  pre-HUD snapshot is taken right after `pass 201 draw 2` composites the 3D scene into the presented image.
+- Verified on `tests/routes/menu_all.txt` (frames 2900-2905, FSR 3.1 Performance): frame-to-frame error on Shulk's
+  boots dropped from `1.69-2.60` (`±1 px` shift per frame) to `0.105-0.169` (`(0, 0)` shift), character sharpness gradient
+  rose from `1.732` to `1.886`, and Title (400), Field (2500), and Main Menu (2700) remained intact.
+
