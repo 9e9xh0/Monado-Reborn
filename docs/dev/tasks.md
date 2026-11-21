@@ -1611,3 +1611,9 @@ Detalle: `docs/PERFORMANCE_UI.md`. Evidencia: `docs/evidence/2026-11-04-performa
   and `exec.c` `texture_info` restrict `tmp_lod_bias` to CPU-uploaded mipmapped material textures (`XCDE_TMP_LOD_BIAS_ALL=1`
   opt-out) keyed per quality bucket so live upscaler/quality changes apply cleanly. Covered by `tests/native/test_tex_resize.c`
   and `tests/unit/test_vk_source_contracts.py`; ROG Ally Z1E / SteamOS in-game verification pending.
+- [x] T274 [M10] (2026-11-21) **Tamaño de la ventana desde el menú F1.** La pestaña Gráficos > Pantalla incluye
+  "Tamaño de la ventana" con los mismos presets que el launcher (`runtime/window_size.h`, compartido): elegir uno
+  actualiza `g_window_w` / `g_window_h` y redimensiona la ventana al instante con `SDL_SetWindowSize` (si está
+  maximizada, se restaura primero); a pantalla completa el cambio queda pendiente hasta salir. "Aplicar" guarda
+  `window = WxH` con el lector/escritor de `runtime/host/settings_ini.c` que ya existía. Pruebas:
+  `tests/native/test_window_size.c` (presets, parseo e índice) y captura del menú a 1280x720 mostrando el control.

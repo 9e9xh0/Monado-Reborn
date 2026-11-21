@@ -28,6 +28,7 @@
 #include "../../runtime/ui/cheats_controls.h"  // [XCDE] cheats: the same controls as the F1 menu
 #include "../../runtime/cheats_options.h"      // [XCDE] cheats: shared xcde.ini parsing (xcde_cheat_enabled...)
 #include "../../runtime/ui_scale.h"  // GitHub #121
+#include "../../runtime/window_size.h"  // [XCDE] window size presets, shared with the F1 menu
 #include "../../runtime/perf_overlay_opts.h"  // GitHub #147
 #include "../../runtime/grass_lod.h"
 #include "../../runtime/graphics_options.h"
@@ -204,10 +205,8 @@ static int icons_effective(int sel) {
 }
 static const char *const k_ups_ini[] = {"bilinear", "fsr", "fsr3", "dlss", "fsr4lite"};
 static const char *const k_uq_ini[] = {"native", "quality", "balanced", "performance", "ultra"};
-// [XCDE] Steam Deck: the 16:10 sizes (the Deck's 1280x800 and its 1920x1200 / 2560x1600 external-display peers) after
-// the 16:9 ones, so saved indices stay put; with "Automatic" aspect the game widens its view to fit them.
-static const char *const k_wins[] = {"1280x720", "1600x900", "1920x1080", "2560x1440", "3840x2160", "1280x800", "1920x1200", "2560x1600"};
-static constexpr int k_nwins = (int)(sizeof k_wins / sizeof *k_wins);
+static const char *const *const k_wins = xcde_window_size_names;  // [XCDE] runtime/window_size.h
+static constexpr int k_nwins = XCDE_WINDOW_SIZE_COUNT;
 static const char *const k_res_ini[] = {"match", "1", "1.5", "2", "3", "75%", "50%", "dynamic"};
 static const char *const k_res_ui[] = {"Igual que la ventana (recomendado)", "1x - 720p (como Switch)", "1.5x - 1080p",
                                        "2x - 1440p", "3x - 2160p (4K)", "75% de la ventana", "50% de la ventana",

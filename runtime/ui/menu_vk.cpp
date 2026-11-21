@@ -17,6 +17,7 @@
 #include "quality_controls.h"
 #include "cheats_controls.h"  // [XCDE] optional cheats (Monado II port)
 #include "imgui_impl_vulkan.h"
+#include "../window_size.h"  // [XCDE] window size presets, shared with the launcher
 
 extern "C" {
 #include "../nvn/vulkan/vk.h"
@@ -48,7 +49,7 @@ extern "C" void menu_frame_info(uint32_t w, uint32_t h) { perf_game_w = (int)w; 
 static std::mutex q_lock;
 static SDL_Event q[256];
 static int q_n;
-static volatile bool open_, want_window;
+static volatile bool open_, want_window, want_size;
 static bool fs_applied = false, fs_init;
 
 static bool is_input(Uint32 t) {
@@ -78,11 +79,23 @@ extern "C" bool menu_is_open(void) { return open_; }
 
 extern "C" void menu_apply_window_requests(void *sdl_window) {
     if (!fs_init) { fs_init = true; fs_applied = g_settings.fullscreen; }
-    if (!want_window || !sdl_window) return;
-    want_window = false;
-    if (fs_applied != g_settings.fullscreen) {
-        SDL_SetWindowFullscreen((SDL_Window *)sdl_window, g_settings.fullscreen);
-        fs_applied = g_settings.fullscreen;
+    if (!sdl_window) return;
+    if (want_window) {
+        want_window = false;
+        if (fs_applied != g_settings.fullscreen) {
+            SDL_SetWindowFullscreen((SDL_Window *)sdl_window, g_settings.fullscreen);
+            fs_applied = g_settings.fullscreen;
+        }
+    }
+    // [XCDE] a size chosen while fullscreen waits for the window: fullscreen covers the display, not this size.
+    if (want_size) {
+        SDL_Window *win = (SDL_Window *)sdl_window;
+        Uint32 flags = SDL_GetWindowFlags(win);
+        if (!(flags & SDL_WINDOW_FULLSCREEN)) {
+            want_size = false;
+            if (flags & SDL_WINDOW_MAXIMIZED) SDL_RestoreWindow(win);
+            SDL_SetWindowSize(win, g_window_w, g_window_h);
+        }
     }
 }
 
@@ -182,6 +195,7 @@ static const char *const k_en[][2] = {
     {"75 % de la ventana", "75 % of the window"}, {"50 % de la ventana", "50 % of the window"},
     {"Dinámica (según objetivo FPS)", "Dynamic (follows FPS target)"}, {"Opciones  (F1 / Esc para volver al juego)", "Options  (F1 / Esc to go back to the game)"},
     {"Gráficos", "Graphics"}, {"Pantalla", "Display"}, {"Pantalla completa", "Fullscreen"},
+    {"Tamaño de la ventana", "Window size"}, {"Personalizado (%dx%d)", "Custom (%dx%d)"},
     {"Resolución y escalado", "Resolution and scaling"}, {"Resolución interna", "Internal resolution"},
     {"Bilineal (suave)", "Bilinear (soft)"}, {"AMD FSR 1.0 (nítido)", "AMD FSR 1.0 (sharp)"}, {"Escalado / antialiasing", "Upscaling / anti-aliasing"},
     {"DLSS se carga al iniciar el juego: hasta reiniciar se usa FSR 3.1.", "DLSS loads when the game starts: FSR 3.1 is used until a restart."},
@@ -254,6 +268,29 @@ static void ui(void) {
             quality_before=g_settings;
             ImGui::SeparatorText(T("Pantalla"));
             if (ImGui::Checkbox(T("Pantalla completa"), &g_settings.fullscreen)) want_window = true;
+            {   // [XCDE] same window size presets as the launcher, applied to the window at once
+                int wi = xcde_window_size_index(g_window_w, g_window_h);
+                char current[48];
+                if (wi >= 0) snprintf(current, sizeof current, "%s", xcde_window_size_names[wi]);
+                else snprintf(current, sizeof current, T("Personalizado (%dx%d)"), g_window_w, g_window_h);
+                if (monado_begin_combo(T("Tamaño de la ventana"), current)) {
+                    for (int i = 0; i < XCDE_WINDOW_SIZE_COUNT; i++) {
+                        if (ImGui::Selectable(xcde_window_size_names[i], i == wi)) {
+                            int w, h;
+                            if (xcde_window_size_parse(xcde_window_size_names[i], &w, &h)) {
+                                g_window_w = w;
+                                g_window_h = h;
+                                want_size = true;
+                            }
+                        }
+                        if (i == wi) ImGui::SetItemDefaultFocus();
+                    }
+                    ImGui::EndCombo();
+                }
+                ImGui::SetItemTooltip("%s", g_settings.ui_lang
+                    ? "The game window's size when it is not fullscreen (also saved for the next start).\nIn fullscreen it applies when you leave it."
+                    : "Tamaño de la ventana del juego cuando no está a pantalla completa (también se guarda para el próximo inicio).\nA pantalla completa se aplica al salir de ella.");
+            }
             const char *aspects[] = {g_settings.ui_lang ? "Automatic" : "Automático",
                                      g_settings.ui_lang ? "Original 16:9" : "16:9 original"};
             monado_combo(g_settings.ui_lang ? "Aspect ratio" : "Relación de aspecto", &g_settings.aspect, aspects, 2);

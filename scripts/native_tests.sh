@@ -32,6 +32,9 @@ $Z -std=c11 -Wall -Wextra -Werror -o build/test/test_gpu_probe.exe tests/native/
 build/test/test_gpu_probe.exe
 $Z -std=c11 -Wall -Wextra -Werror -o build/test/test_settings_roundtrip.exe tests/native/test_settings_roundtrip.c runtime/host/settings_ini.c runtime/hle/cheats_options.c runtime/hle/graphics.c runtime/hle/foliage_distance.c
 build/test/test_settings_roundtrip.exe build/test/settings-roundtrip.ini
+# [XCDE] window size presets shared by the launcher and the F1 menu (runtime/window_size.h).
+$Z -std=c11 -Wall -Wextra -Werror -o build/test/test_window_size.exe tests/native/test_window_size.c
+build/test/test_window_size.exe
 $Z -std=c11 -O1 -w -Iruntime -o build/test/test_graphics_options.exe tests/native/test_graphics_options.c runtime/hle/graphics.c  # [XCDE]
 build/test/test_graphics_options.exe
 $Z -std=c11 -O1 -w -Iruntime -o build/test/test_prop_lod.exe tests/native/test_prop_lod.c runtime/hle/graphics.c
