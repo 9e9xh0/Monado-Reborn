@@ -21,6 +21,7 @@ int main(int argc, char **argv) {
           "occlusion = on\namd_fix = off\nsession_fix = off\n"
           "vulkan_api = 1.2\nfps_overlay = 0\nfps_overlay_style = simple\nupscaler = auto\n"
           "stick_deadzone = 20\neffects_off = 1\nrun_speed = 1.5\nui_scale = 30\nfps_overlay_scale = 300\nfps_overlay_position = bottom-right\n"
+          "window = 1920x1080\n"
           "cheat_damage_dealt = 1\ncheat_damage_dealt_percent = 250\ncheat_exp = 2\ncheat_exp_percent = 1o0\n"
           "cheat_enemy_health = true\ncheat_enemy_health_percent = 5\n"
           "future_plugin = preserve this\n", f); fclose(f);
@@ -28,6 +29,7 @@ int main(int argc, char **argv) {
     assert(g_settings.run_speed == 1.5f);  // [XCDE] GitHub #100
     assert(g_settings.ui_scale == 50);  // [XCDE] GitHub #121: below the minimum, clamped
     assert(g_settings.res_mode == RES_1_5);
+    assert(g_window_w == 1920 && g_window_h == 1080);  // [XCDE] window size chosen in the launcher / F1 menu
     // [XCDE] the retired effects_off AO bit moves to the single Ambient occlusion option (Off)
     assert(g_settings.graphics.value[GFX_AO] == 1 && !(g_settings.effects_off & EFFECT_TSSAO));
     assert(!strcmp(g_settings.gpu_uuid, "0123456789abcdef0123456789abcdef"));
@@ -75,5 +77,9 @@ int main(int argc, char **argv) {
     g_settings.upscaler = UPSCALE_FSR3; assert(xcde_sharpness(&g_settings) == 0.3f);
     g_settings.upscale_sharpness = 0.0f; settings_save(); g_settings.upscale_sharpness = -1.0f; settings_load();
     assert(g_settings.upscale_sharpness == 0.0f && xcde_sharpness(&g_settings) == 0.0f);
-    assert(!remove(argv[1])); puts("settings round-trip: stable GPU ID, policies, 1.5x, unknown keys and default reset OK"); return 0;
+    // [XCDE] the F1 menu's window size: the chosen preset is written and read back
+    g_window_w = 2560; g_window_h = 1440; settings_save();
+    g_window_w = 1280; g_window_h = 720; settings_load();
+    assert(g_window_w == 2560 && g_window_h == 1440);
+    assert(!remove(argv[1])); puts("settings round-trip: stable GPU ID, policies, 1.5x, window size, unknown keys and default reset OK"); return 0;
 }

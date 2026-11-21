@@ -99,6 +99,15 @@ reallocated image, exposing uninitialized VRAM (decoding as tiled magenta/green/
 - `tests/native/test_tex_resize.c`, `scripts/native_tests.sh`, `tests/unit/test_vk_source_contracts.py`: unit and
   source-contract coverage for resize preservation, color render-target initialization, and material-only LOD bias.
 
+## F1 window size (2026-11-21)
+
+- `runtime/window_size.h`: the launcher's window size presets, shared with the in-game overlay and checked by
+  `tests/native/test_window_size.c` (parsing, index lookup and every preset name).
+- `runtime/ui/menu_vk.cpp`: Graphics > Display gets the same "Window size" list as the launcher. Choosing an entry
+  updates `g_window_w` / `g_window_h` and resizes the window at once through `SDL_SetWindowSize` (a maximized window is
+  restored first). While fullscreen the choice stays pending until fullscreen is left, because it does not cover the
+  display. "Apply" persists `window = WxH` with the existing `host/settings_ini.c` reader/writer.
+- `tools/launcher/launcher.cpp`: uses the shared preset list instead of its own copy.
 ## 3D menu character jitter under temporal upscalers (GitHub #168, 2026-11-21)
 
 In 3D character menus (Change Equipment, View Character, Appearance), the game renders the jittered 3D stage and
