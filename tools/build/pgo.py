@@ -35,27 +35,50 @@ PUBLISHED = ROOT / 'data/pgo/monado.proftext.gz'
 
 
 def _py_code_digest(data):
-    """Hash a Python source's executable tokens (ignores comments, blank lines and docstrings)."""
-    tokens = [t for t in tokenize.tokenize(io.BytesIO(data).readline)
-              if t.type not in (tokenize.COMMENT, tokenize.NL, tokenize.ENCODING, tokenize.ENDMARKER)]
-    h = hashlib.sha256()
+    """Hash Python code after stripping comments, standalone docstrings, and blank lines.
+
+    Operates on raw source spans rather than numeric token IDs so the digest is
+    identical across Python versions (e.g. 3.12 on CI vs 3.14 locally).
+    """
+    text = data.decode('utf-8').replace('\r\n', '\n').replace('\r', '\n')
+    lines = text.splitlines(keepends=True)
+    offsets = [0]
+    for line in lines:
+        offsets.append(offsets[-1] + len(line))
+
+    def pos(row_col):
+        return offsets[row_col[0] - 1] + row_col[1]
+
+    raw_tokens = list(tokenize.generate_tokens(io.StringIO(text).readline))
+    strip = []
+    for t in raw_tokens:
+        if t.type == tokenize.COMMENT:
+            strip.append((pos(t.start), pos(t.end)))
+    code_tokens = [t for t in raw_tokens
+                   if t.type not in (tokenize.COMMENT, tokenize.NL, tokenize.ENDMARKER)]
     stmt_start = True
-    for i, t in enumerate(tokens):
-        nxt = tokens[i + 1].type if i + 1 < len(tokens) else tokenize.NEWLINE
+    for i, t in enumerate(code_tokens):
+        nxt = code_tokens[i + 1].type if i + 1 < len(code_tokens) else tokenize.NEWLINE
         if stmt_start and t.type == tokenize.STRING and nxt == tokenize.NEWLINE:
-            continue  # standalone docstring
-        if t.type == tokenize.NEWLINE:
-            if not stmt_start:
-                h.update(b'\n')
-            stmt_start = True
+            strip.append((pos(t.start), pos(t.end)))
+            stmt_start = False
             continue
-        if t.type in (tokenize.INDENT, tokenize.DEDENT):
-            h.update(f'{t.type}\0'.encode())
+        if t.type in (tokenize.NEWLINE, tokenize.INDENT, tokenize.DEDENT):
             stmt_start = True
-            continue
-        h.update(f'{t.type}:{t.string}\0'.encode())
-        stmt_start = False
-    return h.hexdigest()
+        else:
+            stmt_start = False
+
+    strip.sort()
+    out = []
+    cur = 0
+    for s, e in strip:
+        if s > cur:
+            out.append(text[cur:s])
+        cur = max(cur, e)
+    out.append(text[cur:])
+
+    normalized = '\n'.join(line.rstrip() for line in ''.join(out).splitlines() if line.strip())
+    return hashlib.sha256(normalized.encode('utf-8')).hexdigest()
 
 
 def _lifter_code_digest():
