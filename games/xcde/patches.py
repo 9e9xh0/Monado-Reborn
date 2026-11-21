@@ -941,3 +941,39 @@ QUICKSTEP_STATS_UI_PATCHES = {
 }
 for _site, (_word, _emit, _note) in QUICKSTEP_STATS_UI_PATCHES.items():
     PATCHES[_site] = Patch(_word, _emit, 'LINUX-040', _note)
+
+
+# [XCDE] T224 / GitHub #181: in-engine cutscenes (rtmevt) have three 30 Hz quantization gates:
+#  1. L_70004e6b84 (0x70004e6b9c): rounds the continuous cutscene clock [sp+0x14] to the nearest
+#     1/30 s frame before calling f_70004e84c0 (sequence / pose update).
+#  2. f_70004f55b0 (0x70004f55f8): camera sequence skips its built-in floor/ceil lerp+slerp path
+#     and rounds to an integer 30 Hz frame whenever playback speed == 1.0f.
+#  3. f_700050c150 (0x700050c374): sequence track time lookup rounds local track time to 1/30 s
+#     when the track's snap flag (+0x220) is set.
+# When cutscenes run above 30 fps (cutscenes = same), bypass all three so cameras and character
+# poses evaluate smoothly every presented frame at identical playback speed. At 30 fps (and in
+# cutscenes = 30 / 30fg) xcde_cutscene_unquantize() returns false so 30 fps stays bit-identical.
+def _cutscene_unquantize(gen, addr):
+    original = _plain(gen, addr)
+    return ('{ extern _Bool xcde_cutscene_unquantize(void); '
+            'if (xcde_cutscene_unquantize()) { '
+            'fp_op_s(c, FOP_ADD, 8, 0, 13); goto L_70004e6bc0; } } ' + original)
+
+
+def _cutscene_cam_interp(gen, addr):
+    return ('{ extern _Bool xcde_cutscene_unquantize(void); '
+            'if (!xcde_cutscene_unquantize() && COND_EQ(c)) goto L_70004f5814; }')
+
+
+def _cutscene_track_unquantize(gen, addr):
+    original = _plain(gen, addr)
+    return ('{ extern _Bool xcde_cutscene_unquantize(void); '
+            'if (xcde_cutscene_unquantize()) goto L_700050c398; } ' + original)
+
+
+PATCHES[0x70004e6b9c] = Patch(0x1e2c1800, _cutscene_unquantize, 'T224',
+                              'fdiv s0, s0, s12 - skip 30 Hz cutscene clock quantization above 30 fps')
+PATCHES[0x70004f55f8] = Patch(0x540010e0, _cutscene_cam_interp, 'T224',
+                              'b.eq L_70004f5814 - use built-in sub-frame camera lerp+slerp above 30 fps')
+PATCHES[0x700050c374] = Patch(0x1e201901, _cutscene_track_unquantize, 'T224',
+                              'fdiv s1, s8, s0 - skip 30 Hz sequence track time quantization above 30 fps')

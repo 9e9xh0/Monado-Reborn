@@ -109,6 +109,21 @@ bool xcde_in_cutscene(void) {
 // gameplay keeps its FPS without it (the user plays locked at 60; generated frames there would look laggy).
 static bool g_cut30;
 bool xcde_cutscene_30(void) { return g_cut30; }
+// [XCDE] T224 / #181: skip the 30 Hz time-quantization gates in rtmevt whenever cutscenes run
+// above 30 fps (cutscenes = same, fps != 30, or XCDE_FPS_INTERVAL=1). Kept off at 30 fps and in
+// cutscenes = 30 / 30fg so 30 fps output stays bit-identical.
+bool xcde_cutscene_unquantize(void) {
+    static int ov = -1;
+    if (ov < 0) {
+        const char *e = ENV("XCDE_CUTSCENE_UNQUANTIZE");
+        ov = e ? (atoi(e) != 0) : 2;
+    }
+    if (ov != 2) return ov != 0;
+    if (g_cut30) return false;
+    const char *iv = ENV("XCDE_FPS_INTERVAL");
+    if (iv) return atoi(iv) == 1;
+    return g_settings.fps != 30;
+}
 // the frame rate the window is presented at (device.c repeat presents): 30 while a cutscene is held at 30
 int xcde_present_fps(void) { return g_cut30 ? 30 : g_settings.fps; }
 
