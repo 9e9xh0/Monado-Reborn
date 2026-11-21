@@ -21,6 +21,7 @@ void xcde_cheats_publish(const Settings *settings) {
         COPY(XCDE_CHEAT_ENEMY_HEALTH, enemy_health)
 #undef COPY
         next.no_fall_damage = settings->cheat_no_fall_damage;
+        next.high_jump = settings->cheat_high_jump;  // [XCDE] T276
     }
     // Hold only for the copy: reward callbacks can yield or re-enter guest hooks.
     pthread_mutex_lock(&request_lock);

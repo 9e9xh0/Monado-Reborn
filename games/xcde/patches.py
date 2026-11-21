@@ -461,6 +461,34 @@ PATCHES[0x7000446864] = Patch(0xb9400815, _cheats_fall, 'LINUX-072',
                               'optional ordinary PC fall immunity before nonlethal/lethal split; forced events remain native')
 
 
+# T276: optional high jump. The XCDE community "jump x8" code for 1.1.2 (BID 92C78BB3DCBBC3F7: `040B0000 004E2F08
+# 1E241000`) replaces the jump-state height scale 1.0 with 8.0. The DE 2.0.0 main used here keeps the same jump state:
+# 0x7000458fac..0x7000458fc8 loads the jump power, stores it at +0x1c, passes the height scale in s0 to the checked
+# sqrt(2*g*h*scale) impulse helper (f_7000429b00) and resets the jump state. Only the address moved (1.1.2 0x4E2F08 ->
+# 2.0.0 0x7000458fb8); the hook keeps the native instruction when the option is off and returns 8.0 when it is on.
+CHEATS_JUMP_CONTEXT = {
+    0x7000458fac: 0xaa1303e0,  # native jump power query argument
+    0x7000458fb0: 0x9400002c,  # bl 0x7000459060: jump power -> s0
+    0x7000458fb4: 0xbd001e80,  # str s0, [x20, #0x1c]: character jump power
+    0x7000458fbc: 0xaa1403e0,  # mov x0, x20: impulse helper argument
+    0x7000458fc0: 0x97ff42d0,  # bl 0x7000429b00: native sqrt(2*g*h*scale) jump impulse
+    0x7000458fc4: 0xaa1403e0,  # mov x0, x20: native jump-state reset argument
+    0x7000458fc8: 0x97ff3f1a,  # bl 0x7000428c30: native jump-state reset
+}
+
+
+def _cheats_high_jump(gen, addr):
+    for site, expected in CHEATS_JUMP_CONTEXT.items():
+        if gen.word(site) != expected:
+            raise ValueError(f'{site:#x}: T276 native jump context changed')
+    return ('{ extern uint32_t xcde_cheats_jump_scale(void); '
+            'c->v[0] = xcde_cheats_jump_scale(); }')
+
+
+PATCHES[0x7000458fb8] = Patch(0x1e2e1000, _cheats_high_jump, 'T276',
+                              'fmov s0, #1.0 - jump-height scale (optional x8); native impulse and landing kept')
+
+
 # LINUX-033 (runtime/hle/title_exit.c): an "Exit to desktop" row in the title menu, in the title controller's spare
 # preallocated row, through the game's own confirmation dialog; rendering, navigation and cleanup stay native.
 def _title_rows(gen, addr):

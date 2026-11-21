@@ -1,7 +1,8 @@
 // [XCDE] Optional gameplay cheats, ported from Monado II (github.com/brendonbusker/Monado-II, MIT; LINUX-072/120/129).
 // Coherent live settings shared by the launcher (Cheats tab) and the F1 menu (runtime/ui/cheats_controls.h), the INI
 // reader/writer (runtime/host/settings_ini.c) and the guest hooks (runtime/hle/cheats_*.c, games/xcde/patches.py).
-// Movement speed is not here: this recomp already has its own leader-only run speed (T270, runtime/hle/party.c).
+// Movement speed is not here: this recomp already has its own leader-only run speed (T270, runtime/hle/party.c). The
+// optional high jump (T276) is a jump-height scale, not a speed, so it lives with the other cheats.
 #pragma once
 #include <stdlib.h>
 #include <string.h>
@@ -19,6 +20,7 @@ typedef struct {
     bool enabled[XCDE_CHEAT_COUNT];
     int percent[XCDE_CHEAT_COUNT];
     bool no_fall_damage;
+    bool high_jump;
 } XcdeCheats;
 
 // The cheat multipliers as (name, minimum %) for the settings loader / saver / frontends.

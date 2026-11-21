@@ -1,4 +1,5 @@
-// [XCDE] (ported from Monado II, MIT; LINUX-072) authored adapters for checked DE 2.0.0 combat dispatch.
+// [XCDE] (ported from Monado II, MIT; LINUX-072) authored adapters for checked DE 2.0.0 combat dispatch, plus the
+// optional T276 jump-height scale (same native field-movement code family, no game data).
 #include "../hle.h"
 #include "../cheats_options.h"
 #include "cheats_combat.h"
@@ -77,4 +78,13 @@ bool cheats_skip_fall_damage(Cpu *c) {
     if (ENV("XCDE_CHEAT_TRACE")) LOG("[cheats] landing kind %u forced %u -> %s\n", (unsigned)c->x[23], (unsigned)(c->x[22] & 1),
                 skip ? "no damage" : "native");
     return skip;
+}
+
+uint32_t xcde_cheats_jump_scale(void) {
+    // T276: the native jump state passes this height scale to the sqrt(2*g*h*scale) impulse helper
+    // (f_7000429b00 in the checked 2.0.0 main). 1.0 keeps the native jump; 8.0 is the community "jump x8" code.
+    // Only the scale changes: the game still computes the impulse and resolves the landing itself.
+    const XcdeCheats options = xcde_cheats_snapshot();
+    if (ENV("XCDE_CHEAT_TRACE")) LOG("[cheats] jump height scale %s\n", options.high_jump ? "x8" : "x1");
+    return options.high_jump ? 0x41000000u /* 8.0f */ : 0x3F800000u /* 1.0f */;
 }

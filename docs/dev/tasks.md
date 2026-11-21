@@ -1642,3 +1642,13 @@ Detalle: `docs/PERFORMANCE_UI.md`. Evidencia: `docs/evidence/2026-11-04-performa
   `fprintf`, while the logger itself is faster than `fprintf` when timestamps are off. Native test:
   `tests/native/test_log_timestamp.c` passes, as do the runtime-only and launcher builds. Pending: one launcher run to
   see the prefix in `build/last_game.log` on the target machine.
+
+## High jump — 2026-11-21 (T276)
+
+- [x] T276 **High jump cheat (x8).** The XCDE community code for 1.1.2 (`040B0000 004E2F08 1E241000`) replaces the
+  jump-state height scale `fmov s0, #1.0` with 8.0. The 2.0.0 main used here keeps the same jump state; its scale is
+  at `0x7000458fb8`, with the native neighbours checked (jump power stored at +0x1c, the `f_7000429b00`
+  `sqrt(2*g*h*scale)` impulse helper and the jump-state reset). The hook returns 8.0 only while `cheat_high_jump` is
+  on and the native 1.0 otherwise, so the normal jump is unchanged; impulse, collisions and landing stay native.
+  Option in F1 → Cheats (Exploration) and the launcher; `cheat_high_jump = 0/1` in `xcde.ini`. The INI round-trip is
+  covered by `test_settings_roundtrip.c`; in-game verification pending.
