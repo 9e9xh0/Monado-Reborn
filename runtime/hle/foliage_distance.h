@@ -6,17 +6,22 @@
 
 #define XCDE_FOLIAGE_DEFAULT_SCALE 1.7f
 #define XCDE_FOLIAGE_MIN_SCALE .5f
+/* Coverage grows with radius squared: 3x covers 9x the authored area and
+ * overran the old 9x patch pool in dense areas, corrupting grass vertices
+ * (GitHub #171). The private block below keeps 24x pool capacity (84 MiB) and
+ * a 512 KiB bitmap so dense zones have generous headroom at the 1500-unit
+ * endpoint. The diagnostic override is clamped to the same 3x maximum. */
 #define XCDE_FOLIAGE_MAX_SCALE 3.f
 #define XCDE_FOLIAGE_AUTHORED_MAX_RADIUS 500.f
 #define XCDE_FOLIAGE_MAX_RADIUS 1500.f
-#define XCDE_FOLIAGE_BITMAP_BYTES 0x40000u
-#define XCDE_FOLIAGE_POOL_BYTES (0x380000u * 9u)
+#define XCDE_FOLIAGE_BITMAP_BYTES 0x80000u
+#define XCDE_FOLIAGE_POOL_BYTES (0x380000u * 24u)
 #define XCDE_FOLIAGE_METADATA_BYTES 0x20000u
 
 /* Scale authored local ranges, preserving the broad 7000/8000 fallbacks.
- * Allocate for the largest live preset at map startup: coverage grows with
- * radius squared. A 256 KiB bitmap fits five 5-unit layers at the full 1500-unit
- * endpoint, including the guest's extra 32-byte clear block. */
+ * Allocate for the largest live preset at map startup. A 512 KiB bitmap fits
+ * five 5-unit layers at the full 1500-unit endpoint with headroom, including
+ * the guest's extra 32-byte clear block. */
 static inline float xcde_foliage_far_scaled(float near_r, float far_r, float scale) {
     if (!isfinite(near_r) || !isfinite(far_r) || near_r < 0.f ||
         far_r <= near_r || far_r > XCDE_FOLIAGE_AUTHORED_MAX_RADIUS || !isfinite(scale) ||

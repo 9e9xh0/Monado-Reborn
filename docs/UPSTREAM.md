@@ -144,3 +144,24 @@ report with the events in the log.
   `scripts/build_boot.sh`, `scripts/link_boot.sh`, `scripts/build_linux.sh`, `scripts/native_tests.sh`,
   `tools/diag/validate_port.py`; new `tests/native/test_log_timestamp.c`, and stubs in the focused native tests that
   link a logging runtime unit.
+
+## Grass distance: MPF block enlarged for Ultra (3x) (GitHub #171, 2026-11-20)
+
+The grass draw-distance presets from PR #46 scale the game's own MPF foliage selector. The 3x **Ultra** preset
+covers nine times the authored area, and the first private MPF block was sized at exactly 9x the authored pool, so
+in dense zones such as Gaur Plains it had no margin and corrupt patch data was drawn as exploded grass vertices.
+Rather than retire the preset, the private block is now enlarged with generous headroom for **Ultra (3x)**:
+
+- `runtime/hle/foliage_distance.h`: the pool is 24x the authored 3.5 MiB (84 MiB), the bitmap doubles to 512 KiB,
+  and `XCDE_FOLIAGE_MAX_SCALE` stays at 3. The `XCDE_GRASS_DISTANCE` diagnostic override is clamped to 3x with a
+  warning.
+- `runtime/hle/foliage_pool.c`: arena slots grow from 32 MiB to 128 MiB (eight maps still fit the 1.5 GiB window).
+  Each live foliage map commits about 85 MiB of guest pages instead of 32 MiB; the 8-slot cap is unchanged.
+- `runtime/grass_lod.h`: **Ultra (3x)** remains the maximum preset; a saved index 5 or `extreme` from the retired 6x
+  preset loads as 3x Ultra.
+- `tests/native/test_settings_roundtrip.c` and `tests/native/test_foliage_distance.c` cover the 3x ceiling, legacy
+  `extreme` migration and the clamped diagnostic override.
+
+The 3x preset still needs in-game verification at the Gaur Plains spot that produced #171.
+
+Diagnostics and reporter context: [summary.md](evidence/2026-11-10-vertex-corruption/summary.md).
