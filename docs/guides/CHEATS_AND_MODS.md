@@ -21,6 +21,7 @@ Each one starts off. Changes apply at once during play; **Apply** writes them to
 | Gold gained | `cheat_gold`, `cheat_gold_percent` | Scales new positive gold gains. Spending is unchanged. |
 | No fall damage | `cheat_no_fall_damage` | Ordinary landing damage for party characters is skipped. Forced or scripted deaths still happen. |
 | High jump | `cheat_high_jump` | Jump height x8, the community "jump x8" code adapted to the 2.0.0 main. The game still computes the impulse, resolves collisions and lands the character. |
+| Camera follows jumps | `camera_follow_jump` | Raises the field camera's vertical look target with the controlled character's jump, so an 8x jump stays in view. The game still computes the camera position, pitch, collisions and cutscenes. |
 
 Multipliers are percentages: 100 = 1.00x, from 0 to 2000 (enemy health from 10). Anything malformed reads as 1x.
 EXP, AP, SP and gold already earned stay in the save after a cheat is turned off. Damage over time and separate
@@ -29,6 +30,12 @@ status-effect paths are not covered.
 The high jump is the XCDE community code for 1.1.2 (`040B0000 004E2F08 1E241000`, jump height x8). The 2.0.0 main
 moved that jump-state instruction to `0x7000458fb8`; the recomp hooks the instruction instead of hardcoding 8.0, so
 while the option is off the jump keeps its native 1.0 scale.
+
+The native field camera keeps its vertical look target on the ground while a character jumps; with the 8x jump the
+character leaves the frame. **Camera follows jumps** raises that target with the controlled leader's height each frame
+(the game's own camera update then computes the position and pitch), and leaves menus, cutscenes and event cameras
+alone. It is independent of the high jump option and off by default. `XCDE_CAM_TRACE=1` logs the followed values as
+`[camera]` lines.
 
 `XCDE_CHEAT_TRACE=1` logs each scaled hit, landing, jump-height scale, award, gold gain and enemy maximum HP as a
 `[cheats]` line, with native and scaled values. With the cheats off it still logs native hits and landings at 1x.

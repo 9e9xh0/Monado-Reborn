@@ -99,3 +99,15 @@ of `tasks.md`; do not move them, they are the record.
 - `tests/native/test_log_timestamp.c` (wired into `scripts/native_tests.sh` and `tools/diag/validate_port.py`) checks
   first-line, partial-line and multi-line prefixes; the focused native tests that link a runtime unit using `LOG` got
   a one-line `rt_logf` stub.
+
+## 2026-11-21 — camera follows jumps (T276b)
+
+- The field camera's vertical look target stayed at ground level while the character jumped (`camera + 0x5300`, look
+  point `+0x5400`), so with the 8x high jump the character left the frame. The new `camera_follow_jump` option raises
+  both target Y values with the controlled leader's Y from the pad read and lets the game's own camera update
+  (`f_70000510a0`) compute the position, pitch, collisions and smoothing; horizontal targets and the look offset stay
+  native. Menus, cutscenes and event cameras are skipped (`player_in_control` + `cutscene_playing`).
+- Found with an object probe and `XCDE_WATCH_BT` backtraces (`f_70000510a0` → `f_70000547b0` → `f_700072c070`); the
+  renderer's view matrix confirmed the camera's world Y rising 23.99 → 28.55 while the leader went 22.99 → 27.91
+  (FSR 3 probe). Option in F1 → Cheats → Exploration and the launcher, `camera_follow_jump = 0/1` in `xcde.ini`;
+  `test_settings_roundtrip.c` covers the round-trip and `XCDE_CAM_TRACE=1` logs the followed values.

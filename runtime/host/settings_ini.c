@@ -142,6 +142,7 @@ void settings_load(void) {
 #undef LOAD_CHEAT
         else if (!strcmp(k, "cheat_no_fall_damage")) g_settings.cheat_no_fall_damage = xcde_cheat_enabled(v);
         else if (!strcmp(k, "cheat_high_jump")) g_settings.cheat_high_jump = xcde_cheat_enabled(v);  // [XCDE] T276: jump height x8
+        else if (!strcmp(k, "camera_follow_jump")) g_settings.camera_follow_jump = xcde_cheat_enabled(v);  // [XCDE] T276: camera follows jumps
         else if (!strcmp(k, "quickstep_slot")) g_settings.quickstep_slot = xcde_cheat_enabled(v);  // [XCDE] Quick Step slot mod
         else if (!strcmp(k, "save_slots_99")) g_settings.save_slots_99 = xcde_cheat_enabled(v);  // [XCDE] 99 manual save slots, applied at the next start
         else if (!strcmp(k, "ui_scale")) g_settings.ui_scale = ui_scale_percent(atoi(v));  // [XCDE] GitHub #121
@@ -219,6 +220,7 @@ void settings_save(void) {
 #undef SAVE_CHEAT
     fprintf(f, "cheat_no_fall_damage = %d\n", g_settings.cheat_no_fall_damage);
     fprintf(f, "cheat_high_jump = %d\n", g_settings.cheat_high_jump);  // [XCDE] T276
+    fprintf(f, "camera_follow_jump = %d\n", g_settings.camera_follow_jump);  // [XCDE] T276: camera follows jumps
     fprintf(f, "quickstep_slot = %d\n", g_settings.quickstep_slot);
     fprintf(f, "save_slots_99 = %d\n", g_settings.save_slots_99);
     fprintf(f, "ui_scale = %d\n", ui_scale_percent(g_settings.ui_scale));  // [XCDE] GitHub #121
