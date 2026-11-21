@@ -533,9 +533,10 @@ static void create_device(void) {
     // [XCDE] DLSS (dlss.cpp): Streamline's device extensions, features and queues (after ours, same family)
     uint32_t extra_g = 0, extra_c = 0;
     if (!legacy && g_vk.props.vendorID == 0x10de) {
-        extern void dlss_device_requirements(const char **ext, uint32_t *n, uint32_t max, VkPhysicalDeviceVulkan12Features *f12,
-                                             VkPhysicalDeviceVulkan13Features *f13, uint32_t *extra_gfx, uint32_t *extra_compute);
-        dlss_device_requirements(ext, &n_ext, 48, &f12, &f13, &extra_g, &extra_c);
+        extern void dlss_device_requirements(VkInstance inst, VkPhysicalDevice phys, const char **ext, uint32_t *n, uint32_t max,
+                                             VkPhysicalDeviceVulkan12Features *f12, VkPhysicalDeviceVulkan13Features *f13,
+                                             uint32_t *extra_gfx, uint32_t *extra_compute);
+        dlss_device_requirements(g_vk.inst, g_vk.phys, ext, &n_ext, 48, &f12, &f13, &extra_g, &extra_c);
     }
     // Queues: ours (index 0 of qfam), Streamline's after it in the same family, and [XCDE] FSR 3 frame generation's
     // present / image-acquire / async-compute queues (temporal.c), picked as AMD's sample does: each from a family
@@ -1766,6 +1767,8 @@ void backend_reset(void) {
     if (!g_vk.dev) return;
     vkq_drain();  // [XCDE] queued recording must finish before idle / reset
     sc_wait_idle(g_vk.dev);
+    extern void dlss_reset(void);
+    dlss_reset();
     extern void vk_textures_reset(void);
     extern void vk_exec_reset(void);
     vk_textures_reset();

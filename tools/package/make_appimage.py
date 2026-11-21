@@ -38,6 +38,7 @@ DESKTOP = re.compile(r"^lib(glib|gobject|gio|gmodule|gthread|girepository)-2\.0\
 # CI builds on Ubuntu 24.04) is what Mesa gets too. RADV then failed to load (libxcb-dri3: undefined symbol
 # xcb_dri3_import_syncobj_checked) and the launcher found no GPU on SteamOS and other current distributions.
 HOST = re.compile(r"^(ld-linux|lib(c|m|pthread|dl|rt|resolv|util|anl)\.so|libnss_|libvulkan\.so|"
+                  r"libnvidia-ngx[-.]|"
                   r"lib(GL|EGL|GLX|OpenGL|GLdispatch|drm|gbm)[_.]|"
                   r"lib(stdc\+\+|gcc_s|z|expat|ffi|lzma|zstd|elf|udev|xshmfence)\.so|"
                   r"lib(X11|X11-xcb|Xau|Xdmcp|Xext|Xfixes|Xrender|Xxf86vm|xcb|xcb-[a-z0-9]+|wayland-[a-z]+)\.so)|" +
@@ -107,6 +108,17 @@ def main():
             shutil.copy2(ROOT / 'tools/build/build_fsr3_linux.py', docs / 'fsr3-source/build_fsr3_linux.py')
         else:
             print('note: no native FSR 3 component (scripts/build_fsr3_linux.sh): packaged without it')
+        dlss_lib = build / 'libmonado_dlss.so'
+        dlss_ngx = build / 'libnvidia-ngx-dlss.so.310.9.1'
+        if dlss_lib.is_file() and dlss_ngx.is_file():
+            shutil.copy2(dlss_lib, lib / dlss_lib.name)
+            payloads.append(dlss_lib)
+            (share / 'dlss').mkdir(parents=True, exist_ok=True)
+            shutil.copy2(dlss_ngx, share / 'dlss' / dlss_ngx.name)
+            if (build / 'dlss-LICENSE.txt').is_file():
+                shutil.copy2(build / 'dlss-LICENSE.txt', docs / 'dlss-LICENSE.txt')
+        else:
+            print('note: no native Linux DLSS component (tools/package/setup_linux_dlss.py, scripts/build_dlss_linux.sh): packaged without it')
         assets = a.fsr4_assets.resolve()
         if fsr4.is_file() and (assets / 'provenance.json').is_file():
             manifest = json.loads((assets / 'provenance.json').read_text())
