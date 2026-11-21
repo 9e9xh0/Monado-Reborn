@@ -65,3 +65,17 @@ Details, symptoms, diagnostics and limits:
   target, drawn after every other window draw) is classified as a full-window composite instead of a 16:9-boxed UI
   draw, so on an ultrawide window a skip travel no longer leaves the destination field visible at the sides while the
   box is black. `XCDE_LOAD_FADE_WIDE=0` is the A/B opt-out.
+
+## 2026-11-21 — T224 (GitHub #181): 60+ FPS in-engine cutscenes
+
+In-engine cutscenes (`rtmevt`) previously quantized their continuous playback clock and sequence tracks to `1/30 s`
+even when running above 30 FPS (`cutscenes = same`), causing 30 Hz pose/camera stepping and uneven motion.
+
+- `games/xcde/patches.py`: three `T224` patches bypass the 30 Hz quantization gates when cutscenes run above 30 FPS:
+  `0x70004e6b9c` (main cutscene loop clock rounding before `f_70004e84c0`), `0x70004f55f8` (`f_70004f55b0`, enabling
+  the camera sequence's built-in `floor`/`ceil` lerp+slerp path at `1.0x` playback speed), and `0x700050c374`
+  (`f_700050c150`, per-track local time rounding).
+- `runtime/hle/framepace.c`: `xcde_cutscene_unquantize()` enables the bypass only when `cutscenes = same` and target
+  FPS > 30 (with `XCDE_CUTSCENE_UNQUANTIZE=0|1` for A/B diagnostics); 30 FPS and `cutscenes = 30` / `30fg` execute the
+  original code paths bit-identically.
+- `tools/launcher/launcher.cpp`: updated the Cutscenes option tooltip to reflect smooth FPS-matched cutscenes.

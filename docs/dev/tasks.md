@@ -1018,7 +1018,7 @@ unB3s\samples.txt - suspected single translator thread: a translation cache woul
   - The empty-marker guess stays only if the hook never fired.
   - generated/main/main_115.c was hand-patched with the same text (build/obj/main/main_115.o rebuilt).
   Checked: title load list (2 frames) and in-game save list (3 consecutive frames): all 4 thumbnails right.
-- [ ] T224 (2026-10-22, party mod session) **Cutscenes feel like 30 fps; Dickson's ponytail vibrates** (user, first save
+- [x] T224 (2026-10-22, party mod session; fixed 2026-11-21, GitHub #181) **Cutscenes feel like 30 fps; Dickson's ponytail vibrates** (user, first save
   slot, a few steps ahead).
   - Measured:
     - presents are steady at 16.7 ms;
@@ -1048,12 +1048,27 @@ unB3s\samples.txt - suspected single translator thread: a translation cache woul
         f_700050a8b0 / f_700050d1d0).
     - Tools: XCDE_MEMWATCH_CLK=1 (clocks only), + XCDE_MEMWATCH_STEPS=1 (monotonic counters),
       XCDE_MEMWATCH_AUTO=cnt (watch the counter found); scratchpad nsostr.py reads the assert strings (source paths).
-    - Next: find what makes the character update of a cutscene skip a frame. Test: force the tick delta
-      [obj+0x68] to 1.0 during the cutscene. A 2x-speed cutscene that animates every frame would tie the pose
-      updates to that tick.
-  - Fallback if the gate can't be fixed (Metroid-Dread-Recomp 17b72bb): run cutscenes at 30 and present them on an
-    exact 33.3 ms grid (as the Switch does), so the camera and the characters step together instead of a smooth
-    camera over 30 fps poses.
+  - 2026-11-21 (GitHub #181, deterministic 60 fps repro in `build/t181/`, frames 15880-15941, `fnprof` 15900-15940):
+    - Root cause: three explicit 30 Hz quantization gates inside `rtmevt`:
+      1. `0x70004e6b9c` (`L_70004e6b84`, `main_128.c`): rounds the continuous cutscene clock `[sp+0x14]` to the nearest
+         `1/30 s` frame before calling `f_70004e84c0` (causing `f_70004f4860` to run 24 even / 54 odd iterations in 40
+         frames instead of 20 / 20);
+      2. `0x70004f55f8` (`f_70004f55b0`, `main_129.c`): camera sequence skips its built-in `floor`/`ceil` lerp+slerp
+         interpolation path and rounds to an integer 30 Hz frame whenever playback speed (`+0xfab4`) == `1.0f`;
+      3. `0x700050c374` (`f_700050c150`, `main_132.c`): sequence track time lookup rounds local track time to `1/30 s`
+         when the track snap flag (`+0x220`) is set.
+    - Fix: `xcde_cutscene_unquantize()` in `runtime/hle/framepace.c` + 3 patches in `games/xcde/patches.py` (bypassed
+      when `cutscenes = same` and FPS > 30; `XCDE_CUTSCENE_UNQUANTIZE=0` diagnostic override; stays off at 30 fps and in
+      `cutscenes = 30` / `30fg`).
+    - Verified (`build/t181/`, prologue cutscene frames 15880-15941):
+      - `fnprof` 15900-15940: `f_70004f4860` 24/54 -> 20/20, `f_700050c150` 4200/9450 -> 3500/3500, `f_700050e230`
+        545640/1227690 -> 454700/454700 (exact 50/50 symmetry, ~49% fewer `rtmevt` eval calls);
+      - consecutive frame pixel-diffs (15923-15941): baseline `0.27 / 6.22` alternation with backward bounces ->
+        uniform `4.01..6.07` smooth 60 fps progression;
+      - playback speed unchanged over 265 s of deterministic playback;
+      - `XCDE_CUTSCENE_UNQUANTIZE=0` control (frames 15900-15905): `MAD = 0.000000`, `max_diff = 0` (bit-identical to
+        unpatched baseline / 30 fps path).
+  - Fallback (`cutscenes = 30` / `30fg`, Metroid-Dread-Recomp 17b72bb) remains available as an optional setting.
 - T226 addendum (2026-10-23): Metroid-Dread-Recomp, all 15 commits, checked:
   - ccd609c (the state cache not reset after the DLSS pass froze the picture): n/a. XCDE forgets its cached state
     (ss_forget) at every render pass begin and after its own passes.
