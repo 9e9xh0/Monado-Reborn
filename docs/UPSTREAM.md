@@ -79,3 +79,22 @@ even when running above 30 FPS (`cutscenes = same`), causing 30 Hz pose/camera s
   FPS > 30 (with `XCDE_CUTSCENE_UNQUANTIZE=0|1` for A/B diagnostics); 30 FPS and `cutscenes = 30` / `30fg` execute the
   original code paths bit-identically.
 - `tools/launcher/launcher.cpp`: updated the Cutscenes option tooltip to reflect smooth FPS-matched cutscenes.
+
+## Menu / map / load-screen backdrop corruption on dynamic-resolution resize (GitHub #172, 2026-11-21)
+
+When dynamic internal resolution changed scale while the Main Menu, Area Map, or Load Game screen was open (sampling
+a persistent captured 16:9 render target), `tex_backend` discarded the old image without copying its pixels into the
+reallocated image, exposing uninitialized VRAM (decoding as tiled magenta/green/black DCC noise on RADV RDNA3).
+
+- `runtime/nvn/vulkan/tex_resize.h`: shared pure-C11 resize preservation, color render-target zero-clear, and
+  material-only temporal LOD-bias policy helpers.
+- `runtime/nvn/vulkan/textures.c`, `vk.h`: `resize_backend_if_needed()` blits GPU-owned color targets across all
+  shared mip levels before deferring `old.image` destruction (`XCDE_RESIZE_PRESERVE=0` opt-out) and invalidates upload
+  stamps for CPU-backed scalable textures; `create_image()` zero-clears new uncompressed color render targets
+  (`XCDE_CLEAR_NEW_COLOR_RT=0` opt-out, `XCDE_POISON_NEW_IMAGES=1` magenta diagnostic); `SamplerVariants` expands to
+  `variant[5][XCDE_SAMPLER_BIAS_SLOTS]` keyed by quality bucket (`vk_sampler(NvnSamplerDesc *, bool apply_lod_bias)`).
+- `runtime/nvn/vulkan/exec.c`, `temporal.c`, `temporal.h`: `texture_info()` enables temporal LOD bias only for
+  CPU-uploaded mipmapped material textures (`XCDE_TMP_LOD_BIAS_ALL=1` restores global biasing); `tmp_lod_bias_forced()`
+  tracks manual `XCDE_TMP_LOD_BIAS` overrides.
+- `tests/native/test_tex_resize.c`, `scripts/native_tests.sh`, `tests/unit/test_vk_source_contracts.py`: unit and
+  source-contract coverage for resize preservation, color render-target initialization, and material-only LOD bias.

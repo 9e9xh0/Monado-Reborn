@@ -29,6 +29,7 @@
 #include "bloom_prefilter.h"  // [XCDE] T-BLOOM-PREFILTER
 #include "bloom.h"  // [XCDE] T-WATER-BLOOM
 #include "temporal.h"
+#include "tex_resize.h"
 void vk_watch(VkImage dst, const char *site);  // [XCDE] debugging: log writes to a watched image
 static VkImage g_watch_img;
 #include "../renderer.h"
@@ -5657,9 +5658,11 @@ static void texture_info(int stage, ShaderInfo *si, int i, VkDescriptorImageInfo
     ti_depth = false;
     ti_presented = false;
     ti_alloc[0] = ti_alloc[1] = 0;
+    TexBackend *tb = NULL;
     if (h && st.tpool && tic < (uint32_t)st.tpool->count) {
         NvnTexEntry *e = &((NvnTexEntry *)st.tpool->entries)[tic];
         if (e->tex) {
+            NvnTexture *read_tex = naliases ? alias_read(e->tex) : e->tex;
             // Per-frame memo: ~2400 lookups per overworld frame recomputed the view (format / range math, cache
             // probe). The first lookup of a frame still runs vk_view (upload check); a view that may have been
             // destroyed (eviction, image re-created) bumps vk_view_gen. LARECOMP_VK_NO_TEX_MEMO=1 disables.
@@ -5676,7 +5679,7 @@ static void texture_info(int stage, ShaderInfo *si, int i, VkDescriptorImageInfo
             } else {
                 extern bool vk_view_mismatch;
                 vk_view_mismatch = false;
-                view = vk_view(naliases ? alias_read(e->tex) : e->tex, &e->view, e->has_view, false, st_->type);
+                view = vk_view(read_tex, &e->view, e->has_view, false, st_->type);
                 if (vk_view_mismatch && getenv("XCDE_GLITCH_WATCH")) {  // [XCDE] T240: the shader samples a type this texture can't be (black dummy)
                     static int nl;
                     extern uint64_t renderer_present_count(void);
@@ -5704,7 +5707,7 @@ static void texture_info(int stage, ShaderInfo *si, int i, VkDescriptorImageInfo
                 if (guest < 0) { const char *g = getenv("XCDE_RGATHER_DEPTH"); guest = g && *g == '1'; }
                 ti_depth = !guest && renderer_format_is_depth(e->tex->format);
             }
-            TexBackend *tb = (TexBackend *)e->tex->backend;
+            tb = (TexBackend *)(read_tex->backend ? read_tex->backend : e->tex->backend);
             ti_presented = tb && tb->presented;
             ti_alloc[0] = tb ? tb->width : 0;
             ti_alloc[1] = tb ? tb->height : 0;
@@ -5728,7 +5731,13 @@ static void texture_info(int stage, ShaderInfo *si, int i, VkDescriptorImageInfo
                 }
         }
     }
-    if (h && st.spool && tsc < (uint32_t)st.spool->count) smp = vk_sampler(&((NvnSamplerDesc *)st.spool->entries)[tsc]);
+    if (h && st.spool && tsc < (uint32_t)st.spool->count) {
+        static int bias_all = -1;
+        if (bias_all < 0) { const char *e = getenv("XCDE_TMP_LOD_BIAS_ALL"); bias_all = e && atoi(e) != 0; }
+        bool lod_bias = xcde_sampler_wants_lod_bias(tb != NULL, tb && tb->gpu_owned, tb && tb->presented,
+                                                    tb ? tb->levels : 0, bias_all != 0);
+        smp = vk_sampler(&((NvnSamplerDesc *)st.spool->entries)[tsc], lod_bias);
+    }
     if (!view && h && st.tpool && tic < (uint32_t)st.tpool->count && ((NvnTexEntry *)st.tpool->entries)[tic].tex) {
         NvnTexture *t = ((NvnTexEntry *)st.tpool->entries)[tic].tex;
         audit("dummy texture view: stage %d unit %d shader type %d / texture target %u fmt %#x %ux%ux%u levels %u (vs %llx fs %llx)",
