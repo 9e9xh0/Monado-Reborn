@@ -95,7 +95,7 @@ def main():
         'test_tegra_copy': ['runtime/nvn/tegra.c', 'runtime/nvn/formats.c'],
         'test_tegra_block_height': ['runtime/nvn/tegra.c', 'runtime/nvn/formats.c'],
         'test_fibers': ['runtime/hle/fibers.c'],
-        'test_condvar': ['runtime/platform/windows.c', 'runtime/diag/diag.c', 'runtime/diag/sampler.c', '-lwinmm', '-ldbghelp'],
+        'test_condvar': ['runtime/platform/windows.c', 'runtime/log.c', 'runtime/diag/diag.c', 'runtime/diag/sampler.c', '-lwinmm', '-ldbghelp'],
     }
     for test in ['test_render_policy', 'test_display_options', 'test_port_core', 'test_gpu_probe', 'test_settings_roundtrip', 'test_time_math', 'test_movie_buf', *[k for k in extra_sources if k != 'test_settings_roundtrip']]:
         if test in args.skip_test:
