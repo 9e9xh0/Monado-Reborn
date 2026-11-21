@@ -105,6 +105,15 @@ class VulkanSourceContracts(unittest.TestCase):
         self.assertIn("xcde_sampler_wants_lod_bias", exec_c)
         self.assertLess(exec_c.index("xcde_sampler_wants_lod_bias"), exec_c.index("vk_sampler(&((NvnSamplerDesc *)st.spool->entries)[tsc], lod_bias)"))
 
+    def test_temporal_hud_snapshot_waits_for_scene_provenance_on_presented_rt(self):
+        exec_c = (ROOT / "runtime/nvn/vulkan/exec.c").read_text(encoding="utf-8")
+        vk_h = (ROOT / "runtime/nvn/vulkan/vk.h").read_text(encoding="utf-8")
+        self.assertIn("uint64_t tmp_scene_frame;", vk_h)
+        self.assertIn("tmp_presented_scene_frame", exec_c)
+        self.assertIn("xcde_tmp_hud_snap_ready", exec_c)
+        self.assertIn("xcde_tmp_should_split_before_hud_draw", exec_c)
+        self.assertIn("xcde_tmp_tex_carries_scene", exec_c)
+
 
 if __name__ == "__main__":
     unittest.main()
