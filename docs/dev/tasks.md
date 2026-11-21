@@ -1652,3 +1652,12 @@ Detalle: `docs/PERFORMANCE_UI.md`. Evidencia: `docs/evidence/2026-11-04-performa
   on and the native 1.0 otherwise, so the normal jump is unchanged; impulse, collisions and landing stay native.
   Option in F1 → Cheats (Exploration) and the launcher; `cheat_high_jump = 0/1` in `xcde.ini`. The INI round-trip is
   covered by `test_settings_roundtrip.c`; in-game verification pending.
+- [x] T276b **Camera follows high jumps.** The field camera keeps its vertical look target at ground level while the
+  controlled character jumps (`camera + 0x5300`, look point `+0x5400`; the character's own position is `+0x160`), so
+  with the 8x jump the character left the frame. `camera_follow_jump` (F1 → Cheats → Exploration, launcher, `xcde.ini`)
+  writes the leader's Y into both target values from the pad read; `f_70000510a0`'s camera update then computes the
+  position, pitch, collisions and smoothing from them (found with an object probe and `XCDE_WATCH_BT` backtraces through
+  `f_70000547b0`/`f_700072c070`). Menus, cutscenes and event cameras are skipped (`player_in_control` + `cutscene_playing`),
+  the horizontal targets are left native, and the look offset is kept (1.664 clamped to 0–10). View-matrix probe with
+  FSR 3: the camera's world Y rose 23.99 → 28.55 while the leader went 22.99 → 27.91 (camera stays above the ground
+  target). Covered by `test_settings_roundtrip.c`; in-game verified with `XCDE_CAM_TRACE=1`.

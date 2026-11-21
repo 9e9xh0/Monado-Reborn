@@ -49,6 +49,10 @@ static inline bool monado_cheat_controls(Settings *s, bool english, bool live) {
     ImGui::SetItemTooltip("%s", english
         ? "Multiplies jump height by 8 through the game's own jump calculation (the community jump code).\nThe jump impulse, collisions and landing are still the game's."
         : "Multiplica por 8 la altura del salto usando el propio cálculo del juego (el código comunitario).\nEl impulso, las colisiones y el aterrizaje siguen siendo del juego.");
+    changed |= ImGui::Checkbox(english ? "Camera follows jumps" : "La cámara sigue los saltos", &s->camera_follow_jump);  // [XCDE] T276
+    ImGui::SetItemTooltip("%s", english
+        ? "Raises the field camera with the controlled character's jumps, so a high jump stays in view.\nThe camera controls, collisions and cutscenes are unchanged."
+        : "Sube la cámara del campo con los saltos del personaje controlado para que el salto alto siga a la vista.\nLos controles, las colisiones y las cinemáticas de la cámara no cambian.");
     ImGui::TextWrapped("%s", english ? "EXP, AP, SP and gold already earned remain in your save after disabling cheats."
         : "La EXP, AP, SP y el dinero ganados permanecen en la partida al desactivar los trucos.");
     return changed;

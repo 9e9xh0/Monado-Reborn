@@ -394,6 +394,64 @@ static void party_probe(Cpu *c, uint64_t frame) {
     }
 }
 
+// The controlled leader's entity, including a solo party (the field group then has no followers, so its slot 0 may be
+// empty): slot 0 of the field group when deployed, else the first id of the live party list -> its entity handle.
+static uint64_t leader_entity(Cpu *c, uint64_t fo, uint64_t *obj_out, uint32_t *handle_out) {
+    uint64_t pm = fo + 0x20;
+    uint64_t g = field_group(c, pm);
+    uint64_t ent = g ? slot_entity(c, fo, g, 0, obj_out, handle_out) : 0;
+    if (ent) return ent;
+    uint64_t list = call_guest(c, PARTY_LIST_FN, pm, 0);
+    if (!list) return 0;
+    uint16_t id = *(volatile uint16_t *)(uintptr_t)list;
+    uint32_t h = member_handle(c, pm, id);
+    if (!h) return 0;
+    uint64_t scratch = ((c->sp - 0x100) & ~15ull);
+    memset((void *)(uintptr_t)scratch, 0, 0x20);
+    call_guest3(c, 0x700049f8c0ull, scratch, pm, h);
+    uint64_t obj = *(volatile uint64_t *)(uintptr_t)scratch;
+    if (!obj || *(volatile uint64_t *)(uintptr_t)obj != CHARA_OBJ_VTABLE) return 0;
+    if (obj_out) *obj_out = obj;
+    if (handle_out) *handle_out = h;
+    return call_guest(c, *(volatile uint64_t *)(uintptr_t)(CHARA_OBJ_VTABLE + 0x38), obj, 0);
+}
+
+// [XCDE] T276: optional camera follow for jumps. The field camera keeps its vertical look target (camera + 0x5300,
+// and the look point at +0x5400) on the ground while the character jumps; with an 8x jump the character leaves the
+// frame. Without writing the camera's position or orientation directly, raise both target Y values with the controlled
+// leader's Y: the game's own camera update then computes the position, pitch, collisions and smoothing from them.
+// Only with the player in control (not in menus, cutscenes or while an event camera runs), and only while the option is
+// on; the game overwrites the targets in its own camera modes, and the horizontal values are left as the game set them.
+static void camera_follow_jump(Cpu *c, uint64_t frame) {
+    if (!g_settings.camera_follow_jump) return;
+    g_cam_used = true;  // (starts the object scanner: only with the option on)
+    Found f;
+    found_get(&f);
+    uint64_t cam = found_one(&f, K_CAM);
+    uint64_t fo = found_one(&f, K_FIELD);
+    if (!cam || !fo || !player_in_control(found_one(&f, K_PLAYER)) || cutscene_playing(frame)) return;
+    uint64_t obj = 0;
+    uint32_t handle = 0;
+    uint64_t ent = leader_entity(c, fo, &obj, &handle);
+    if (!ent) return;
+    const volatile float *pos = (const volatile float *)(uintptr_t)(ent + 0x110);
+    volatile float *target = (volatile float *)(uintptr_t)(cam + 0x5300);
+    volatile float *look = (volatile float *)(uintptr_t)(cam + 0x5400);
+    // The look point sits about 1.66 units above the ground target; keep the game's current offset (clamped, in case a
+    // camera mode left something else there) and only move the vertical values.
+    float lift = look[1] - target[1];
+    if (!(lift > 0.0f && lift < 10.0f)) lift = 1.664f;
+    float dx = target[0] - pos[0], dz = target[2] - pos[2];
+    if (dx * dx + dz * dz > 100.0f * 100.0f) return;  // (not the camera tracking this character: loading / a scene)
+    target[1] = pos[1];
+    look[1] = pos[1] + lift;
+    static int trace = -1;  // XCDE_CAM_TRACE=1: one line every 15 frames (the jump-follow values)
+    if (trace < 0) trace = getenv("XCDE_CAM_TRACE") != NULL;
+    if (trace && frame % 15 == 0)
+        LOG("[camera] f%llu follow: leader %.3f target %.3f look %.3f (lift %.3f)\n", (unsigned long long)frame,
+            (double)pos[1], (double)target[1], (double)look[1], (double)lift);
+}
+
 // [XCDE] run speed multiplier (GitHub #100). The game's own movement update (f_70004463b0, see the patch in
 // games/xcde/patches.py) computes the max horizontal velocity rate as `state * [movement + 0x11c]`; scale that
 // product so the controlled leader moves faster with its own collisions, ground handling and movement. The same
@@ -1133,6 +1191,7 @@ static void ent_scan(Cpu *c, uint64_t frame) {
 }
 
 void party_game_tick(Cpu *c, uint64_t frame) {
+    camera_follow_jump(c, frame);
     ent_scan(c, frame);
     debug_fixed(c, frame);
     debug_tour(c, frame);
