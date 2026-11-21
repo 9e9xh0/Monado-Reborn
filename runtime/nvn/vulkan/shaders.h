@@ -15,3 +15,4 @@ VkShaderModule vk_module(const uint32_t *spv, size_t nwords);
 // Descriptor bindings declared by a SPIR-V module.
 int vk_reflect(const uint32_t *spv, size_t nwords, VkBindingInfo *out, int max);
 VkDescriptorSetLayout vk_set_layout(const VkBindingInfo *b, int n, uint32_t set, VkShaderStageFlags stages);
+VkDescriptorSetLayout vk_set_layout_ex(const VkBindingInfo *b, int n, uint32_t set, VkShaderStageFlags stages, bool push);

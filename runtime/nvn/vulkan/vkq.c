@@ -25,7 +25,7 @@ enum {
     QOP_VIEWPORT, QOP_SCISSOR, QOP_BLENDC, QOP_DBIAS, QOP_DBIAS_EN, QOP_DTEST, QOP_DWRITE, QOP_DCMP, QOP_STEST, QOP_SOP, QOP_SCMASK,
     QOP_SWMASK, QOP_SREF, QOP_CULL, QOP_FRONT, QOP_TOPO, QOP_RESTART, QOP_BEGINR, QOP_ENDR, QOP_BARRIER, QOP_CPBUF, QOP_CPIMG,
     QOP_CPB2I, QOP_CPI2B, QOP_BLIT, QOP_RESOLVE, QOP_CLRCOL, QOP_CLRDS, QOP_CLRATT, QOP_QRESET, QOP_TS, QOP_FBL, QOP_SUBMIT,
-    QOP_VBUF2, QOP_SETW, QOP_QBEGIN, QOP_QEND, QOP_MARK, QOP_FILL, QOP_CHECKPOINT
+    QOP_VBUF2, QOP_SETW, QOP_QBEGIN, QOP_QEND, QOP_MARK, QOP_FILL, QOP_CHECKPOINT, QOP_PUSH_DESC
 };
 typedef struct { uint32_t op, size; VkCommandBuffer cb; } QHdr;   // size: whole record, header included
 static uint8_t *q_buf;
@@ -198,6 +198,42 @@ void q_vkCmdBindDescriptorSets(VkCommandBuffer cb, VkPipelineBindPoint bp, VkPip
     a->bp = bp; a->l = l; a->first = first; a->n = n; a->ndyn = ndyn;
     QCOPY(a->sets, sets, n * sizeof *sets);
     QCOPY(a->dyn, dyn, ndyn * sizeof *dyn);
+    q_commit();
+}
+typedef struct {
+    PFN_vkCmdPushDescriptorSetKHR fn;
+    VkPipelineBindPoint bp;
+    VkPipelineLayout l;
+    uint32_t set, n, nbuf, nimg;
+    VkWriteDescriptorSet *w;
+    VkDescriptorBufferInfo *bi;
+    VkDescriptorImageInfo *ii;
+} QPushDesc;
+void q_vkCmdPushDescriptorSetKHR(PFN_vkCmdPushDescriptorSetKHR fn, VkCommandBuffer cb, VkPipelineBindPoint bp,
+                                 VkPipelineLayout layout, uint32_t set, uint32_t n, const VkWriteDescriptorSet *w) {
+    if (!vkq_enabled()) { fn(cb, bp, layout, set, n, w); return; }
+    uint32_t nbuf = 0, nimg = 0;
+    for (uint32_t i = 0; i < n; i++) {
+        if (w[i].pBufferInfo) nbuf++;
+        else if (w[i].pImageInfo) nimg++;
+    }
+    QEXTRA(QOP_PUSH_DESC, cb, QPushDesc, n * sizeof(VkWriteDescriptorSet) + nbuf * sizeof(VkDescriptorBufferInfo) + nimg * sizeof(VkDescriptorImageInfo) + 32);
+    a->fn = fn; a->bp = bp; a->l = layout; a->set = set; a->n = n; a->nbuf = nbuf; a->nimg = nimg;
+    QCOPY(a->w, w, n * sizeof(VkWriteDescriptorSet));
+    QCOPY(a->bi, NULL, nbuf * sizeof(VkDescriptorBufferInfo));
+    QCOPY(a->ii, NULL, nimg * sizeof(VkDescriptorImageInfo));
+    uint32_t bi_i = 0, ii_i = 0;
+    for (uint32_t i = 0; i < n; i++) {
+        a->w[i].dstSet = VK_NULL_HANDLE;
+        a->w[i].pNext = NULL;
+        if (w[i].pBufferInfo) {
+            a->bi[bi_i] = *w[i].pBufferInfo;
+            a->w[i].pBufferInfo = &a->bi[bi_i++];
+        } else if (w[i].pImageInfo) {
+            a->ii[ii_i] = *w[i].pImageInfo;
+            a->w[i].pImageInfo = &a->ii[ii_i++];
+        }
+    }
     q_commit();
 }
 typedef struct { VkPipelineLayout l; VkShaderStageFlags st; uint32_t off, size; const void *data; } QPush;
@@ -471,6 +507,7 @@ static void q_exec(const QHdr *h) {
     case QOP_MARK: { const QMark *a = p; a->fn(cb, a->st, a->buf, a->off, a->v); break; }
     case QOP_FILL: { const QFill *a = p; (vkCmdFillBuffer)(cb, a->b, a->off, a->size, a->v); break; }
     case QOP_CHECKPOINT: { const QCheckpoint *a = p; a->fn(cb, a->m); break; }
+    case QOP_PUSH_DESC: { const QPushDesc *a = p; a->fn(cb, a->bp, a->l, a->set, a->n, a->w); break; }
     default: FATAL("[vkq] bad record op %u\n", h->op);
     }
 }

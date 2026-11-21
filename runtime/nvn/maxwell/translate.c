@@ -2500,6 +2500,7 @@ static ShaderInfo *glsl_finish(Ctx *c, int flow_mode, bool dbg) {
     info->msl = s.buf;
     info->attr_mask = c->in_attr_mask;
     info->out_mask = stage == STAGE_FRAGMENT ? c->omap_target : c->out_attr_mask;
+    info->uses_iid = c->uses_iid;
     free(c->body.buf);
     free(c);
     return info;
@@ -3070,6 +3071,7 @@ ShaderInfo *maxwell_translate(const uint8_t *blob, size_t max_size, int stage, c
     info->msl = s.buf;
     info->attr_mask = c->in_attr_mask;
     info->out_mask = stage == STAGE_FRAGMENT ? c->omap_target : c->out_attr_mask;
+    info->uses_iid = c->uses_iid;
     free(c->body.buf);
     free(c);
     return info;

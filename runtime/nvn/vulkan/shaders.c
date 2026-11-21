@@ -448,15 +448,21 @@ int vk_reflect(const uint32_t *spv, size_t n, VkBindingInfo *out, int max) {
     return cnt;
 }
 
-VkDescriptorSetLayout vk_set_layout(const VkBindingInfo *b, int n, uint32_t set, VkShaderStageFlags stages) {
+VkDescriptorSetLayout vk_set_layout_ex(const VkBindingInfo *b, int n, uint32_t set, VkShaderStageFlags stages, bool push) {
     VkDescriptorSetLayoutBinding lb[96];
     uint32_t k = 0;
     for (int i = 0; i < n && k < 96; i++)
         if (b[i].set == set) lb[k++] = (VkDescriptorSetLayoutBinding){b[i].binding, b[i].type, 1, stages, NULL};
-    VkDescriptorSetLayoutCreateInfo ci = {.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO, .bindingCount = k, .pBindings = lb};
+    VkDescriptorSetLayoutCreateInfo ci = {.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
+                                          .flags = push ? VK_DESCRIPTOR_SET_LAYOUT_CREATE_PUSH_DESCRIPTOR_BIT_KHR : 0,
+                                          .bindingCount = k, .pBindings = lb};
     VkDescriptorSetLayout l;
     VK_CHECK(vkCreateDescriptorSetLayout(g_vk.dev, &ci, NULL, &l));
     return l;
+}
+
+VkDescriptorSetLayout vk_set_layout(const VkBindingInfo *b, int n, uint32_t set, VkShaderStageFlags stages) {
+    return vk_set_layout_ex(b, n, set, stages, false);
 }
 
 // ================================================================== built-in shaders

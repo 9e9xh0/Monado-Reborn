@@ -333,6 +333,7 @@ static void create_device(void) {
     if (legacy) gpl = false; // conservative 1.2 path: no optional 1.3 feature chains
     if (gpl) { ext[n_ext++] = VK_KHR_PIPELINE_LIBRARY_EXTENSION_NAME; ext[n_ext++] = VK_EXT_GRAPHICS_PIPELINE_LIBRARY_EXTENSION_NAME; }
     g_vk.gpl = gpl;
+    bool push_ext = false;
 #if defined(__linux__) || defined(_WIN32)
     // [XCDE] T-FSR4-LITE: the native Lite INT8 shaders' requirements, enabled only when all are present (Vulkan 1.3 path);
     // the other upscalers do not need them.
@@ -352,7 +353,15 @@ static void create_device(void) {
         VkPhysicalDeviceFeatures2 q = {.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2, .pNext = &fsr4_mixed};
         vkGetPhysicalDeviceFeatures2(g_vk.phys, &q);
     }
-    if (fsr4_ext) ext[n_ext++] = VK_KHR_PUSH_DESCRIPTOR_EXTENSION_NAME;
+    if (fsr4_ext) {
+        ext[n_ext++] = VK_KHR_PUSH_DESCRIPTOR_EXTENSION_NAME;
+        push_ext = true;
+        VkPhysicalDevicePushDescriptorPropertiesKHR pdp = {
+            .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PUSH_DESCRIPTOR_PROPERTIES_KHR};
+        VkPhysicalDeviceProperties2 pq = {.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2, .pNext = &pdp};
+        vkGetPhysicalDeviceProperties2(g_vk.phys, &pq);
+        g_vk.max_push_descriptors = pdp.maxPushDescriptors;
+    }
     if (fsr4_mixed.shaderMixedFloatDotProductFloat16AccFloat32)
         ext[n_ext++] = VK_VALVE_SHADER_MIXED_FLOAT_DOT_PRODUCT_EXTENSION_NAME;
 #ifdef __linux__
@@ -596,6 +605,11 @@ static void create_device(void) {
     VK_CHECK(vkCreateDevice(g_vk.phys, &di, NULL, &g_vk.dev));
     if (!xcde_vk_dispatch_load(&g_vk.dispatch, g_vk.dev, g_vk.api_version, vkGetDeviceProcAddr))
         FATAL("[vk] required core/KHR dispatch entry points missing\n");
+    if (push_ext) {
+        g_vk.cmd_push_descriptor_set = (PFN_vkCmdPushDescriptorSetKHR)vkGetDeviceProcAddr(g_vk.dev, "vkCmdPushDescriptorSetKHR");
+        g_vk.push_descriptor = g_vk.cmd_push_descriptor_set != NULL && g_vk.max_push_descriptors >= 8;
+        LOG("[vk] push descriptors: %s (max %u)\n", g_vk.push_descriptor ? "on" : "off", g_vk.max_push_descriptors);
+    }
     vkGetDeviceQueue(g_vk.dev, g_vk.qfam, 0, &g_vk.queue);
     for (int k = 0; k < 3; k++)
         if (g_vk.fg_fam[k] != UINT32_MAX) vkGetDeviceQueue(g_vk.dev, g_vk.fg_fam[k], g_vk.fg_idx[k], &g_vk.fg_queue[k]);
