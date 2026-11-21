@@ -5,6 +5,10 @@
 enum { GRASS_LOW, GRASS_ORIGINAL, GRASS_HIGH, GRASS_VERY_HIGH, GRASS_ULTRA, GRASS_PRESET_COUNT };
 #define GRASS_DEFAULT GRASS_HIGH
 
+/* Ultra (3x) relies on the enlarged private MPF block in foliage_distance.h:
+ * 3x covers 9x the authored area, which overran the old 9x patch pool in dense
+ * zones and exploded grass vertices (GitHub #171). A saved index 5 or `extreme`
+ * from the retired 6x preset loads as Ultra (3x). */
 static const char *const grass_lod_labels[GRASS_PRESET_COUNT] = {
     "Low (0.5x)", "Original (1x)", "High (1.7x)", "Very High (2.2x)", "Ultra (3x)"
 };

@@ -386,9 +386,11 @@ static void ui(void) {
                 }
                 ImGui::SetItemTooltip("%s", g_settings.ui_lang
                     ? "Applies while playing, without restarting. Higher settings keep grass visible farther away and cost FPS.\n"
-                      "Original keeps High's nearby detail at the game's original distance. Low halves grass reach."
+                      "Original keeps High's nearby detail at the game's original distance. Low halves grass reach.\n"
+                      "Ultra (3x) draws much more grass and is the maximum."
                     : "Se aplica mientras juegas, sin reiniciar. Los valores altos mantienen la hierba visible más lejos y cuestan FPS.\n"
-                      "Original conserva el detalle cercano de Alta a la distancia original del juego. Baja reduce el alcance a la mitad.");
+                      "Original conserva el detalle cercano de Alta a la distancia original del juego. Baja reduce el alcance a la mitad.\n"
+                      "Ultra (3x) dibuja mucha más hierba y es el máximo.");
             }
             if (monado_gfx_group(&g_settings.graphics, gfx_ui_detail, en)) xcde_graphics_publish(&g_settings.graphics);
             ImGui::SeparatorText(en ? "Effects" : "Efectos");

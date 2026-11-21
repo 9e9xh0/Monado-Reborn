@@ -1617,6 +1617,15 @@ Detalle: `docs/PERFORMANCE_UI.md`. Evidencia: `docs/evidence/2026-11-04-performa
   maximizada, se restaura primero); a pantalla completa el cambio queda pendiente hasta salir. "Aplicar" guarda
   `window = WxH` con el lector/escritor de `runtime/host/settings_ini.c` que ya existía. Pruebas:
   `tests/native/test_window_size.c` (presets, parseo e índice) y captura del menú a 1280x720 mostrando el control.
+- [x] T-FOLIAGE-ULTRA (2026-11-20) **Grass vertices explode in Gaur Plains with the 3x Ultra preset.** GitHub #171
+  survived the async vertex-cache and frame-lag fixes; the reporter then isolated it to `grass_lod = ultra`.
+  Explosions stop at `very_high` (2.2x) regardless of weather, camera angle, async, frame lag or the vertex cache:
+  the 3x selector covers nine times the authored MPF area, which left no margin in the old 9x private pool for dense
+  zones. Fix: enlarge the block instead of dropping the preset. The pool is 24x the authored 3.5 MiB (84 MiB), the
+  bitmap doubles to 512 KiB and arena slots grow to 128 MiB. Ultra (3x) remains the maximum preset; a saved index 5
+  or `extreme` from the retired 6x preset loads as 3x, and `XCDE_GRASS_DISTANCE` is clamped to 3x. In-game
+  verification at the Gaur Plains spot is pending. Detail:
+  [windows-vertex-corruption](../evidence/2026-11-10-vertex-corruption/summary.md).
 
 ## Log timestamps — 2026-11-21 (T275)
 
