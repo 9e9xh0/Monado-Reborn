@@ -106,7 +106,7 @@ bool quickstep_ui_memory_allow(Cpu *c, uint64_t headroom, const char *consumer) 
     memcpy((void *)(uintptr_t)scratch, original, sizeof original);
 done:
     if (atomic_fetch_add_explicit(&reports[allowed ? 0 : 1], 1, memory_order_relaxed) < 32)
-        fprintf(stderr, "[quickstep-ui-memory] consumer=%.48s selector=%u requested=%llu total=%llu used=%llu free=%llu largest=%llu result=%s\n",
+        rt_logf("[quickstep-ui-memory] consumer=%.48s selector=%u requested=%llu total=%llu used=%llu free=%llu largest=%llu result=%s\n",
                 consumer ? consumer : "unknown", selector, (unsigned long long)headroom,
                 (unsigned long long)total, (unsigned long long)used,
                 (unsigned long long)free_bytes, (unsigned long long)largest, reason);

@@ -13,7 +13,7 @@ for o in build/obj/*/*.o; do m=$(basename "$(dirname "$o")"); b=$(basename "$o" 
 cc1() { f=$1; m=$(basename "$(dirname "$f")"); b=$(basename "$f" .c); o="build/obj/$m/$b.o"; [ "$o" -nt "$f" ] || $Z -c "$f" -o "$o" $CF || echo "FAIL $f"; }
 export -f cc1
 ls generated/main/*.c generated/sdk/*.c | xargs -P "${JOBS:-16}" -I{} bash -c 'cc1 {}'
-for f in loader dispatch kernel ipc fnprof platform/windows services/fs services/romfs_virtual services/am services/acc \
+for f in loader dispatch kernel ipc fnprof log platform/windows services/fs services/romfs_virtual services/am services/acc \
          services/time services/hid_set services/misc hle/heaps hle/pl hle/vi hle/nvn_boot hle/fibers hle/framepace hle/foliage_distance hle/foliage_pool hle/graphics hle/cheats_options hle/cheats_combat hle/cheats_rewards hle/cheats_enemy_health hle/title_exit hle/system_exit hle/desktop_exit_caption hle/expanded_saves hle/expanded_save_scan hle/quickstep_native hle/quickstep_picker hle/quickstep_save hle/quickstep_slot hle/quickstep_stats hle/quickstep_stats_ui hle/quickstep_ui_memory host/stubs host/settings_boot host/gamelib_static host/main_boot diag/diag diag/sampler diag/watchdog diag/crashdump; do
   $Z -c runtime/$f.c -o build/rt/$(echo $f | tr / _).o $CF -DGAMELIB_ID='"dev"'
 done

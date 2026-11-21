@@ -3,6 +3,8 @@
 //   tests/native/test_footstep_repeat.c -pthread -lm -o /tmp/test-footsteps
 #include <assert.h>
 #include "../../runtime/hle/party.c"
+// [XCDE] T275: runtime/log.c is not linked into this focused test.
+void rt_logf(const char *fmt, ...) { (void)fmt; }
 
 Settings g_settings;
 static uint64_t clock_ns = 1000000000;

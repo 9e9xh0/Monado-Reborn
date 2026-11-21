@@ -118,7 +118,7 @@ __attribute__((constructor(101))) static void reserve_guest_space(void) {
         char n[16] = "0";
         GetEnvironmentVariableA("XCDE_RELAUNCH", n, sizeof n);
         int tries = atoi(n);
-        fprintf(stderr, "[boot] guest address range %llx-%llx is not free (try %d)%s\n", (unsigned long long)GUEST_LO,
+        rt_logf("[boot] guest address range %llx-%llx is not free (try %d)%s\n", (unsigned long long)GUEST_LO,
                 (unsigned long long)GUEST_HI, tries + 1, tries < 8 ? ": starting again" : "");
         if (tries < 8) {
             snprintf(n, sizeof n, "%d", tries + 1);
@@ -152,7 +152,7 @@ __attribute__((constructor(101))) static void reserve_guest_space(void) {
             plat_exec(NULL);
         }
 #endif
-        fprintf(stderr, "FATAL: guest address range %llx-%llx is not free\n", (unsigned long long)GUEST_LO,
+        rt_logf("FATAL: guest address range %llx-%llx is not free\n", (unsigned long long)GUEST_LO,
                 (unsigned long long)GUEST_HI);
         exit(1);
     }
@@ -200,20 +200,20 @@ int main(int argc, char **argv) {
     setvbuf(stderr, NULL, _IONBF, 0);
     bool game_opt = argc >= 2 && !strcmp(argv[1], "--game");  // [XCDE] the same dump folder by name, from a launcher
     int first = game_opt ? 2 : 1;
-    if (argc <= first) { fprintf(stderr, "usage: xcde_boot [--game] <dump dir with exefs/ and romfs/> [seconds]\n"); return 2; }
+    if (argc <= first) { rt_logf("usage: xcde_boot [--game] <dump dir with exefs/ and romfs/> [seconds]\n"); return 2; }
     const char *root = argv[first];
     int seconds = argc > first + 1 ? atoi(argv[first + 1]) : 20;
     char abs_root[1024];
     if (game_opt) {
         // Make the dump path independent of the launcher's working folder before changing ours.
         if (!rt_path_absolute(root, abs_root, sizeof abs_root)) {
-            fprintf(stderr, "xcde: --game folder not found: %s\n", root);
+            rt_logf("xcde: --game folder not found: %s\n", root);
             return 2;
         }
         root = abs_root;
 #ifdef _WIN32
         if (!enter_install_dir())
-            fprintf(stderr, "xcde: warning: could not switch to the install folder; settings and saves may go elsewhere\n");
+            rt_logf("xcde: warning: could not switch to the install folder; settings and saves may go elsewhere\n");
 #endif
     }
     char exefs[1200], romfs[1200], npdm_path[1200];

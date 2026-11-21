@@ -46,7 +46,7 @@ static int linux_gpu_heap_map(void *address, size_t size) {
         if (p != MAP_FAILED) munmap(p, size);
         // The original reservation has no live data yet. Restore it if MAP_FIXED failed.
         if (mmap(address, size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE | MAP_FIXED, -1, 0) != address) {
-            fprintf(stderr, "FATAL: could not restore guest heap reservation\n");
+            rt_logf("FATAL: could not restore guest heap reservation\n");
             _exit(1);
         }
         return -1;
@@ -56,6 +56,6 @@ static int linux_gpu_heap_map(void *address, size_t size) {
     gpu_heap_fd = prime.fd;
     gpu_heap_base = (uintptr_t)address;
     gpu_heap_size = size;
-    fprintf(stderr, "[gpu] guest heap backed by driver-owned GTT (%zu MiB), dma-buf %d\n", size >> 20, prime.fd);
+    rt_logf("[gpu] guest heap backed by driver-owned GTT (%zu MiB), dma-buf %d\n", size >> 20, prime.fd);
     return prime.fd;
 }

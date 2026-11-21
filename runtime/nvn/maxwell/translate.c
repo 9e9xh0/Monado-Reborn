@@ -21,6 +21,7 @@
 #include <string.h>
 
 #include "shader.h"
+#include "../../platform.h"  // [XCDE] T275: rt_logf, the timestamped diagnostics log
 
 uint64_t maxwell_gmem_base, maxwell_gmem_size;
 const uint8_t *maxwell_dbg_code;
@@ -1698,7 +1699,7 @@ static void emit_insn(Ctx *c, uint64_t w, uint32_t pc) {
         // [XCDE] .BREV (bit 40): the source's bits reversed before the extract (was a translation failure; seen in EoWRecomp)
         if (bits(w, 40, 1)) {
             static int nl;
-            if (nl++ < 4) fprintf(stderr, "[translate] BFE.BREV in a shader\n");
+            if (nl++ < 4) rt_logf("[translate] BFE.BREV in a shader\n");
             sprintf(t, sgn ? "bfe_s(bitfieldReverse(%s), %s)" : "bfe_u(bitfieldReverse(%s), %s)", R(a), bv);
         } else
         sprintf(t, sgn ? "bfe_s(%s, %s)" : "bfe_u(%s, %s)", R(a), bv);
@@ -1800,7 +1801,7 @@ static void emit_insn(Ctx *c, uint64_t w, uint32_t pc) {
         snprintf(msb, sizeof msb, bits(w, 48, 1) ? "uint(findMSB(int%s))" : "uint(findMSB(uint%s))", src);
         if (bits(w, 41, 1)) snprintf(t, 2048, "(%s == 0xFFFFFFFFu ? 0xFFFFFFFFu : (31u - %s))", msb, msb);
         else snprintf(t, 2048, "%s", msb);
-        { static int nl; if ((bits(w, 40, 1) || bits(w, 41, 1)) && nl < 4) { nl++; fprintf(stderr, "[translate] FLO%s%s%s in a shader\n", bits(w, 48, 1) ? ".S32" : "", bits(w, 41, 1) ? ".SH" : "", bits(w, 40, 1) ? ".INV" : ""); } }
+        { static int nl; if ((bits(w, 40, 1) || bits(w, 41, 1)) && nl < 4) { nl++; rt_logf("[translate] FLO%s%s%s in a shader\n", bits(w, 48, 1) ? ".S32" : "", bits(w, 41, 1) ? ".SH" : "", bits(w, 40, 1) ? ".INV" : ""); } }
         set_reg(c, d, t);
     } else if (OPM(0x5c08000000000000ull, 0xfff8000000000000ull) || OPM(0x4c08000000000000ull, 0xfff8000000000000ull) ||
                OPM(0x3808000000000000ull, 0xfef8000000000000ull)) {  // POPC
@@ -2584,7 +2585,7 @@ ShaderInfo *maxwell_translate(const uint8_t *blob, size_t max_size, int stage, c
             if ((fmul && ((w >> 44) & 3) >= 2) || (ffma && ((w >> 53) & 3) >= 2)) fmz++;
         }
         uint32_t *rs = any_branch ? resolve_stacks(code, end) : NULL;
-        fprintf(stderr, "[xlat-stats] %016llx stage %d insts %zu branchy %d ssy %d pbk %d brx %d bar %d fmz %d shfl %d resolved %d\n",
+        rt_logf("[xlat-stats] %016llx stage %d insts %zu branchy %d ssy %d pbk %d brx %d bar %d fmz %d shfl %d resolved %d\n",
                 (unsigned long long)h, (int)stage, end, (int)any_branch, ssy, pbk, brx, bar, fmz, shfl, rs != NULL);
         free(rs);
     }

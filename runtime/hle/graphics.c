@@ -82,7 +82,7 @@ void xcde_graphics_finish(uint64_t destination) {
     static uint64_t last=UINT64_MAX;
     if(bits==last)return;
     last=bits;
-    fprintf(stderr,"[graphics-final] options=%llx cloud=%u tssao=%u ssao=%u ssr=%u bloom=%u godrays=%u shafts=%u motion=%u fur=%u taa=%u\n",
+    rt_logf("[graphics-final] options=%llx cloud=%u tssao=%u ssao=%u ssr=%u bloom=%u godrays=%u shafts=%u motion=%u fur=%u taa=%u\n",
         (unsigned long long)bits,p[0x3ad],p[0x17c],p[0x19c],p[0x492],p[0x3c],p[0xec],p[0x520],p[0x204],p[0x53d],p[0x111]);
 }
 
@@ -121,7 +121,7 @@ static void prop_lod_locked(uint64_t data,uint32_t size) {
     unsigned changed=prop_lod_adjust(p,size,scales[prop_choice>=1 && prop_choice<=3 ? prop_choice : 0]);
     if(changed) {
         prop_seen[slot].addr=data;prop_seen[slot].size=size;prop_seen[slot].hash=prop_lod_hash(p,size);
-        fprintf(stderr,"[prop-lod] %u intermediate thresholds adjusted; final distances preserved\n",changed);
+        rt_logf("[prop-lod] %u intermediate thresholds adjusted; final distances preserved\n",changed);
     }
 }
 
@@ -152,6 +152,6 @@ void xcde_graphics_debug_frame(uint64_t frame) {
             kv = next;
         }
         xcde_graphics_publish(&o);
-        fprintf(stderr, "[graphics-live] frame %llu: options=%llx\n", (unsigned long long)frame, (unsigned long long)gfx_pack(&o));
+        rt_logf("[graphics-live] frame %llu: options=%llx\n", (unsigned long long)frame, (unsigned long long)gfx_pack(&o));
     }
 }

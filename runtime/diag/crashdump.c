@@ -71,7 +71,7 @@ void diag_crash_report(EXCEPTION_POINTERS *ep) {
     STARTUPINFOA si = {.cb = sizeof si};
     PROCESS_INFORMATION pi;
     if (!CreateProcessA(NULL, cmd, NULL, NULL, FALSE, CREATE_NO_WINDOW, NULL, NULL, &si, &pi)) {
-        fprintf(stderr, "[crash] cannot start the minidump helper (error %lu)\n", GetLastError());
+        rt_logf("[crash] cannot start the minidump helper (error %lu)\n", GetLastError());
         return;
     }
     DWORD w = WaitForSingleObject(pi.hProcess, 60000);
@@ -79,7 +79,7 @@ void diag_crash_report(EXCEPTION_POINTERS *ep) {
     GetExitCodeProcess(pi.hProcess, &code);
     CloseHandle(pi.hProcess);
     CloseHandle(pi.hThread);
-    fprintf(stderr, "[crash] report %s, minidump %s (%s, helper exit %lu)\n", txt, dmp, w == WAIT_OBJECT_0 ? "written" : "timed out", code);
+    rt_logf("[crash] report %s, minidump %s (%s, helper exit %lu)\n", txt, dmp, w == WAIT_OBJECT_0 ? "written" : "timed out", code);
 }
 #else
 #include "diag.h"

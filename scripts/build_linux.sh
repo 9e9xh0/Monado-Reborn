@@ -44,7 +44,7 @@ mkdir -p "$rtdir" build/linux/game build/inc
 python3 tools/build/gen_smaa_inc.py third_party/smaa/SMAA.hlsl build/inc/smaa_hlsl.inc
 objects=()
 # The units of scripts/build_rt_gfx.sh, with the Linux platform layer.
-rt=(loader dispatch kernel ipc fnprof platform/linux services/fs services/romfs_virtual services/am services/acc services/time
+rt=(loader dispatch kernel ipc fnprof log platform/linux services/fs services/romfs_virtual services/am services/acc services/time
     services/hid_set services/kbicons services/misc services/audio services/hwopus hle/heaps hle/pl hle/vi hle/nvn_boot
     hle/fibers hle/input hle/party hle/bindings hle/movie hle/framepace hle/foliage_distance hle/foliage_pool hle/graphics hle/cheats_options hle/cheats_combat hle/cheats_rewards hle/cheats_enemy_health hle/title_exit hle/system_exit hle/desktop_exit_caption hle/expanded_saves hle/expanded_save_scan hle/quickstep_native hle/quickstep_picker hle/quickstep_save hle/quickstep_slot hle/quickstep_stats hle/quickstep_stats_ui hle/quickstep_ui_memory
     host/stubs host/settings_ini host/stubs_gfx

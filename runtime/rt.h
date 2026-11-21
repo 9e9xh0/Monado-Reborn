@@ -7,8 +7,9 @@
 #include "cpu.h"
 #include "platform.h"
 
-#define LOG(...) fprintf(stderr, __VA_ARGS__)
-#define FATAL(...) (fprintf(stderr, "FATAL: " __VA_ARGS__), rt_fatal_trace())
+// [XCDE] T275: timestamped diagnostics log (runtime/log.c); every line starts with its local wall-clock time.
+#define LOG(...) rt_logf(__VA_ARGS__)
+#define FATAL(...) (rt_logf("FATAL: " __VA_ARGS__), rt_fatal_trace())
 
 // ---- address space layout (guest addresses == host addresses)
 // macOS reserves 0x2_0000_0000-0x70_0000_0000, and guest addresses must fit in 39 bits, so the

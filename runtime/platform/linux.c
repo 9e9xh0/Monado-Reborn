@@ -86,6 +86,13 @@ uint64_t plat_now_ns(void) {
     return (uint64_t)ts.tv_sec * 1000000000u + (uint64_t)ts.tv_nsec;
 }
 
+// [XCDE] T275: wall clock for the diagnostics log (vDSO, no syscall in the normal case).
+uint64_t plat_wall_ns(void) {
+    struct timespec ts;
+    clock_gettime(CLOCK_REALTIME, &ts);
+    return (uint64_t)ts.tv_sec * 1000000000u + (uint64_t)ts.tv_nsec;
+}
+
 void plat_sleep_until_ns(uint64_t t) {
     struct timespec ts = {.tv_sec = (time_t)(t / 1000000000u), .tv_nsec = (long)(t % 1000000000u)};
     while (clock_nanosleep(CLOCK_MONOTONIC, TIMER_ABSTIME, &ts, NULL) == EINTR) {}
@@ -150,7 +157,7 @@ static void require_cpu(void) {
     if (__builtin_cpu_supports("sse3") && __builtin_cpu_supports("ssse3") &&
         __builtin_cpu_supports("sse4.1") && __builtin_cpu_supports("sse4.2") &&
         __builtin_cpu_supports("popcnt") && __builtin_cpu_supports("cx16")) return;
-    fprintf(stderr, "FATAL: this build needs an x86-64-v2 CPU (SSE4.2, POPCNT and CMPXCHG16B).\n");
+    rt_logf("FATAL: this build needs an x86-64-v2 CPU (SSE4.2, POPCNT and CMPXCHG16B).\n");
     exit(1);
 }
 #else
@@ -232,10 +239,10 @@ void plat_print_backtrace(void) {
         if (!s && ours) s = rt_host_fn_name(pc, &off);
         const char *mod = di.dli_fname ? (strrchr(di.dli_fname, '/') ? strrchr(di.dli_fname, '/') + 1 : di.dli_fname) : "?";
         uint64_t moff = pc - (uint64_t)(uintptr_t)di.dli_fbase;
-        if (s && ours) fprintf(stderr, "  #%-2d %016llx %s+%llx (lasrecomp+%llx)\n", i, (unsigned long long)pc, s,
+        if (s && ours) rt_logf("  #%-2d %016llx %s+%llx (lasrecomp+%llx)\n", i, (unsigned long long)pc, s,
                                (unsigned long long)off, (unsigned long long)moff);
-        else if (s) fprintf(stderr, "  #%-2d %016llx %s+%llx (%s)\n", i, (unsigned long long)pc, s, (unsigned long long)off, mod);
-        else fprintf(stderr, "  #%-2d %016llx %s+%llx\n", i, (unsigned long long)pc, mod, (unsigned long long)moff);
+        else if (s) rt_logf("  #%-2d %016llx %s+%llx (%s)\n", i, (unsigned long long)pc, s, (unsigned long long)off, mod);
+        else rt_logf("  #%-2d %016llx %s+%llx\n", i, (unsigned long long)pc, mod, (unsigned long long)moff);
     }
 }
 
@@ -439,6 +446,6 @@ void plat_mem_map(void) {
     FILE *f = fopen("/proc/self/maps", "r");
     if (!f) return;
     char line[1024];
-    while (fgets(line, sizeof line, f)) fputs(line, stderr);
+    while (fgets(line, sizeof line, f)) rt_logf("%s", line);
     fclose(f);
 }

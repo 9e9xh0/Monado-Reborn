@@ -306,7 +306,7 @@ static void action_result(const Picker *p, const char *route, int32_t row,
     if (emit) ++diagnostic_actions;
     pthread_mutex_unlock(&picker_lock);
     if (emit)
-        fprintf(stderr, "[quickstep-picker] confirm route=%s seq=%llx character=%u row=%d uid=%x rank=%u result=%s\n",
+        rt_logf("[quickstep-picker] confirm route=%s seq=%llx character=%u row=%d uid=%x rank=%u result=%s\n",
                 route, (unsigned long long)p->seq, p->character, row,
                 gem ? gem->uid : 0, gem ? gem->rank : 0, result);
 }

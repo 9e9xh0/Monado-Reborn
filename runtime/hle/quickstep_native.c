@@ -54,7 +54,7 @@ static bool fail(NativeSlot *s, const char *stage, uint32_t detail) {
     s->failure_stage = stage; s->failure_detail = detail; return false;
 }
 static void report_failure(const NativeSlot *s) {
-    fprintf(stderr, "[quickstep-native] control unavailable stage=%s detail=%u; ordinary equipment unchanged\n",
+    rt_logf("[quickstep-native] control unavailable stage=%s detail=%u; ordinary equipment unchanged\n",
             s->failure_stage ? s->failure_stage : "unknown", s->failure_detail);
 }
 static bool character_supported(uint32_t ch) {

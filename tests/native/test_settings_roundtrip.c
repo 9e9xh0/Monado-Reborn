@@ -6,6 +6,8 @@
 #include "../../runtime/settings.h"
 #include "../../runtime/quality_policy.h"
 #include "../../runtime/perf_overlay_opts.h"
+// [XCDE] T275: runtime/log.c is not linked into this focused test.
+void rt_logf(const char *fmt, ...) { (void)fmt; }
 bool bind_settings_load(const char *key, const char *value) { (void)key; (void)value; return false; }
 void bind_settings_save(FILE *f) { fputs("mouse_look = 1\n", f); }
 int main(int argc, char **argv) {

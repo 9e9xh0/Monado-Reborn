@@ -213,7 +213,7 @@ static bool release(Cpu*c,Extra*s,bool before_parent_dtor){
     pthread_mutex_unlock(&lock);
     if(!owned||!parent_identity(s)){
         if((s->outer_owned||s->loader_owned)&&failures++<16)
-            fprintf(stderr,"[quickstep-stats-ui] retired native parent; ambiguous instance retained until reset\n");
+            rt_logf("[quickstep-stats-ui] retired native parent; ambiguous instance retained until reset\n");
         return false;
     }
     // Unconditional with respect to the launcher toggle and focus. Restore the
@@ -409,10 +409,10 @@ bool quickstep_stats_ui_ensure(Cpu*c,uint64_t panel,uint32_t character){
     if(ok){if(!s.loader_owned)memset((void*)(uintptr_t)s.memory,0,MEMORY);ok=create(c,&s);}
     else s.failure="owner-or-scratch";
     if(!ok&&s.pending&&current(&s)){
-        if(!s.pending_reported&&failures++<16)fprintf(stderr,"[quickstep-stats-ui] native stats dependency load pending; original rows preserved\n");
+        if(!s.pending_reported&&failures++<16)rt_logf("[quickstep-stats-ui] native stats dependency load pending; original rows preserved\n");
         s.pending_reported=true;
     }else if(!ok){s.pending=false;if(!release(c,&s,false))s.memory=0;s.root=s.nested=s.node=0;s.appended=false;s.failed=true;
-        if(failures++<16)fprintf(stderr,"[quickstep-stats-ui] extra native row unavailable stage=%s asset_class=%llx selected_raw=%llx source_raw=%llx; original rows preserved\n",s.failure?s.failure:"unknown",(unsigned long long)s.asset_class,(unsigned long long)s.selected_raw,(unsigned long long)s.expected_raw);}
+        if(failures++<16)rt_logf("[quickstep-stats-ui] extra native row unavailable stage=%s asset_class=%llx selected_raw=%llx source_raw=%llx; original rows preserved\n",s.failure?s.failure:"unknown",(unsigned long long)s.asset_class,(unsigned long long)s.selected_raw,(unsigned long long)s.expected_raw);}
     pthread_mutex_lock(&lock);if(state.serial==s.serial){s.busy=false;state=s;}pthread_mutex_unlock(&lock);
     return ok;
 }
@@ -480,7 +480,7 @@ void quickstep_stats_ui_layout(Cpu*c,uint64_t panel,bool ninth){
             if(current(&s))visible(c,LD64(s.root+0x38),source_shown);
         }else if(!s.geometry_reported){
             s.geometry_reported=true;
-            if(failures++<16)fprintf(stderr,"[quickstep-stats-ui] extra row awaiting native geometry/timeline; instance remains hidden\n");
+            if(failures++<16)rt_logf("[quickstep-stats-ui] extra row awaiting native geometry/timeline; instance remains hidden\n");
         }
     }else if(current(&s)&&owned_root(&s))visible(c,s.lower,false);
     pthread_mutex_lock(&lock);if(state.serial==s.serial){s.busy=false;state=s;}pthread_mutex_unlock(&lock);

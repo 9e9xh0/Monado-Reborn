@@ -11,6 +11,8 @@
 // ---- hooks the fiber layer expects from the runtime
 void guest_call(Cpu *c, uint64_t addr) { ((void (*)(Cpu *))(uintptr_t)addr)(c); }
 void rt_fatal_trace(void) { fflush(stdout); abort(); }
+// [XCDE] T275: the fiber layer's FATAL calls the timestamped logger; runtime/log.c is not linked into this test.
+void rt_logf(const char *fmt, ...) { (void)fmt; }
 
 // ---- the HLE entry points under test (runtime/hle/fibers.c)
 extern void hle__ZN2nn2os15InitializeFiberEPNS0_9FiberTypeEPFS2_PvES3_S3_mi(Cpu *c);

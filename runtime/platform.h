@@ -41,6 +41,7 @@ int plat_gpu_heap_fd(uint64_t address, uint64_t size, uint64_t *allocation_size)
 
 // ---- time
 uint64_t plat_now_ns(void);                // monotonic
+uint64_t plat_wall_ns(void);               // UTC since the Unix epoch (timestamped log lines, [XCDE] T275)
 void plat_sleep_until_ns(uint64_t t);      // precise wait for plat_now_ns() >= t
 void plat_thread_realtime(uint64_t period_ns);  // periodic timing thread (vsync): don't coalesce its timers
 
@@ -70,6 +71,9 @@ bool plat_remove_tree(const char *dir);      // rm -rf
 #endif
 
 // ---- diagnostics
+// [XCDE] T275: timestamped diagnostics log (runtime/log.c). LOG in rt.h and the direct diagnostics writes use it: each
+// new line of stderr starts with its local wall-clock time. One write per call, no allocation for ordinary lines.
+void rt_logf(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
 // Name of the host function containing pc (guest functions are f_<addr>), NULL if unknown.
 const char *plat_symbol(uint64_t pc, uint64_t *offset);
 void plat_print_backtrace(void);

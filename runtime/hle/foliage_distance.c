@@ -38,7 +38,7 @@ void xcde_foliage_begin(void) {
     refresh_pass = next != active_scale;
     if (refresh_pass) {
         if (getenv("XCDE_GRASS_TRACE"))
-            fprintf(stderr, "[foliage-live] %g -> %g; refreshing selection and materials\n", active_scale, next);
+            rt_logf("[foliage-live] %g -> %g; refreshing selection and materials\n", active_scale, next);
         active_scale = next;
     }
 }
@@ -52,7 +52,7 @@ float xcde_foliage_shading_distance(float near_r, float far_r) {
     if (trace < 0) trace = getenv("XCDE_GRASS_TRACE") != NULL;
     if (trace && printed < 12) {
         ++printed;
-        fprintf(stderr, "[foliage-shading] near=%g far=%g -> %g visibility=%g detail=%g\n",
+        rt_logf("[foliage-shading] near=%g far=%g -> %g visibility=%g detail=%g\n",
                 near_r, far_r, result, active_scale, detail_scale);
     }
     return result;
@@ -93,12 +93,12 @@ float xcde_foliage_distance(float near_r, float far_r) {
     if (trace) {
         if (near_r == 0.f && far_r == 50.f && !printed_fixed) {
             printed_fixed = 1;
-            fprintf(stderr, "[foliage-fixed-radius] %g -> %g scale=%g\n", far_r, result, scale);
+            rt_logf("[foliage-fixed-radius] %g -> %g scale=%g\n", far_r, result, scale);
         }
         int *printed = near_r == 0.f ? &printed_radius : &printed_fade;
         if (*printed < 12) {
             ++*printed;
-            fprintf(stderr, "[foliage-distance] near=%g far=%g -> %g scale=%g\n",
+            rt_logf("[foliage-distance] near=%g far=%g -> %g scale=%g\n",
                     near_r, far_r, result, scale);
         }
     }

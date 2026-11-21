@@ -1,5 +1,7 @@
 // T-GRAPHICS-SCALABILITY: authored-copy isolation, full restoration and bounds.
 #include "../../runtime/graphics_options.h"
+// [XCDE] T275: runtime/log.c is not linked into this focused test.
+void rt_logf(const char *fmt, ...) { (void)fmt; }
 #include <assert.h>
 #include <stdlib.h>
 int main(void) {

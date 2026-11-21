@@ -5,6 +5,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "../platform.h"  // [XCDE] T275: rt_logf, the timestamped diagnostics log
 #include "../input_bind.h"
 #include "../settings.h"
 #include "../quality_policy.h"
@@ -234,7 +235,7 @@ void settings_save(void) {
     for (int i = 0; i < g_nmods; i++) fprintf(f, "mod_%s = %d\n", g_mods[i].name, g_mods[i].on);
     fprintf(f, "button_icons = %s\n", g_button_icons);
     bind_settings_save(f);
-    if (!xcde_ini_commit(f, tmp, ini_path())) fprintf(stderr, "[settings] save failed; previous configuration kept\n");
+    if (!xcde_ini_commit(f, tmp, ini_path())) rt_logf("[settings] save failed; previous configuration kept\n");
 }
 
 // The language served to the game: the setting; "auto" stays English (what every test route was recorded with).
