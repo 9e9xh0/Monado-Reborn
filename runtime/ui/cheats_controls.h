@@ -45,6 +45,10 @@ static inline bool monado_cheat_controls(Settings *s, bool english, bool live) {
     }
     ImGui::SeparatorText(english ? "Exploration" : "Exploración");
     changed |= ImGui::Checkbox(english ? "No fall damage" : "Sin daño por caídas", &s->cheat_no_fall_damage);
+    changed |= ImGui::Checkbox(english ? "High jump (x8)" : "Salto alto (x8)", &s->cheat_high_jump);  // [XCDE] T276
+    ImGui::SetItemTooltip("%s", english
+        ? "Multiplies jump height by 8 through the game's own jump calculation (the community jump code).\nThe jump impulse, collisions and landing are still the game's."
+        : "Multiplica por 8 la altura del salto usando el propio cálculo del juego (el código comunitario).\nEl impulso, las colisiones y el aterrizaje siguen siendo del juego.");
     ImGui::TextWrapped("%s", english ? "EXP, AP, SP and gold already earned remain in your save after disabling cheats."
         : "La EXP, AP, SP y el dinero ganados permanecen en la partida al desactivar los trucos.");
     return changed;

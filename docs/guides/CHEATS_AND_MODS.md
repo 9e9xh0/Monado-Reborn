@@ -20,13 +20,18 @@ Each one starts off. Changes apply at once during play; **Apply** writes them to
 | EXP / AP / SP gained | `cheat_exp`, `cheat_ap`, `cheat_sp` (+ `_percent`) | Scales new awards. Native eligibility, level-ups and caps still apply. Expert Mode's EXP transfer is not scaled again. |
 | Gold gained | `cheat_gold`, `cheat_gold_percent` | Scales new positive gold gains. Spending is unchanged. |
 | No fall damage | `cheat_no_fall_damage` | Ordinary landing damage for party characters is skipped. Forced or scripted deaths still happen. |
+| High jump | `cheat_high_jump` | Jump height x8, the community "jump x8" code adapted to the 2.0.0 main. The game still computes the impulse, resolves collisions and lands the character. |
 
 Multipliers are percentages: 100 = 1.00x, from 0 to 2000 (enemy health from 10). Anything malformed reads as 1x.
 EXP, AP, SP and gold already earned stay in the save after a cheat is turned off. Damage over time and separate
 status-effect paths are not covered.
 
-`XCDE_CHEAT_TRACE=1` logs each scaled hit, landing, award, gold gain and enemy maximum HP as a `[cheats]` line,
-with native and scaled values. With the cheats off it still logs native hits and landings at 1x.
+The high jump is the XCDE community code for 1.1.2 (`040B0000 004E2F08 1E241000`, jump height x8). The 2.0.0 main
+moved that jump-state instruction to `0x7000458fb8`; the recomp hooks the instruction instead of hardcoding 8.0, so
+while the option is off the jump keeps its native 1.0 scale.
+
+`XCDE_CHEAT_TRACE=1` logs each scaled hit, landing, jump-height scale, award, gold gain and enemy maximum HP as a
+`[cheats]` line, with native and scaled values. With the cheats off it still logs native hits and landings at 1x.
 
 Monado II's movement-speed cheat was not ported: this recomp already has its own run speed (T270, F1 → Cheats).
 

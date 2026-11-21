@@ -4,6 +4,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include "../../runtime/settings.h"
+#include "../../runtime/cheats_options.h"
 #include "../../runtime/quality_policy.h"
 #include "../../runtime/perf_overlay_opts.h"
 #include "../../runtime/hle/foliage_distance.h"
@@ -26,7 +27,7 @@ int main(int argc, char **argv) {
           "stick_deadzone = 20\neffects_off = 1\nrun_speed = 1.5\nui_scale = 30\nfps_overlay_scale = 300\nfps_overlay_position = bottom-right\n"
           "window = 1920x1080\n"
           "cheat_damage_dealt = 1\ncheat_damage_dealt_percent = 250\ncheat_exp = 2\ncheat_exp_percent = 1o0\n"
-          "cheat_enemy_health = true\ncheat_enemy_health_percent = 5\n"
+          "cheat_enemy_health = true\ncheat_enemy_health_percent = 5\ncheat_high_jump = true\n"
           "grass_lod = extreme\n"
           "future_plugin = preserve this\n", f); fclose(f);
     settings_load();
@@ -68,13 +69,16 @@ int main(int argc, char **argv) {
     assert(g_settings.cheat_damage_dealt && g_settings.cheat_damage_dealt_percent == 250);
     assert(!g_settings.cheat_exp && g_settings.cheat_exp_percent == 100);  // "2" is not 1 / true and "1o0" is not a number
     assert(g_settings.cheat_enemy_health && g_settings.cheat_enemy_health_percent == 100);
+    assert(g_settings.cheat_high_jump);  // [XCDE] T276: x8 jump opt-in
+    assert(xcde_cheats_snapshot().high_jump);  // published to the guest jump hook by settings_load
     xcde_quality_apply(&g_settings,QUALITY_POTATO); g_settings.effects_off=EFFECT_SSR;
     g_settings.cheat_sp = true; g_settings.cheat_sp_percent = 2500;  // [XCDE] out of range: saved as 1x
     g_settings.cheat_no_fall_damage = true;
     g_settings.stick_deadzone = 0; settings_save();
     g_settings.gpu_uuid[0] = 0; g_settings.gpu_index = -1; g_settings.fps_overlay_style = FPS_OVERLAY_DETAILED;
     g_settings.cheat_damage_dealt = false; g_settings.cheat_damage_dealt_percent = 100; g_settings.cheat_enemy_health = false;
-    g_settings.cheat_sp = false; g_settings.cheat_sp_percent = 0; g_settings.cheat_no_fall_damage = false; settings_load();
+    g_settings.cheat_sp = false; g_settings.cheat_sp_percent = 0; g_settings.cheat_no_fall_damage = false;
+    g_settings.cheat_high_jump = false; settings_load();
     assert(g_settings.fps_overlay_style == FPS_OVERLAY_SIMPLE);  // [XCDE] GitHub #39
     assert(g_settings.gpu_uuid[0] && g_settings.gpu_index == 1 && g_settings.stick_deadzone == 0);
     assert(g_settings.grass_lod == GRASS_ULTRA);  // [XCDE] GitHub #171: legacy extreme migrates and round-trips as ultra
@@ -85,6 +89,7 @@ int main(int argc, char **argv) {
     assert(g_settings.cheat_damage_dealt && g_settings.cheat_damage_dealt_percent == 250);
     assert(g_settings.cheat_enemy_health && g_settings.cheat_enemy_health_percent == 100);
     assert(g_settings.cheat_sp && g_settings.cheat_sp_percent == 100 && g_settings.cheat_no_fall_damage);
+    assert(g_settings.cheat_high_jump);  // [XCDE] T276 round-trips through cheat_high_jump
     // [XCDE] the old effect checkbox mask folds into the graphics choices at load (graphics_options.h)
     // (GFX_AO is 1 from the effects_off = 1 written above: #130's AO migration, now part of the general fold)
     assert(!g_settings.effects_off && g_settings.graphics.value[GFX_REFLECTIONS]==1 && g_settings.graphics.value[GFX_AO]==1);

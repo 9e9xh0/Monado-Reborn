@@ -644,6 +644,7 @@ static void load() {
         XCDE_CHEAT_MULTIPLIERS(LOAD_CHEAT)
 #undef LOAD_CHEAT
         else if (!strcmp(k, "cheat_no_fall_damage")) g.cheats.cheat_no_fall_damage = xcde_cheat_enabled(v);
+        else if (!strcmp(k, "cheat_high_jump")) g.cheats.cheat_high_jump = xcde_cheat_enabled(v);  // [XCDE] T276
         else if (!strcmp(k, "show_fps")) g.show_fps = atoi(v) != 0;
         else if (!strcmp(k, "vulkan_api")) g.vulkan_api = !strcmp(v, "1.2") ? 12 : !strcmp(v, "1.3") ? 13 : !strcmp(v, "1.4") ? 14 : 0;
         else if (!strcmp(k, "fps_overlay")) g.fps_overlay = atoi(v) != 0;
@@ -734,6 +735,7 @@ static bool save() {
     XCDE_CHEAT_MULTIPLIERS(SAVE_CHEAT)
 #undef SAVE_CHEAT
     fprintf(f, "cheat_no_fall_damage = %d\n", g.cheats.cheat_no_fall_damage);
+    fprintf(f, "cheat_high_jump = %d\n", g.cheats.cheat_high_jump);  // [XCDE] T276: jump height x8
     fprintf(f, "volume = %d\nmovie_audio = %d\nlanguage = %s\nfps = %s\n", g.volume, g.movie_audio, k_lang_ini[g.lang], k_fps_ini[g.fps]);
     for (const Mod &m : g_mods) if (!is_icon_mod(m.name)) fprintf(f, "mod_%s = %d", m.name.c_str(), m.on), fputc(10, f);
     int ic = icons_effective(g.icons);
