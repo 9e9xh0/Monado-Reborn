@@ -98,7 +98,6 @@ def main():
         'test_fibers': ['runtime/hle/fibers.c'],
         'test_condvar': ['runtime/platform/windows.c', 'runtime/log.c', 'runtime/diag/diag.c', 'runtime/diag/sampler.c', '-lwinmm', '-ldbghelp'],
         'test_foliage_distance': ['runtime/hle/foliage_distance.c'],
-        'test_footstep_repeat': ['-O1', '-ffunction-sections', '-fdata-sections', '-Wl,--gc-sections', str(sdk / 'lib/libwinpthread.dll.a')],
         'test_graphics_options': ['runtime/hle/graphics.c'],
     }
     strict_tests = {
