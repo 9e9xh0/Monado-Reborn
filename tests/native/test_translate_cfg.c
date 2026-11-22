@@ -128,6 +128,26 @@ int main(void) {
         maxwell_free(s);
     }
 
+    // 6. Hardware FP16 helpers in fragment shaders, software h2f() preserved in vertex shaders
+    {
+        uint64_t c[4] = {0, NOP_W, EXIT_W, NOP_W};
+        uint8_t blob[0x80 + 32];
+        memset(blob, 0, sizeof blob);
+        memcpy(blob + 0x80, c, sizeof c);
+        ShaderKey k = {.glsl = 1};
+        ShaderInfo *fs = maxwell_translate(blob, sizeof blob, STAGE_FRAGMENT, &k);
+        ShaderInfo *vs = maxwell_translate(blob, sizeof blob, STAGE_VERTEX, &k);
+        CHECK(fs && fs->msl && vs && vs->msl);
+        if (fs && fs->msl) {
+            CHECK(strstr(fs->msl, "float h2f(uint h) { return unpackHalf2x16(h).x; }") != NULL);
+            CHECK(strstr(fs->msl, "uint p = packHalf2x16(r);") != NULL);
+            check_spirv(comp, fs->msl, "fp16_hw_fs");
+        }
+        if (vs && vs->msl) CHECK(strstr(vs->msl, "if (e == 0u)") != NULL);
+        maxwell_free(fs);
+        maxwell_free(vs);
+    }
+
     shaderc_compiler_release(comp);
     if (fails) { printf("test_translate_cfg: %d FAIL(s)\n", fails); return 1; }
     printf("test_translate_cfg: all assertions passed\n");

@@ -115,7 +115,7 @@ typedef struct TexBackend {
     uint64_t first_up_frame;  // [XCDE] glitch watch: the frame of the first upload
     bool first_up_zero;       // that upload's data was all zero bytes
     uint32_t wgen;  // page write tracking generation at the last upload check (textures.c)
-    uint8_t scalable;  // 0 fixed size, 1 the 16:9 scene targets (sx, sy), 2 [XCDE] T182 portrait targets (uniform)
+    uint8_t scalable;  // 0 fixed size, 1 the 16:9 scene targets (sx, sy), 2 [XCDE] T182 portrait targets (uniform), 3 sub-full-res 16:9 post-process targets (capped scale)
     bool presented;
     uint64_t touched_frame, frame_cleared;
     uint64_t tmp_scene_frame;  // [XCDE] #168: last present frame in which jittered 3D scene content reached this offscreen image
@@ -138,6 +138,8 @@ typedef struct TexBackend {
     uint8_t nlean;      // [XCDE] spec_lowend_gpu R6b: > 0: the image may only be viewed in lean_fmt[0..nlean)
     VkFormat lean_fmt[3];
     bool storage_failed;  // [XCDE] T192: vk_tex_add_storage could not give it (don't retry every draw)
+    bool has_feedback;    // [XCDE] lazy VK_IMAGE_USAGE_ATTACHMENT_FEEDBACK_LOOP_BIT_EXT (preserves DCC on non-feedback RTs)
+    bool feedback_failed;
 } TexBackend;
 
 TexBackend *vk_tex(NvnTexture *t, bool for_render);  // backend image (uploads CPU contents unless for_render)
@@ -151,6 +153,7 @@ bool vk_amd_rdna3(void);
 // needs them to avoid shader stutter. GPU-cost workarounds (occlusion counters, heavy volume effects) don't use this.
 bool vk_amd_igpu_vendor_driver(void);
 bool vk_tex_add_storage(NvnTexture *t, VkCommandBuffer cb);  // [XCDE] T192 (textures.c)
+bool vk_tex_add_feedback(NvnTexture *t, VkCommandBuffer cb);  // [XCDE] lazy feedback-loop usage (textures.c)
 VkFormat vk_format(uint32_t nvn_format);
 bool vk_format_alpha_one(uint32_t nvn_format);
 // View of t (optionally through an NVN texture view) for rendering or sampling.

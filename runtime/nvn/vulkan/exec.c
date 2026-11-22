@@ -1867,7 +1867,10 @@ static void pass_mark_attachments(void) {
 static bool split_pending;  // (split_submit: submit at the next pass boundary)
 static uint32_t split_since;
 static uint64_t pass_seq_no;  // [XCDE] T220: counts begun passes
+static uint8_t pass_dont_care_mask;  // [XCDE] colour attachments guaranteed overwritten by this pass's opening full-screen draw
 static void begin_pass(void) {
+    uint8_t dcm = pass_dont_care_mask;
+    pass_dont_care_mask = 0;
     if (in_pass && !st.rt_dirty) return;
     pass_seq_no++;
     PendingClear pc = pending_clear;
@@ -1911,7 +1914,7 @@ static void begin_pass(void) {
         VkImageView v = vk_view(t, &st.rt.cview[i], st.rt.has_cview[i], true, TEXTYPE_2D);
         TexBackend *b = t->backend;
         if (!v) continue;
-        bool fb_layout = g_vk.feedback_loop && (draw_feedback_mask & (1u << i));  // [XCDE] #7
+        bool fb_layout = g_vk.feedback_loop && (draw_feedback_mask & (1u << i)) && b->has_feedback;  // [XCDE] #7
         if (fb_layout) {
             bool seen = false;
             for (uint32_t k = 0; k < pass_nfeedback; k++) seen |= pass_feedback[k]->image == b->image;
@@ -1930,6 +1933,8 @@ static void begin_pass(void) {
             ca[i].loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
             ca[i].clearValue.color = pc.color[i];
         }
+        if (ca[i].loadOp == VK_ATTACHMENT_LOAD_OP_LOAD && (dcm & (1u << i)))
+            ca[i].loadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
         pass_color[i] = st.rt.has_cview[i] && (st.rt.cview[i].setmask & 4) && vk_format(t->format) == b->format
                       ? vk_format(st.rt.cview[i].format) : b->format;
         uint32_t lv = st.rt.has_cview[i] && (st.rt.cview[i].setmask & 1) ? st.rt.cview[i].base_level : 0;
@@ -4317,7 +4322,7 @@ static TexBackend *snapshot_image(NvnTexture *t, TexBackend *src) {
         VK_CHECK(vmaCreateImage(g_vk.vma, &ci, &ai, &d->image, &d->mem, NULL));
         d->format = src->format; d->width = src->width; d->height = src->height; d->depth = 1; d->layers = 1; d->levels = 1;
         d->samples = src->samples; d->aspect = src->aspect; d->base_type = VK_IMAGE_VIEW_TYPE_2D;
-        vk_image_init_layout(vk_cmd(), d->image, d->aspect);
+        // Starts in UNDEFINED; resolve_feedback transitions UNDEFINED -> TRANSFER_DST_OPTIMAL -> SHADER_READ_ONLY_OPTIMAL.
     }
     return d;
 }
@@ -4707,7 +4712,7 @@ static void resolve_feedback(Prog *pr) {
     // [XCDE] v12 (plan B, #7, doc section 4.4): this call's copies are executed together at the end: one
     // vk_end_pass() + one vk_full_barrier() for all of them instead of one per copy. The pass stays open while the
     // pending list fills (nothing in the loop records render commands), so the recorded command order does not change.
-    struct FbPend { NvnTexture *t; TexBackend *src, *dst; Snap *snap; VkImageAspectFlags sa; int si, idx; };
+    struct FbPend { NvnTexture *t; TexBackend *src, *dst; Snap *snap; VkImageAspectFlags sa; VkPipelineStageFlags2 dst_stages; int si, idx; };
     struct FbPend pend[9];  // (nfeedback caps at 9 per call)
     int np = 0;
     uint32_t storage_mask = 0;  // colour attachments also bound as storage images: those need GENERAL
@@ -4740,12 +4745,26 @@ static void resolve_feedback(Prog *pr) {
                 for (int k = 0; k < st.rt.ncolor; k++)
                     if (st.rt.color[k] == t && ((pr->fi->out_mask & st.channel_mask) >> (k * 4) & 0xF)) cached_color = true;
             if (!cached_color && direct && g_vk.feedback_loop && sg == 1 && t != st.rt.depth && !storage_bound) {
-                for (int k = 0; k < st.rt.ncolor; k++) if (st.rt.color[k] == t) mask |= 1u << k;
-                native_color = true;
-                continue;
+                TexBackend *fb = vk_tex(t, true);
+                if (fb && !fb->has_feedback && !fb->feedback_failed) {
+                    vk_end_pass();
+                    st.rt_dirty = true;
+                    vk_tex_add_feedback(t, vk_cmd());
+                }
+                if (fb && fb->has_feedback) {
+                    for (int k = 0; k < st.rt.ncolor; k++) if (st.rt.color[k] == t) mask |= 1u << k;
+                    native_color = true;
+                    continue;
+                }
             }
             bool have = false;
-            for (int k = 0; k < nfeedback; k++) have |= feedback_tex[k] == t;
+            VkPipelineStageFlags2 sg_stage = sg == 0 ? VK_PIPELINE_STAGE_2_VERTEX_SHADER_BIT : VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT;
+            for (int k = 0; k < nfeedback; k++) {
+                if (feedback_tex[k] == t) {
+                    have = true;
+                    for (int j = 0; j < np; j++) if (pend[j].t == t) pend[j].dst_stages |= sg_stage;
+                }
+            }
             if (have || nfeedback == 9) continue;
             static int nosnap = -1;
             if (nosnap < 0) nosnap = getenv("LARECOMP_NO_SNAPSHOT_REUSE") != NULL;
@@ -4790,7 +4809,7 @@ static void resolve_feedback(Prog *pr) {
             // Stamps belong to the copy image: reallocation and non-draw writes can never reuse stale contents.
             if (snap) { snap->visibility = feedback_visibility; snap->frame = frame; snap->source_image = src->image; }
             if (si < 0) { static int rr; si = rr++ & 7; snap_tex[si] = t; }
-            pend[np++] = (struct FbPend){t, src, dst, snap, sa, si, nfeedback};
+            pend[np++] = (struct FbPend){t, src, dst, snap, sa, sg_stage, si, nfeedback};
             feedback_tex[nfeedback] = t;  // (reserved: a second slot sampling t in this call must not queue another copy)
             feedback_view[nfeedback++] = VK_NULL_HANDLE;  // (filled by the flush below)
         }
@@ -4800,33 +4819,36 @@ static void resolve_feedback(Prog *pr) {
         flush_pending_clear();
         vk_end_pass();
         VkCommandBuffer cb = vk_cmd();
-        if (copy_barrier_full()) {
-            vk_full_barrier(cb);
-        } else {
+        {
             VkImageMemoryBarrier2 imb[18];
             int ni = 0;
+            bool full = copy_barrier_full();
             for (int k = 0; k < np; k++) {
                 struct FbPend *e = &pend[k];
+                bool is_depth = (e->src->aspect & (VK_IMAGE_ASPECT_DEPTH_BIT | VK_IMAGE_ASPECT_STENCIL_BIT)) != 0;
+                VkPipelineStageFlags2 src_st = full ? VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT
+                    : is_depth ? (VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_2_TRANSFER_BIT)
+                               : (VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT | VK_PIPELINE_STAGE_2_TRANSFER_BIT |
+                                  (e->src->has_storage ? (VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT | VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT) : 0));
+                VkAccessFlags2 src_ac = full ? VK_ACCESS_2_MEMORY_WRITE_BIT
+                    : is_depth ? (VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT | VK_ACCESS_2_TRANSFER_WRITE_BIT)
+                               : (VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT | VK_ACCESS_2_TRANSFER_WRITE_BIT |
+                                  (e->src->has_storage ? VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT : 0));
                 imb[ni++] = (VkImageMemoryBarrier2){.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2,
-                    .srcStageMask = VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT | VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT |
-                                    VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT |
-                                    VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_2_TRANSFER_BIT,
-                    .srcAccessMask = VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT | VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT |
-                                     VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT | VK_ACCESS_2_TRANSFER_WRITE_BIT,
-                    .dstStageMask = VK_PIPELINE_STAGE_2_TRANSFER_BIT,
-                    .dstAccessMask = VK_ACCESS_2_TRANSFER_READ_BIT,
+                    .srcStageMask = src_st, .srcAccessMask = src_ac,
+                    .dstStageMask = VK_PIPELINE_STAGE_2_TRANSFER_BIT, .dstAccessMask = VK_ACCESS_2_TRANSFER_READ_BIT,
                     .oldLayout = VK_IMAGE_LAYOUT_GENERAL, .newLayout = VK_IMAGE_LAYOUT_GENERAL,
                     .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED, .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
                     .image = e->src->image, .subresourceRange = {e->src->aspect, 0, 1, 0, 1}};
+                // [XCDE] Snapshot dst: discard stale contents via UNDEFINED -> TRANSFER_DST_OPTIMAL with execution-only
+                // WAR (srcAccessMask = 0 avoids flushing L2/Infinity Cache before 4x 4K copies).
                 imb[ni++] = (VkImageMemoryBarrier2){.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2,
-                    .srcStageMask = VK_PIPELINE_STAGE_2_VERTEX_SHADER_BIT | VK_PIPELINE_STAGE_2_GEOMETRY_SHADER_BIT |
-                                    VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT | VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT |
-                                    VK_PIPELINE_STAGE_2_TRANSFER_BIT,
-                    .srcAccessMask = VK_ACCESS_2_SHADER_SAMPLED_READ_BIT | VK_ACCESS_2_SHADER_READ_BIT |
-                                     VK_ACCESS_2_TRANSFER_READ_BIT | VK_ACCESS_2_TRANSFER_WRITE_BIT,
-                    .dstStageMask = VK_PIPELINE_STAGE_2_TRANSFER_BIT,
-                    .dstAccessMask = VK_ACCESS_2_TRANSFER_WRITE_BIT,
-                    .oldLayout = VK_IMAGE_LAYOUT_GENERAL, .newLayout = VK_IMAGE_LAYOUT_GENERAL,
+                    .srcStageMask = full ? VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT
+                                         : (VK_PIPELINE_STAGE_2_VERTEX_SHADER_BIT | VK_PIPELINE_STAGE_2_GEOMETRY_SHADER_BIT |
+                                            VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT | VK_PIPELINE_STAGE_2_TRANSFER_BIT),
+                    .srcAccessMask = 0,
+                    .dstStageMask = VK_PIPELINE_STAGE_2_TRANSFER_BIT, .dstAccessMask = VK_ACCESS_2_TRANSFER_WRITE_BIT,
+                    .oldLayout = VK_IMAGE_LAYOUT_UNDEFINED, .newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
                     .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED, .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
                     .image = e->dst->image, .subresourceRange = {e->src->aspect, 0, 1, 0, 1}};
             }
@@ -4834,19 +4856,20 @@ static void resolve_feedback(Prog *pr) {
             vkCmdPipelineBarrier2(cb, &di);
         }
         static const VkComponentMapping id = {0};
+        // Single gpuprof mark for the whole batch so timestamp barriers don't serialize concurrent copies.
+        if (np == 1) gp_mark(cb, "feedback snapshot %ux%u fmt %d", pend[0].src->width, pend[0].src->height, pend[0].src->format);
+        else gp_mark(cb, "feedback snapshots (%d copies, %ux%u)", np, pend[0].src->width, pend[0].src->height);
         for (int k = 0; k < np; k++) {
             struct FbPend *e = &pend[k];
-            gp_mark(cb, "feedback snapshot %ux%u fmt %d", e->src->width, e->src->height, e->src->format);
             VkImageCopy rg = {.srcSubresource = {e->src->aspect, 0, 0, 1}, .dstSubresource = {e->src->aspect, 0, 0, 1},
                               .extent = {e->src->width, e->src->height, 1}};
-            vk_watch(e->dst->image, "exec.c:1954 vkCmdCopyImage"); vkCmdCopyImage(cb, e->src->image, VK_IMAGE_LAYOUT_GENERAL, e->dst->image, VK_IMAGE_LAYOUT_GENERAL, 1, &rg);
+            vk_watch(e->dst->image, "exec.c:1954 vkCmdCopyImage");
+            vkCmdCopyImage(cb, e->src->image, VK_IMAGE_LAYOUT_GENERAL, e->dst->image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &rg);
             if (g_debug_frame && (e->src->aspect & VK_IMAGE_ASPECT_DEPTH_BIT)) {
                 static int nd;
                 char path[128];
-                snprintf(path, sizeof path, "build/fbdepth_%03d_src.pgm", nd);
+                snprintf(path, sizeof path, "build/fbdepth_%03d_src.pgm", nd++);
                 debug_save_depth(e->src, path);
-                snprintf(path, sizeof path, "build/fbdepth_%03d_snap.pgm", nd++);
-                debug_save_depth(e->dst, path);
                 cb = vk_cmd();
             }
             feedback_tex[e->idx] = e->t;
@@ -4854,24 +4877,23 @@ static void resolve_feedback(Prog *pr) {
                                             : vk_image_view(e->dst, VK_IMAGE_VIEW_TYPE_2D, e->src->format, 0, 1, 0, 1, id, e->sa);
             snap_ok[e->si] = true;
         }
-        if (!copy_barrier_full()) {
+        {
             VkImageMemoryBarrier2 imb[9];
+            bool full = copy_barrier_full();
             for (int k = 0; k < np; k++) {
                 struct FbPend *e = &pend[k];
                 imb[k] = (VkImageMemoryBarrier2){.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2,
                     .srcStageMask = VK_PIPELINE_STAGE_2_TRANSFER_BIT,
                     .srcAccessMask = VK_ACCESS_2_TRANSFER_WRITE_BIT,
-                    .dstStageMask = VK_PIPELINE_STAGE_2_VERTEX_SHADER_BIT | VK_PIPELINE_STAGE_2_GEOMETRY_SHADER_BIT |
-                                    VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT | VK_PIPELINE_STAGE_2_TRANSFER_BIT,
-                    .dstAccessMask = VK_ACCESS_2_SHADER_SAMPLED_READ_BIT | VK_ACCESS_2_SHADER_READ_BIT |
-                                     VK_ACCESS_2_TRANSFER_READ_BIT | VK_ACCESS_2_TRANSFER_WRITE_BIT,
-                    .oldLayout = VK_IMAGE_LAYOUT_GENERAL, .newLayout = VK_IMAGE_LAYOUT_GENERAL,
+                    .dstStageMask = full ? VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT : e->dst_stages,
+                    .dstAccessMask = full ? (VK_ACCESS_2_MEMORY_READ_BIT | VK_ACCESS_2_MEMORY_WRITE_BIT) : VK_ACCESS_2_SHADER_SAMPLED_READ_BIT,
+                    .oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, .newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
                     .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED, .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
                     .image = e->dst->image, .subresourceRange = {e->src->aspect, 0, 1, 0, 1}};
             }
             VkDependencyInfo di = {.sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO, .imageMemoryBarrierCount = (uint32_t)np, .pImageMemoryBarriers = imb};
             vkCmdPipelineBarrier2(cb, &di);
-            if (!was_untracked) pass_untracked = false;
+            if (!full && !was_untracked) pass_untracked = false;
         }
         st.rt_dirty = true;
     }
@@ -5938,6 +5960,7 @@ static void texture_info(int stage, ShaderInfo *si, int i, VkDescriptorImageInfo
     int slot = ((int)st_->handle_offset - 0x20) / 8;  // 64-bit handles from offset 0x20
     uint64_t h = (slot >= 0 && slot < 32) ? st.tex[stage][slot] : 0;
     VkImageView view = VK_NULL_HANDLE;
+    bool is_snap_view = false;
     VkSampler smp = VK_NULL_HANDLE;
     uint32_t tic = h & 0xFFFFF, tsc = (uint32_t)(h >> 20) & 0xFFF;
     sc[0] = sc[1] = 1;
@@ -6016,6 +6039,7 @@ static void texture_info(int stage, ShaderInfo *si, int i, VkDescriptorImageInfo
                 if (e->tex == feedback_tex[k] && (st_->type == TEXTYPE_2D || st_->type == TEXTYPE_2D_ARRAY)) {
                     view = feedback_view[k];
                     if (st_->type == TEXTYPE_2D_ARRAY) view = vk_dummy_view(TEXTYPE_2D_ARRAY);  // (2D snapshot as array: rare)
+                    else is_snap_view = (view != VK_NULL_HANDLE);
                 }
         }
     }
@@ -6048,7 +6072,7 @@ static void texture_info(int stage, ShaderInfo *si, int i, VkDescriptorImageInfo
         dummy_report("ranura vacia (textura dummy)", stage, slot, tic, st_->type, audit_fs(), 0, 0, 0, 0);
     if (!view) view = vk_dummy_view(st_->type);
     if (!smp) smp = vk_default_sampler(true);
-    VkImageLayout layout = VK_IMAGE_LAYOUT_GENERAL;  // [XCDE] #7: an attachment sampled natively is in the feedback layout
+    VkImageLayout layout = is_snap_view ? VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL : VK_IMAGE_LAYOUT_GENERAL;  // [XCDE] #7: snapshots use SHADER_READ_ONLY_OPTIMAL; native feedback uses feedback layout
     if (draw_feedback_mask && g_vk.feedback_loop && h && st.tpool && tic < (uint32_t)st.tpool->count) {
         NvnTexture *t = ((NvnTexEntry *)st.tpool->entries)[tic].tex;
         bool snapshot = false;
@@ -7123,6 +7147,47 @@ static void draw_(CmdRec *r, bool indexed) {
                                                   reads_tmp_scene, fr_))
             st.rt_dirty = true;
         if (last_pass_seq != pass_seq_no || st.rt_dirty || !in_pass) pass_draws = 0;
+        // [XCDE] Avoid 4K LOAD_OP_LOAD bandwidth on full-screen post-process passes that completely overwrite their
+        // colour targets (no blend/depth/stencil/alpha-test/discard/feedback/self-sample, full viewport+scissor).
+        // XCDE_DONT_CARE_LOAD=0 disables.
+        if (!in_pass || st.rt_dirty) {
+            static int dc_on = -1;
+            if (dc_on < 0) { const char *e = getenv("XCDE_DONT_CARE_LOAD"); dc_on = !(e && atoi(e) == 0); }
+            uint32_t dmode = (uint32_t)r->x[0], dcount = (uint32_t)r->x[2];
+            bool fs_prim = !indexed && ((dmode == 4 && (dcount == 3 || dcount == 6)) || (dmode == 5 && dcount == 4));
+            if (dc_on && fs_prim && !pr->gi && !pr->fi->uses_discard && !pr->fi->uses_gmem_store && !pr->has_images &&
+                !st.ds[0] && !st.ds[3] && !(st.color_state[2] && st.color_state[2] < 8 && alpha_test_on()) &&
+                st.color_state[1] == 3 && !st.ms[0xC] && st.poly[2] != 0 && st.poly[2] != 1) {
+                uint8_t dcm = 0;
+                for (int i = 0; i < st.rt.ncolor && i < 8; i++) {
+                    NvnTexture *t = st.rt.color[i];
+                    if (!t) continue;
+                    TexBackend *tb = (TexBackend *)t->backend;
+                    if (tb && tb->presented) continue;
+                    if ((st.color_state[0] >> i) & 1) continue;  // blend enabled
+                    if (((st.channel_mask >> (i * 4)) & 0xF) != 0xF) continue;
+                    if (((pr->fi->out_mask >> (i * 4)) & 0xF) != 0xF) continue;
+                    if (draw_feedback_mask & (1u << i)) continue;
+                    uint32_t lv = st.rt.has_cview[i] && (st.rt.cview[i].setmask & 1) ? st.rt.cview[i].base_level : 0;
+                    uint32_t gw = t->width >> lv; if (!gw) gw = 1;
+                    uint32_t gh = t->height >> lv; if (!gh) gh = 1;
+                    if (st.viewport[0][0] > 0.0f || st.viewport[0][1] > 0.0f ||
+                        st.viewport[0][0] + st.viewport[0][2] < (float)gw ||
+                        st.viewport[0][1] + st.viewport[0][3] < (float)gh) continue;
+                    if (st.scissor[0][0] > 0 || st.scissor[0][1] > 0 ||
+                        (int64_t)st.scissor[0][0] + st.scissor[0][2] < (int64_t)gw ||
+                        (int64_t)st.scissor[0][1] + st.scissor[0][3] < (int64_t)gh) continue;
+                    bool sampled = false;
+                    for (int s = 0; s < 2 && !sampled; s++) {
+                        ShaderInfo *si = s ? pr->fi : pr->vi;
+                        for (int j = 0; si && j < si->ntex && j < 64; j++)
+                            if (draw_tex[s][j] == t) { sampled = true; break; }
+                    }
+                    if (!sampled) dcm |= (uint8_t)(1u << i);
+                }
+                pass_dont_care_mask = dcm;
+            }
+        }
         begin_pass();
         last_pass_seq = pass_seq_no;
         pass_draws++;
