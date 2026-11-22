@@ -1674,6 +1674,11 @@ void vk_shaders_init(void);
 
 // exit() from any thread: let the GPU finish, keep the pipeline cache, then end the process without the DLL
 // teardown (driver / validation-layer threads can stall it for minutes while the game's threads still run).
+// [XCDE] GitHub #216: this is the only exit path, and it MUST stay registered before anything else that atexit()s
+// (handlers run in reverse order of registration, so this one runs last and the game's threads are still rendering
+// frames when it starts). Do not register a handler that unloads a vendor SDK (Streamline/DLSS, NGX): dlss.cpp used to
+// atexit its shutdown, which then ran before this one and released the plugins while the render thread was inside
+// dlss_evaluate -- an execute fault in the unloaded code (tests/unit/test_vk_source_contracts.py pins this).
 static void quick_exit_handler(void) {
     static int trace = -1;
     if (trace < 0) trace = getenv("LARECOMP_VK_TRACE") != NULL;

@@ -114,6 +114,24 @@ class VulkanSourceContracts(unittest.TestCase):
         self.assertIn("xcde_tmp_should_split_before_hud_draw", exec_c)
         self.assertIn("xcde_tmp_tex_carries_scene", exec_c)
 
+    def test_vendor_upscaler_sdks_are_not_unloaded_by_an_exit_handler(self):
+        """GitHub #216: exit() runs the atexit handlers (reverse order) while the game's threads still render.
+
+        dlss.cpp used to atexit its Streamline/NGX shutdown. That ran BEFORE the renderer's quick exit (registered
+        later, so earlier by LIFO), released the plugins while a render thread was inside dlss_evaluate, and the next
+        Streamline call jumped into the unloaded plugin: 0xc0000005 at an address inside no loaded module. The window
+        close path ends the process through quick_exit_handler + plat_terminate (no DLL teardown), so the SDKs stay
+        loaded; nothing may register a handler that unloads them.
+        """
+        dlss = (ROOT / "runtime/nvn/vulkan/dlss.cpp").read_text(encoding="utf-8")
+        # (line comments stripped: the fix's own notes quote the removed calls)
+        code = "\n".join(line.split("//")[0] for line in dlss.splitlines())
+        self.assertNotIn("atexit(dlss_shutdown", code)        # Windows: Streamline (sl.interposer + plugins, NGX)
+        self.assertNotIn("atexit(dlss_shutdown_linux", code)  # Linux: NGX component shared library
+        self.assertIn("GitHub #216", dlss)
+        self.assertIn("GitHub #216", DEVICE)
+        self.assertIn("plat_terminate();", DEVICE)  # the process ends without the DLL teardown
+
 
 if __name__ == "__main__":
     unittest.main()

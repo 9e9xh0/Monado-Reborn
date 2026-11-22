@@ -131,3 +131,39 @@ of `tasks.md`; do not move them, they are the record.
   launches aborted at the first present; after, fullscreen 1920x1080 with `upscaler = fsr3` renders the loading screen
   and runs 60 fps for 32 s (frame 1784) without a crash, and the title screen (frame 1800) is correct.
   `LARECOMP_VKQ=0` renders correctly on the unpatched build too: that A/B is the reproduction.
+
+## 2026-11-23 — crash on exit with DLSS (GitHub #216)
+
+- Symptom: the #216 report ("missing particles on the Monado") also carried the crash from that evening. Both sessions
+  in its ZIP (`last_game.prev.log`, `last_game.log`) end the same way: the player closes the window (`window closed`)
+  and the process faults with `0xc0000005` at the same address, `host lr … (dlss_evaluate)`. It is a crash on **exit**,
+  not "after the battle": 2 of the 2 logged sessions (one of them only 3 minutes long).
+- Evidence (minidump parsed): the faulting RIP lies inside **no loaded module** (the address hole between
+  `nvspcap64.dll` and `libopus-0.dll`), i.e. code that had just been unloaded; the crashing thread's stack points back
+  into `dlss_evaluate` and below it into `nvoglv64.dll` (the NVIDIA ICD). The guest dump has the game's threads still
+  running (`nnMain` "running", 41 threads, 40 blocked).
+- Cause: `exit(0)` runs the `atexit` handlers in reverse order of registration. `quick_exit_handler` in `device.c` —
+  the hard exit that drains the recording queue, waits for the GPU and calls `plat_terminate()` — is registered first,
+  so it ran **last**, while `dlss_init_early()` registered `atexit(dlss_shutdown)` later, so `slShutdown()` ran
+  **first**: it unloaded `sl.*`/NGX while the render thread was still inside `dlss_evaluate`, and that thread's next
+  Streamline call jumped into the unloaded plugin.
+- Fix: no exit handler unloads the vendor SDKs. `dlss.cpp` keeps `dlss_shutdown` (and, on Linux, `dlss_shutdown_linux`,
+  which had the same LIFO problem with the NGX component) but no longer registers it; the window-close path ends the
+  process through `quick_exit_handler` + `plat_terminate()`, which skips the DLL teardown entirely — that is the reason
+  the handler exists. A truly orderly SDK shutdown would need every renderer thread stopped first: after `slShutdown`
+  the Streamline swapchain proxies the renderer holds are gone too, and the exit path cannot stop the game's threads.
+- Tests: `tests/unit/test_vk_source_contracts.py` (`test_vendor_upscaler_sdks_are_not_unloaded_by_an_exit_handler`) pins
+  the invariant (no `atexit(dlss_shutdown…)` in `dlss.cpp`; the `quick_exit_handler` note; `plat_terminate()`), and the
+  runtime-only build (`-DMONADO_RUNTIME_ONLY=ON`) compiles the edited units. **Windows in-game verification pending**:
+  exit the game 5–10 times with DLSS on and check `build/crash/` stays empty (`LARECOMP_VK_TRACE=1` logs the exit).
+- Open leads from the same report (not changed here; Windows-only, unverifiable on this machine). The Streamline
+  integration never calls the common plugin's `presentCommon()` (one warning per session: "internal bookkeeping and
+  garbage collection will not run"), tags its resources without `sl::Resource::desc` (the SDK header says the
+  description is mandatory on Vulkan) and hands the R8 reactive mask to `kBufferTypeBiasCurrentColorHint`. The session
+  logs 425,692 `isFormatSupported Cannot have undefined format` errors (12 per frame, 64 MB in 10 minutes; the Streamline
+  spam also buries the useful lines) and 64 `getResourceSize … format 0 native 9` (`native 9` = `VK_FORMAT_R8_UNORM`,
+  the reactive mask). Worth fixing next: fill `desc` with the `VkImageCreateInfo` and tag the mask as
+  `kBufferTypeReactiveMaskHint`, then re-run the same session and check the log says 0 errors.
+- The report's first symptom (the Monado's ether/particles missing in in-engine cutscenes) still needs a save and a
+  reference image; the cheapest A/Bs for the reporter are `cutscenes = 30` (or `XCDE_CUTSCENE_UNQUANTIZE=0`, the #181
+  change shipped the day before), `occlusion = off`, a 16:9 window, `frame_gen = 0` and `XCDE_XFB_SHADOW=0`.
