@@ -111,3 +111,23 @@ of `tasks.md`; do not move them, they are the record.
   renderer's view matrix confirmed the camera's world Y rising 23.99 → 28.55 while the leader went 22.99 → 27.91
   (FSR 3 probe). Option in F1 → Cheats → Exploration and the launcher, `camera_follow_jump = 0/1` in `xcde.ini`;
   `test_settings_roundtrip.c` covers the round-trip and `XCDE_CAM_TRACE=1` logs the followed values.
+
+## 2026-11-22 — the game image never reached the swapchain after the post.c split (#210)
+
+- Symptom: on Linux (KDE/Wayland, NVIDIA 580.196.07) the game ran — audio, 60 fps, `last_game.log` full of presents —
+  but nothing was shown: the taskbar listed the window and it never mapped. `LARECOMP_WINDOW_SHOT` captures had the
+  performance overlay drawn over a black game image, while the same capture with `LARECOMP_VKQ=0` was correct (the
+  loading screen), which localised the defect to the deferred recording path.
+- Cause: PR #210 moved the present / SMAA / FSR 1 passes out of `runtime/nvn/vulkan/exec.c` into a new
+  `runtime/nvn/vulkan/post.c` without the `vkq.h` include. On Linux the ordered recording worker (T-LINUX-THREE) is on
+  by default, and `exec.c`, `device.c`, `temporal.c` and `textures.c` route every `vkCmd*` through it; the new unit
+  called the driver directly from the render thread while the worker replayed into the same command buffer. The present
+  draw raced the worker (the game image was never composed, the Wayland surface never got its first buffer, so the
+  window never mapped), and when both threads recorded at once the command stream collapsed (`free(): invalid size`
+  inside `vkBeginCommandBuffer`, which then hit most launches).
+- Fix: `post.c` includes `vkq.h` after `vk.h` (one line plus the reason) — the ordering it had inside `exec.c` — and a
+  build-time `#error` keeps the invariant if the passes are split into another unit again.
+- Verified (GTX 1050 Ti, driver 580.196.07, `8eb62ed` + this change): before, frame 500 captured overlay-over-black and
+  launches aborted at the first present; after, fullscreen 1920x1080 with `upscaler = fsr3` renders the loading screen
+  and runs 60 fps for 32 s (frame 1784) without a crash, and the title screen (frame 1800) is correct.
+  `LARECOMP_VKQ=0` renders correctly on the unpatched build too: that A/B is the reproduction.
