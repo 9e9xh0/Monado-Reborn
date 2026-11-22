@@ -30,7 +30,7 @@ Both sessions end identically: `window closed`, then `0xc0000005` at the same ad
 - Regression guard: `tests/unit/test_vk_source_contracts.py`
   (`test_vendor_upscaler_sdks_are_not_unloaded_by_an_exit_handler`).
 
-## 2. The Monado's ether/particles are missing in the cutscene stills (open)
+## 2. The Monado's ether/particles are missing (open)
 
 Both attached images are cutscene frames of the Colony 9 attack (the climb and the Monado on the ground): the sword's
 red frame, blue trim and ring render, but the **ether blade/glow layer and its particles are absent** (the ring's inner
@@ -67,6 +67,32 @@ in the report, but nothing yet proves that those ranges feed the Monado's effect
 
 What a usable report needs: the save + the step to the cutscene, whether **all** particle layers or only the Monado's
 are missing, and one A/B result from the table above.
+
+### Update — the reporter's A/Bs (2026-11-22 19:35–19:40)
+
+Two more reports, both loading the same save (`save_0/bfsgame00.sav`, ~13 s in) and both ending cleanly (`window
+closed`, no `[crash]` line):
+
+| Report | Upscaler | Temporal path | `[post]` line | Crash on exit | Monado FX |
+|---|---|---|---|---|---|
+| 19:35 (`xcde_report_20261122_193755`) | `fsr3`, native 1:1 + SMAA | FSR 3 SR + frame generation | `3440x1440 -> upscaled smaa 3440x1440` | **no** | missing |
+| 19:39 (`xcde_report_20261122_194043`) | `bilinear` | none (no `[tmp]` lines at all) | `3440x1440 -> smaa 3440x1440` | **no** | missing |
+
+Consequences:
+
+- **The presentation stack is ruled out** (rows 1 and 5 of the table): the FX is missing with DLSS, with FSR 3 SR and
+  frame generation, and with the plain spatial path (no jitter, no HUD snapshot, no DLSS/FSR, no frame generation).
+  That matches the reporter's earlier "FG ON/OFF doesn't change anything".
+- **The exit crash is DLSS-specific, which is the control the fix needed**: these sessions take the same exit path but
+  never call `dlss_init_early()` (`[dlss] DLSS no solicitado`), so no `atexit(dlss_shutdown)` was registered and they
+  exit cleanly. The crash tracks the Streamline shutdown that used to be registered — see section 1.
+- Neither session contains an in-engine cutscene (`[cutscene]` is never logged), so the "same missing particles" was
+  judged in gameplay on that save. That agrees with T180 ("Shulk's sword looks flat / see-through", field, open): the
+  layer is wrong beyond cutscenes.
+- Remaining checks, in order: `occlusion = off` (the game's own emitter culling), a 16:9 window (the ultrawide
+  `wide box` / `uvb()` path), `XCDE_XFB_SHADOW=0` / `XCDE_STORE_SHADOW=0` (vertex mirrors), and if those are clean the
+  per-effect class — the FX asset's texture decode, program or render state. For that last one the reporter's save
+  slot 0 (`bfsgame*.sav`, 1.4 MB) is the fastest route to a local reproduction.
 
 ## 3. Streamline integration health (found in the log, not fixed)
 

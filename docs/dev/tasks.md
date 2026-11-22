@@ -1680,3 +1680,8 @@ Detalle: `docs/PERFORMANCE_UI.md`. Evidencia: `docs/evidence/2026-11-04-performa
   (64 MB of log). Fix candidates: fill `desc` from a `VkImageCreateInfo`, tag the mask as
   `kBufferTypeReactiveMaskHint`, wire the backbuffer tag so Streamline's common plugin sees the present. Needs a
   Windows run to verify (the errors must go to 0).
+- [ ] T-216-FX **Monado ether/particles missing in issue #216.** The reporter's follow-up runs with FSR 3.1 and
+  with the bilinear upscaler show the same missing layer and no crash on exit, so the present path (DLSS,
+  FSR 3, frame generation, jitter/HUD snapshot) is ruled out and the visual defect is in the game's own draws.
+  Next A/Bs: `occlusion = off`, a 16:9 window (ultrawide `uvb()`), `XCDE_XFB_SHADOW=0`/`XCDE_STORE_SHADOW=0`.
+  A local repro needs the reporter's save slot 0 (`bfsgame*.sav`, 1.4 MB). Triage: [summary.md](../evidence/2026-11-23-issue-216/summary.md).

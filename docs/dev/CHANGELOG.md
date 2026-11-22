@@ -168,5 +168,10 @@ of `tasks.md`; do not move them, they are the record.
   reference image; the cheapest A/Bs for the reporter are `cutscenes = 30` (or `XCDE_CUTSCENE_UNQUANTIZE=0`, the #181
   change shipped the day before), `occlusion = off`, a 16:9 window, `frame_gen = 0` and `XCDE_XFB_SHADOW=0`.
 
+- Update (same evening, the reporter's own A/Bs): with FSR 3.1 and with the bilinear upscaler the Monado FX are
+  still missing, and those two sessions exit **cleanly** — so the presentation stack (DLSS, FSR 3, frame
+  generation, jitter/HUD snapshot) is out, and the exit crash reproduces only when DLSS is enabled, which is the
+  control for the fix above. The triage note records both runs.
+
 Triage of both symptoms, the minidump findings and the A/B table:
 [summary.md](../evidence/2026-11-23-issue-216/summary.md).
