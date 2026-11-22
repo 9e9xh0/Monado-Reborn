@@ -54,7 +54,7 @@ def main():
                               '-isystem', str(include/'backward')]
             return flags
         return [zig, 'c++' if cpp else 'cc', '-march=x86_64_v2']
-    for dll in ['SDL3.dll', 'vulkan-1.dll', 'libwinpthread-1.dll']:
+    for dll in ['SDL3.dll', 'vulkan-1.dll', 'libwinpthread-1.dll', 'libshaderc_shared.dll']:
         if (sdk / 'bin' / dll).is_file():
             shutil.copy2(sdk / 'bin' / dll, output / dll)
 
@@ -72,8 +72,8 @@ def main():
             print((output / f'{name}.log').read_text(encoding='utf-8', errors='replace')[-3000:])
         return code == 0
 
-    sources = ['host/settings_ini.c', 'hle/framepace.c', 'hle/party.c', 'hle/bindings.c', 'services/fs.c', 'diag/diag.c', 'log.c', 'nvn/objects.c', 'services/romfs_virtual.c', 'nvn/output_scale.c',
-               'nvn/vulkan/device.c', 'nvn/vulkan/exec.c', 'nvn/vulkan/shaders.c',
+    sources = ['host/settings_ini.c', 'hle/framepace.c', 'hle/party.c', 'hle/bindings.c', 'hle/collision_bvh.c', 'services/fs.c', 'diag/diag.c', 'log.c', 'nvn/objects.c', 'services/romfs_virtual.c', 'nvn/output_scale.c',
+               'nvn/vulkan/device.c', 'nvn/vulkan/exec.c', 'nvn/vulkan/post.c', 'nvn/vulkan/shaders.c',
                'nvn/vulkan/textures.c', 'nvn/vulkan/precompile.c', 'nvn/vulkan/temporal.c', 'nvn/vulkan/vkq.c', 'nvn/vulkan/fsr4.c',
                'nvn/vulkan/imgui_glue.cpp', 'ui/menu_vk.cpp', 'nvn/vulkan/dlss.cpp']
     for source in sources:
@@ -92,12 +92,25 @@ def main():
         'test_translate_tex': ['runtime/nvn/maxwell/translate.c'],
         'test_translate_ldc': ['runtime/nvn/maxwell/translate.c'],
         'test_translate_xfb': ['runtime/nvn/maxwell/translate.c'],
+        'test_translate_cfg': ['runtime/nvn/maxwell/translate.c', str(sdk / 'lib/libshaderc_shared.dll.a')],
         'test_tegra_copy': ['runtime/nvn/tegra.c', 'runtime/nvn/formats.c'],
         'test_tegra_block_height': ['runtime/nvn/tegra.c', 'runtime/nvn/formats.c'],
         'test_fibers': ['runtime/hle/fibers.c'],
         'test_condvar': ['runtime/platform/windows.c', 'runtime/log.c', 'runtime/diag/diag.c', 'runtime/diag/sampler.c', '-lwinmm', '-ldbghelp'],
+        'test_foliage_distance': ['runtime/hle/foliage_distance.c'],
+        'test_graphics_options': ['runtime/hle/graphics.c'],
     }
-    for test in ['test_render_policy', 'test_display_options', 'test_port_core', 'test_gpu_probe', 'test_settings_roundtrip', 'test_time_math', 'test_movie_buf', *[k for k in extra_sources if k != 'test_settings_roundtrip']]:
+    strict_tests = {
+        'test_cliff_batch', 'test_display_options', 'test_foliage_distance', 'test_gpu_probe',
+        'test_graphics_options', 'test_port_core', 'test_render_policy',
+        'test_settings_roundtrip', 'test_stick_click', 'test_tex_resize', 'test_ui_scale', 'test_window_size',
+    }
+    standalone_tests = [
+        'test_cliff_batch', 'test_display_options', 'test_port_core', 'test_gpu_probe',
+        'test_render_policy', 'test_settings_roundtrip', 'test_stick_click', 'test_tex_resize',
+        'test_time_math', 'test_movie_buf', 'test_ui_scale', 'test_window_size',
+    ]
+    for test in [*standalone_tests, *[k for k in extra_sources if k != 'test_settings_roundtrip']]:
         if test in args.skip_test:
             skipped.append(test)
             print(f'{test}: SKIPPED (explicit --skip-test)', flush=True)
@@ -106,7 +119,7 @@ def main():
         extra = extra_sources.get(test, [])
         if test in ('test_tegra_copy', 'test_tegra_block_height', 'test_condvar'):
             extra = [*extra, str(sdk / 'lib/libwinpthread.dll.a')]
-        warnings = ['-Wall', '-Wextra', '-Werror'] if test in ('test_display_options', 'test_port_core', 'test_gpu_probe', 'test_settings_roundtrip') else ['-w']
+        warnings = ['-Wall', '-Wextra', '-Werror'] if test in strict_tests else ['-w']
         if run(test + '_build', [*compiler(), '-std=gnu11', *warnings, *includes(), '-Iruntime/nvn/maxwell',
                                 ROOT / 'tests/native' / f'{test}.c', *extra, '-o', exe]):
             if args.compile_only:

@@ -109,13 +109,13 @@ Spanish on 2026-10-25) and `CONTRIBUTING.md` (the project rules, "constitution")
 - [ ] T037 [P] [M3] **Test first:** atomic saves and handle closing → the planned `test_fs_commit` native test (never created) · Req: FR-023.
   (Later: save commits with a journal, b78be40.)
 - [x] T038 [M3] `fsp-srv` over `targets/romfs` with 18.5 K files: listings and opens without copies · Req: FR-020.
-- [ ] T039 [P] [M3] `movie::SetCoreMask` and `movie::MediaData::operator=` (the 2 missing in LAS) · Req: FR-042.
-  (Done later, see T118.)
+- [x] T039 [P] [M3] `movie::SetCoreMask` and `movie::MediaData::operator=` (the 2 missing in LAS) · Req: FR-042.
+  (Done in T118.)
 - [x] T040 [M3] Heap and memory map per Q5 (adjust `HEAP_MAX` if needed) · Req: FR-020. **Done 2026-10-17:** the game
   asks for a single `SetHeapSize 0xC9400000` (≈ 3.15 GB); `HEAP_MAX` 3.25 GB fits (≈ 0.1 GB margin).
 - [x] T041 [M3] Reach the first `Present` · Evidence: log in `docs/evidence/M3/`.
 - [ ] T042 [P] [M3] Minimal recorded route "boot → first frame" → a recorded route under `tests/routes/` (planned; never created).
-- [ ] T043 [P] [M3] Per-function / per-thread profiler → `runtime/diag/sampler.c` · Req: FR-064. (Done later as the
+- [x] T043 [P] [M3] Per-function / per-thread profiler → `runtime/diag/sampler.c` · Req: FR-064. (Done as the
   sampling profiler, `runtime/diag/sampler.c`.)
 
 **M3 gate:** first `Present` without unaudited stubs; Q2, Q4, Q5, Q7 answered.
@@ -126,7 +126,7 @@ Spanish on 2026-10-25) and `CONTRIBUTING.md` (the project rules, "constitution")
 - [ ] T051 [P] [M4] Dump the shader universe with an emulator (from the user's own dump) to `targets/shaders/` and test
   the translator on all of it → answers Q3 · Req: FR-031.
 - [~] T052 [M4] Maxwell opcodes missing in the translator · Req: FR-031.
-- [ ] T053 [P] [M4] Persistent pipeline cache + prewarming off the game thread · Req: FR-032. (Done later: T187, T211.)
+- [x] T053 [P] [M4] Persistent pipeline cache + prewarming off the game thread · Req: FR-032. (Done in T187, T211.)
 - [ ] T054 [P] [M4] Copies with the command buffer's own strides, no overruns; Vulkan validation · Req: FR-033.
 - [ ] T055 [P] [M4] Check freed memory before writing compute results · Req: FR-034.
 - [ ] T056 [P] [M4] CPU→GPU write tracking on Windows and Linux (userfaultfd + `PAGEMAP_SCAN`) · Req: FR-035.
@@ -140,7 +140,7 @@ Spanish on 2026-10-25) and `CONTRIBUTING.md` (the project rules, "constitution")
 - [~] T061 [M4] WebM cutscenes through `movie::` + FFmpeg, NV12→RGBA on the GPU · Req: FR-042. 2026-10-18: the New
   Game intro (`vs01000000.webm`) now plays (T118).
 - [~] T062 [M4] Title screen identical to the reference (pixel threshold) · Evidence: `docs/evidence/M4/`.
-- [ ] T063 [P] [M4] Freeing unused shader modules and pipeline libraries; a list of live textures · Req: SC-005.
+- [x] T063 [P] [M4] Freeing unused shader modules and pipeline libraries; a list of live textures · Req: SC-005.
   (Pipelines and libraries: b82a198, c262fe4.)
 
 **M4 gate:** title right, a cutscene with audio, clean Vulkan validation.
@@ -166,8 +166,8 @@ Spanish on 2026-10-25) and `CONTRIBUTING.md` (the project rules, "constitution")
 
 ## M7 — Hardening (Story 3)
 
-- [ ] T081 [M7] Automated 4 h soak with metrics (private memory, VRAM, handles, live textures) → `tools/diag/soak.py`
-  · Req: SC-004–006. (Done later as `tools/diag/soak.py`.)
+- [x] T081 [M7] Automated 4 h soak with metrics (private memory, VRAM, handles, live textures) → `tools/diag/soak.py`
+  · Req: SC-004–006. (Done as `tools/diag/soak.py`.)
 - [ ] T082 [P] [M7] Go through every lesson of research R10 with its test · Req: R10.
 - [ ] T083 [P] [M7] GPU matrix (NVIDIA, AMD, Intel iGPU) on Windows and Linux · Req: NFR-004.
 - [ ] T084 [M7] Guest heap as driver memory on Linux / AMD · Req: NFR-004.
@@ -232,8 +232,8 @@ M0 → M1 → M2 → M3 → M4 → M5 → M6 ─┐
   Fix in `runtime/kernel.c`; `XCDE_STALL=<s>` watches for future hangs. 47/47 clean boots (before ≈ 1/30 hung).
 - [x] T068 [M4] **Black final image** (SOLVED 2026-10-17: the cause was the 3D deswizzle, blocks 1 GOB tall and depth
   by d+d/2; see `runtime/nvn/tegra.c`; the title is right in the window).
-- [ ] T069 [M4] Take the LAS-specific hooks out of the renderer (widening, mirror, flower pots, `texpatch`, `menu_*`)
-  and delete `runtime/host/stubs_gfx.c` · Req: Art. IX.
+- [x] T069 [M4] Take the LAS-specific hooks out of the renderer (widening, mirror, flower pots, `texpatch`, `menu_*`)
+  and delete `stubs_gfx.c` · Req: Art. IX. (Removed the old `texpatch.{c,h}` and `stubs_gfx.c` files, along with dead LAS hooks in `device.c`, `exec.c`, `textures.c`, and `input.c`.)
 - [ ] T272 [M4] Exact `PTP` for `TLD4` (per-texel offsets) and `SUST` in D/P modes with 8/16-bit sizes, when a shader
   uses them · Req: FR-031.
 - [x] T105 [M4] (SOLVED: point sprites from an unsupported geometry shader; GS implemented) A regular dot pattern over
@@ -257,7 +257,7 @@ M0 → M1 → M2 → M3 → M4 → M5 → M6 ─┐
 
 ## Candidate tasks from the WindowSmash review (2026-10-17, see `docs/history/research/lessons_windowsmash.md`)
 - [ ] T111 [M7] Whole-function differential tests (Unicorn vs native, registers + memory) for leaf functions of `main`/`sdk` -> `tests/native/` (planned) · Req: SC-002.
-- [ ] T112 [M3] Sampling profiler: sample guest thread instruction pointers, map to `f_<addr>`, report per function/thread (finishes T043) · Req: FR-064.
+- [x] T112 [M3] Sampling profiler: sample guest thread instruction pointers, map to `f_<addr>`, report per function/thread (finishes T043; implemented in `runtime/diag/sampler.c`) · Req: FR-064.
 - [ ] T113 [M2] Cross-check function discovery against exception-frame tables (`.eh_frame` extents) · Req: FR-010.
 - [ ] T114 [M8] Tail-call helper so guest tail transfers do not grow the host stack · Req: SC-008.
 - [ ] T115 [M5] Static IPC/service reachability census (lower bound) for what the game needs after the title.
@@ -271,7 +271,7 @@ M0 → M1 → M2 → M3 → M4 → M5 → M6 ─┐
 - [x] T122 [M5] Route stopped presenting at frame 5245 in deterministic mode. Cause (host stacks of the stuck threads, new in the thread dump): the movie HLE holds `d->lock` across a guest call (`dec_signal` -> `nn::os::SignalEvent`, an SVC that can pass the baton); the baton went to a thread that then blocked on `d->lock` -> deadlock (real-time mode unaffected). Fix: `kernel_det_mutex_lock` (deterministic mode: yield the baton while the HLE mutex is busy) for all movie locks. Measured 2026-10-18: runs reach frame 8000+ ("Eons have passed.", then the first 3D scene), 0 stall reports, scheduler SVC digest identical in 2 runs on 8242/8242 frames.
 - [ ] T124 [M3] Image hashes still split between deterministic runs: from frame ~6027 (first 3D scene) in every pair, and in some pairs already during the movie (2057, 2326, 2510). The guest is identical (`XCDE_DET_DIGEST`), so the cause is renderer-side. Per-pass hashes (`XCDE_PASS_HASH`, with a GPU sync per pass) differ in G-buffer passes 86-97 drawing large mip-mapped compressed textures. Ruled out: exact texture uploads (`XCDE_TEX_EXACT=1`), zero-cleared new colour targets, zero-padded cbufs, flush per submit. Next: hash the VkImage contents of those textures per frame, and the gmem ranges their draws read. Rechecked 2026-10-18 after T133/T134/T138 (two runs to frame 9000, three game processes at once): SVC digests identical on 8999/8999 frames; image hashes differ on 1900 frames: 914-916 (menu transition) and from 6171 on (first 3D scene) - not fixed by the barrier / transform feedback work. Candidate to check first: the renderer's texture change detection (CPU write tracking) runs on the render thread while guest loader threads write texture memory - its timing, not the guest, decides when a streamed texture is re-uploaded.
 - [ ] T123 [M4] Passes 111/120/121 of the intro frames differ between runs although the final image does not (`XCDE_PASS_HASH`): probably uncovered regions of fresh render targets (uninitialised memory). Clear new targets in deterministic mode if it ever reaches the screen.
-- [ ] T120 [M4] Candidate: a fragment shader with no output for a bound render target (omap nibble 0) should leave it untouched (Maxwell); Vulkan writes undefined values. Set `colorWriteMask = 0` for those targets. Seen on the intro's off-screen marker draw (no visible effect there) · Req: FR-030.
+- [x] T120 [M4] Candidate: a fragment shader with no output for a bound render target (omap nibble 0) should leave it untouched (Maxwell); Vulkan writes undefined values. Set `colorWriteMask = 0` for those targets (done in `runtime/nvn/vulkan/exec.c` where `k.write_mask[i]` is masked by `pr->fi->out_mask`) · Req: FR-030.
 
 ## Candidate tasks from three other recomp projects (2026-10-18, see `docs/history/research/lessons_other_recomps.md`)
 - [~] T125 [M4] Program cache keyed by shader content as well as address (streamed shaders reuse addresses; Let's Go #66). Done 2026-10-18 (hash per stage in `set_shaders`); route to frame 8000 unchanged (digest equal). Not yet exercised: a zone change that reloads shaders.
@@ -289,7 +289,7 @@ M0 → M1 → M2 → M3 → M4 → M5 → M6 ─┐
 - [x] T137 [M5] **Party and enemies invisible on the battle field** after "Battle Introduction 1" (closed with A at frame 16600, `tests/routes/new_game_b.txt`). Measured: the game issued no character draws at all in gameplay (frame 17000: none of the skinned character programs drawn in cutscenes). Cause: `nvnCommandBufferReportCounter` wrote 0 for every counter type; type 1 is samples passed (occlusion), which XCDE uses to cull field characters and enemies (~0.8 M reports per run), so everything was "hidden"; `ResetCounter` was a no-op too. Fix: T139. Verified 2026-10-18 (`tests/routes/new_game_c.txt`, deterministic): frames 17000/17300 show Dunban, Dickson, Mumkhar and the Mechon; walking, camera, L targeting ("Battle Introduction 2") work.
 - [x] T139 [M4] Samples-passed counters as Vulkan occlusion queries: `ResetCounter`/`ReportCounter` type 1 recorded; one query per render pass while counting (a query can't outlive its pass), a report sums the segments since its reset; resolved when the submission completes (like the timing counters), "visible" until then and when it can't be told. Deterministic mode: always "visible" (GPU results must not steer the game); `XCDE_OCCLUSION=0` forces that too. Stats line: `occlusion N (M hidden)`. Verified 2026-10-18 in real time (`tests/routes/realtime_tap_a_long.txt`, 35k frames, 30 fps): ~7.8k reports per 2 s in battle, ~1k hidden; party and Mechon drawn as in the game's own tutorial picture; no stalls.
 - [x] T140 (NOT A BUG 2026-10-19: the Switch video shows the same orange bars on the bottom edge) [M5] Battle HUD: the party HP panel seems cut off at the bottom edge ("Warning!" and orange bars at the very bottom corners). Compare with a reference capture of the Switch version before touching it.
-- [ ] T135 [M7] Intermittent startup failure `guest address range 7000000000-7320000000 is not free` (another allocation got there first; a retry works). Reserve the range earlier or retry.
+- [x] T135 [M7] Intermittent startup failure `guest address range 7000000000-7320000000 is not free` (done in `runtime/host/main_boot.c` `reserve_guest_space` constructor with up to 8 relaunches on Windows and Linux).
 - [x] T141 [M2] **Crash on the first attack in battle** (`FATAL: no function at 70005264e8`, `tests/routes/new_game_d.txt` frame ~18750). Cause: a byte jump table whose bounds check tests one copy of the index (`ldr w8,[sp,#0x14]; cmp w8,#3`) while the lookup reloads another from a stack slot (`ldr x8,[sp,#8]; and x8,#0xff`); the resolver set only the compared register, so every index gave the same garbage target and the table was taken as resolved with one wrong case. Fix (`tools/lifter/gen.py`): the index value also fills the emulator's scratch stack window, and a multi-entry table resolving to a single target is rejected (any-instruction fallback). Tests: two new cases in `tests/unit/test_jumptables.py` (failed before). Effect: main 732 -> 728 resolved tables (4 now safe fallback, 2 corrected), sdk 492 -> 490. Measured 2026-10-18: the route plays the battle to frame 20000 with no crash.
 - [ ] T142 [M4] Systematic audit of NVN entry points that are no-ops or partial and that the game calls (`XCDE_USAGE` census): every graphics bug of session 5 was one (barrier, transform feedback, rasterizer discard, occlusion counters). Implement or justify each.
 - [ ] T143 [M4] Automatic per-frame detectors on routes: unwritten render-target pixels, NaN/Inf, draws with zero samples where the depth/stencil test should pass, HUD clipped at the edges; report frame + draw.

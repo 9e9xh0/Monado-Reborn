@@ -578,9 +578,7 @@ static void mv_shot(VkCommandBuffer cb, uint32_t rw, uint32_t rh, const double r
                 double nx = (x + 0.5) / pw * 2 - 1, ny = (y + 0.5) / ph * 2 - 1, nz = dep[i];
                 double cx = prj[0] * nx + prj[1] * ny + prj[2] * nz + prj[3], cy = prj[4] * nx + prj[5] * ny + prj[6] * nz + prj[7];
                 double cw = prj[12] * nx + prj[13] * ny + prj[14] * nz + prj[15];
-                double camx = 0, camy = 0;
-                if (cw != 0) { camx = ((cx / cw) - nx) * 0.5; camy = ((cy / cw) - ny) * 0.5; }
-                double dx = fabs(fabs(mx) - fabs(camx)) + fabs(fabs(my) - fabs(camy));
+                if (cw != 0) { (void)((cx / cw) - nx); (void)((cy / cw) - ny); }
                 px[i * 4 + 0] = (uint8_t)fminf(255, fabsf(mx) * 60 * 255);
                 px[i * 4 + 1] = (uint8_t)fminf(255, fabsf(my) * 60 * 255);
                 px[i * 4 + 2] = (uint8_t)((mx < 0 ? 1 : 0) | (my < 0 ? 2 : 0)) * 80;

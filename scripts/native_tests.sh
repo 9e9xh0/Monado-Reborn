@@ -66,3 +66,11 @@ build/test/test_ui_scale.exe
 # [XCDE] GitHub #172: scalable resize preservation, color RT clear, and material-only LOD bias policy.
 $Z -std=c11 -Wall -Wextra -Werror -Iruntime -o build/test/test_tex_resize.exe tests/native/test_tex_resize.c
 build/test/test_tex_resize.exe
+
+# [XCDE] Cliff batching, foliage distance, graphics options, translate CFG.
+$Z -std=c11 -Wall -Wextra -Werror -Iruntime -Iruntime/nvn -o build/test/test_cliff_batch.exe tests/native/test_cliff_batch.c
+build/test/test_cliff_batch.exe
+$Z -std=c11 -Wall -Wextra -Werror -Iruntime -o build/test/test_foliage_distance.exe tests/native/test_foliage_distance.c runtime/hle/foliage_distance.c
+build/test/test_foliage_distance.exe
+$Z -O1 -w -Iruntime/nvn/maxwell -o build/test/test_translate_cfg.exe tests/native/test_translate_cfg.c runtime/nvn/maxwell/translate.c $M/lib/libshaderc_shared.dll.a
+build/test/test_translate_cfg.exe

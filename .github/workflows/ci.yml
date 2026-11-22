@@ -36,3 +36,16 @@ jobs:
         run: python tools/diag/setup_validation.py
       - name: Windows runtime components, launcher and native regressions
         run: python tools/diag/validate_port.py --build-ui
+  linux-native:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: false
+      - name: Install native test toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang pkg-config libvulkan-dev libvulkan-memory-allocator-dev libshaderc-dev
+      - name: Run Linux native tests (no game data)
+        run: bash scripts/native_tests_linux.sh

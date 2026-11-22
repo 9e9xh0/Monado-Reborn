@@ -9,9 +9,9 @@ Z=".venv/Scripts/python -m ziglang cc"
 CF="-O1 -march=x86_64_v2 -fno-strict-aliasing -fvisibility=hidden -Iruntime -Iruntime/nvn -Ithird_party -I/c/msys64/ucrt64/include -w"
 RT="loader dispatch kernel ipc fnprof log platform/windows services/fs services/romfs_virtual services/am services/acc services/time
     services/hid_set services/kbicons services/misc services/audio services/hwopus hle/heaps hle/pl hle/vi hle/nvn_boot hle/fibers hle/input hle/party
-    hle/bindings hle/movie hle/framepace hle/foliage_distance hle/foliage_pool hle/graphics hle/cheats_options hle/cheats_combat hle/cheats_rewards hle/cheats_enemy_health hle/title_exit hle/system_exit hle/desktop_exit_caption hle/expanded_saves hle/expanded_save_scan hle/quickstep_native hle/quickstep_picker hle/quickstep_save hle/quickstep_slot hle/quickstep_stats hle/quickstep_stats_ui hle/quickstep_ui_memory host/stubs host/settings_ini host/stubs_gfx host/gamelib_static host/main_boot diag/diag diag/sampler diag/watchdog
+    hle/bindings hle/movie hle/framepace hle/foliage_distance hle/foliage_pool hle/graphics hle/cheats_options hle/cheats_combat hle/cheats_rewards hle/cheats_enemy_health hle/title_exit hle/system_exit hle/desktop_exit_caption hle/expanded_saves hle/expanded_save_scan hle/quickstep_native hle/quickstep_picker hle/quickstep_save hle/quickstep_slot hle/quickstep_stats hle/quickstep_stats_ui hle/quickstep_ui_memory hle/collision_bvh host/stubs host/settings_ini host/gamelib_static host/main_boot diag/diag diag/sampler diag/watchdog
     diag/crashdump"
-NVN="astc cmdbuf formats maxwell/translate objects output_scale smaa_data tegra texpatch vulkan/device vulkan/exec vulkan/vkq vulkan/precompile vulkan/shaders vulkan/textures vulkan/temporal vulkan/fsr4"
+NVN="astc cmdbuf formats maxwell/translate objects output_scale smaa_data tegra vulkan/device vulkan/exec vulkan/post vulkan/vkq vulkan/precompile vulkan/shaders vulkan/textures vulkan/temporal vulkan/fsr4"
 mkdir -p build/rt build/nvn
 want="$*"
 pick() { [ -z "$want" ] || [[ " $want " == *" $1 "* ]]; }
@@ -20,11 +20,13 @@ for f in $RT; do
   pick "$f" || continue
   o=build/rt/$(echo $f | tr / _).o; extra=""
   [ "$f" = host/main_boot ] && { o=build/rt/host_main_boot_gfx.o; extra="-DXCDE_GFX"; }
+  [ "$f" = hle/collision_bvh ] && extra="$extra -O2"
   $Z -c runtime/$f.c -o $o.$$.tmp $CF -DGAMELIB_ID='"dev"' $extra && mv -f $o.$$.tmp $o || { echo "FAIL $f"; fail=1; }  # (tmp + rename: a parallel link never reads half an object)
 done
 for f in $NVN; do
   pick "nvn/$f" || continue
   extra=""
+  case "$f" in vulkan/exec|vulkan/textures) extra="-O2" ;; esac
   if [ "$f" = smaa_data ]; then  # [XCDE] the SMAA reference shader (third_party/smaa, MIT) as a C string
     mkdir -p build/inc
     .venv/Scripts/python tools/build/gen_smaa_inc.py third_party/smaa/SMAA.hlsl build/inc/smaa_hlsl.inc || fail=1

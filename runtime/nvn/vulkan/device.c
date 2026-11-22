@@ -1430,11 +1430,8 @@ void backend_present(NvnTexture *t) {
     double vx = 0, vy = 0, vw = 0, vh = 0;  // the game image's placement in the window
     float crop[4] = {0, 0, 1, 1};           // uv origin and size
     bool aspect_changed = false;
-    if (have || !want_window) {  // (headless frames still advance the scale / widescreen state as a presented one would)
+    if (have || !want_window) {  // (headless frames still advance the scale state as a presented one would)
         double dw = g_vk.sc_extent.width, dh = g_vk.sc_extent.height;
-        extern void widescreen_frame_end(uint64_t frame);
-        widescreen_frame_end(total_frames);
-        extern void widescreen_set_factor(float f);
         double ratio = dw / dh;
         bool probe = g_settings.aspect == ASPECT_UNLOCKED && ratio >= 4.0 / 3.0 - 0.005 &&
                      ratio <= 32.0 / 9.0 + 0.005 && fabs(ratio / (16.0 / 9.0) - 1.0) > 0.005 &&
@@ -1468,10 +1465,6 @@ void backend_present(NvnTexture *t) {
         output_scale(dw, dh, probe && scene, SDL_GetTicksNS() / 1e9, vk_native_gpu_ms(), &os);
         double sx = os.sx, sy = os.sy, shape = os.shape;
         vx = os.vx, vy = os.vy, vw = os.vw, vh = os.vh;
-        // interiors / dungeons: their 16:9 centre, or the part inside a room wider than one screen
-        extern void widescreen_present_crop(uint64_t, double, float *, double *, double *, double *, double *);
-        widescreen_present_crop(total_frames, shape, crop, &vx, &vy, &vw, &vh);
-        widescreen_set_factor((float)shape);
         float next_aspect = probe && scene && shape != 1.0 ? (float)(shape * (16.0 / 9.0)) : 0;
         aspect_changed = old_aspect != next_aspect;
         if (aspect_changed) {
@@ -1573,12 +1566,6 @@ void backend_present(NvnTexture *t) {
     if (slow_ms > 0 && total_frames > 2600 && (!slow_until || (long)total_frames < slow_until)) SDL_Delay((Uint32)slow_ms);
     extern void fnprof_frame(uint64_t frame);
     fnprof_frame(total_frames);
-    extern void warp_frame(uint64_t frame);
-    warp_frame(total_frames);
-    extern void reboot_test_frame(uint64_t frame);  // runtime/main.c (LARECOMP_REBOOT_AT)
-    reboot_test_frame(total_frames);
-    extern void save_editor_frame(uint64_t frame);
-    save_editor_frame(total_frames);
     extern void vk_level_change_check(void);
     vk_level_change_check();
     {   // [XCDE] the game's temporal AA, live: off for xcde.ini taa = 0 and while a temporal upscaler does the AA
@@ -1650,10 +1637,9 @@ void backend_present(NvnTexture *t) {
     if (prev_present > 0 && now - prev_present > max_gap) max_gap = now - prev_present;
     prev_present = now;
     if (now - last_fps_time >= fps_iv) {
-        extern const char *game_level_name(void);
         if (last_fps_time > 0)
-            LOG("[vk] t=%.1f frame %llu %.1f fps max %.0fms level %s (%s)\n", now, (unsigned long long)total_frames,
-                frames / (now - last_fps_time), max_gap * 1000.0, game_level_name(), renderer_stats());
+            LOG("[vk] t=%.1f frame %llu %.1f fps max %.0fms (%s)\n", now, (unsigned long long)total_frames,
+                frames / (now - last_fps_time), max_gap * 1000.0, renderer_stats());
         if (g_settings.show_fps && last_fps_time > 0 && window) {  // [XCDE] launcher option: frame rate in the title bar
             char title[128];
             snprintf(title, sizeof title, "Xenoblade Chronicles: Definitive Edition (Recomp) - %.0f fps", frames / (now - last_fps_time));
@@ -1801,7 +1787,6 @@ int ui_run(void) {
     ui_window_init();
     atomic_store(&ui_ready, true);
     for (;;) {
-        if (rt_reboot_requested()) return rt_reboot_requested();  // (runtime/main.c tears the game down)
         SDL_Event e;
         while (SDL_WaitEventTimeout(&e, 16)) {
             if (e.type == SDL_EVENT_QUIT) {
