@@ -2263,17 +2263,27 @@ static const char glsl_prelude[] =
     // [XCDE] GitHub #24 frost zoom: a fragment sampling the widened presented window texture must read the centred
     // 16:9 box, not the whole allocation (rscale[65 + slot] = per-draw box map, all zero when inactive).
     "vec2 uvb(vec2 uv, vec4 b) { return (b.x == 0.0f && b.y == 0.0f) ? uv : uv * b.xy + b.zw; }\n"
-    // half -> float by bits, not unpackHalf2x16: NVIDIA's driver recognises unpacked halves and runs some of the
-    // fp32 math after them in native fp16, differently per shader, so a depth pre-pass and its colour pass (EQUAL
-    // test) placed wind-animated foliage apart: black slashes / flicker (tools: notes/PLAN.md 2026-10-08)
+    "uint prmt(uint a, uint b, uint sel) { uint r = 0u; for (uint i = 0u; i < 4u; i++) { uint s = (sel >> (i * 4u)) & 7u; uint bt = s < 4u ? (a >> (s * 8u)) & 0xFFu : (b >> ((s - 4u) * 8u)) & 0xFFu; r |= bt << (i * 8u); } return r; }\n";
+
+// [XCDE] Half-float helpers: vertex/geometry stages keep bit-level h2f() so NVIDIA cannot fold unpacked halves into
+// native fp16 differently between depth pre-pass and colour pass (EQUAL test foliage flicker, 2026-10-08).
+// Fragment/compute stages have no depth-prepass position invariance requirement, so they use hardware unpackHalf2x16 /
+// single packHalf2x16 (eliminating 2 branches + ~14 ALU ops per lane and letting RADV ACO / NVCC lower chains to
+// native packed FP16). XCDE_HW_FP16=0 restores software h2f() on all stages.
+static const char glsl_fp16_sw[] =
     "float h2f(uint h) { uint s = (h & 0x8000u) << 16, e = (h >> 10) & 0x1Fu, m = h & 0x3FFu;"
     " if (e == 0u) { float d = float(m) * 5.9604644775390625e-8; return s != 0u ? -d : d; }"
     " if (e == 31u) return uintBitsToFloat(s | 0x7F800000u | (m << 13));"
     " return uintBitsToFloat(s | ((e + 112u) << 23) | (m << 13)); }\n"
     "vec2 unpack_h2(uint v) { return vec2(h2f(v & 0xFFFFu), h2f(v >> 16)); }\n"
     "vec2 hx(uint v, uint swz) { if (swz == 1u) return vec2(uintBitsToFloat(v)); vec2 h = unpack_h2(v); return swz == 2u ? h.xx : (swz == 3u ? h.yy : h); }\n"
-    "uint hpack(vec2 r, uint merge, uint old) { if (merge == 1u) return floatBitsToUint(r.x); uint lo = packHalf2x16(vec2(r.x, 0.0f)), hi = packHalf2x16(vec2(r.y, 0.0f)); if (merge == 2u) return (old & 0xFFFF0000u) | lo; if (merge == 3u) return (old & 0xFFFFu) | (hi << 16); return lo | (hi << 16); }\n"
-    "uint prmt(uint a, uint b, uint sel) { uint r = 0u; for (uint i = 0u; i < 4u; i++) { uint s = (sel >> (i * 4u)) & 7u; uint bt = s < 4u ? (a >> (s * 8u)) & 0xFFu : (b >> ((s - 4u) * 8u)) & 0xFFu; r |= bt << (i * 8u); } return r; }\n";
+    "uint hpack(vec2 r, uint merge, uint old) { if (merge == 1u) return floatBitsToUint(r.x); uint lo = packHalf2x16(vec2(r.x, 0.0f)), hi = packHalf2x16(vec2(r.y, 0.0f)); if (merge == 2u) return (old & 0xFFFF0000u) | lo; if (merge == 3u) return (old & 0xFFFFu) | (hi << 16); return lo | (hi << 16); }\n";
+
+static const char glsl_fp16_hw[] =
+    "float h2f(uint h) { return unpackHalf2x16(h).x; }\n"
+    "vec2 unpack_h2(uint v) { return unpackHalf2x16(v); }\n"
+    "vec2 hx(uint v, uint swz) { if (swz == 1u) return vec2(uintBitsToFloat(v)); vec2 h = unpackHalf2x16(v); return swz == 2u ? h.xx : (swz == 3u ? h.yy : h); }\n"
+    "uint hpack(vec2 r, uint merge, uint old) { if (merge == 1u) return floatBitsToUint(r.x); uint p = packHalf2x16(r); if (merge == 2u) return (old & 0xFFFF0000u) | (p & 0xFFFFu); if (merge == 3u) return (old & 0xFFFFu) | (p & 0xFFFF0000u); return p; }\n";
 
 static const char *glsl_sampler_type(const ShaderTexture *t) {
     static const char *const names[][2] = {
@@ -2315,6 +2325,10 @@ static ShaderInfo *glsl_finish(Ctx *c, int flow_mode, bool dbg) {
         } else {
             sp(&s, "%s", glsl_prelude);
         }
+        static int hw_fp16 = -1;
+        if (hw_fp16 < 0) { const char *e = getenv("XCDE_HW_FP16"); hw_fp16 = !(e && atoi(e) == 0); }
+        bool use_hw_fp16 = hw_fp16 && (stage == STAGE_FRAGMENT || stage == STAGE_COMPUTE);
+        sp(&s, "%s", use_hw_fp16 ? glsl_fp16_hw : glsl_fp16_sw);
     }
     for (int i = 0; i < 18; i++) {
         if (!(info->cbuf_mask & (1u << i))) continue;

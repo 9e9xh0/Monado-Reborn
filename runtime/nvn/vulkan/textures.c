@@ -251,6 +251,18 @@ static bool storage_wanted(const NvnTexture *t) {
     return false;
 }
 
+// [XCDE] Lazy VK_IMAGE_USAGE_ATTACHMENT_FEEDBACK_LOOP_BIT_EXT: setting it unconditionally on every colour attachment
+// disables DCC colour compression on AMD RADV. Remember textures that actually participate in native colour feedback so
+// re-creations (e.g. resolution change) get the bit at creation; all other RTs keep full hardware compression.
+static struct { uint64_t addr; uint32_t format, w, h; } want_feedback[64];
+static int nwant_feedback;
+static bool feedback_wanted(const NvnTexture *t) {
+    for (int i = 0; i < nwant_feedback; i++)
+        if (want_feedback[i].addr == t->addr && want_feedback[i].format == t->format && want_feedback[i].w == t->width && want_feedback[i].h == t->height)
+            return true;
+    return false;
+}
+
 static bool format_supports(VkFormat f, VkFormatFeatureFlags want) {
     VkFormatProperties p;
     vkGetPhysicalDeviceFormatProperties(g_vk.phys, f, &p);
@@ -274,7 +286,7 @@ static uint8_t tex_scalable(const NvnTexture *t) {
     // staircase lines around characters moving through the focus (jumping) at any internal resolution above 720p.
     if (t->width == 64 && t->height == 36) return 0;
     float a = (float)t->width / (float)t->height;
-    if (a > 1.74f && a < 1.81f) return 1;
+    if (a > 1.74f && a < 1.81f) return (t->width <= 640 && t->height <= 360) ? 3 : 1;
     // [XCDE] T182: the menus' character portraits are 3D renders into 192x544 targets (colour, depth, G-buffer; their
     // post chain at 96x272 / 48x136), drawn ~1:1 on the 1280x720 HUD. Left at guest size they were magnified 3x at 4K
     // (stair-stepped hair, soft faces). Same rendering, more pixels: scaled with the output, uniformly (they sit in the
@@ -282,9 +294,32 @@ static uint8_t tex_scalable(const NvnTexture *t) {
     if (a > 0.345f && a < 0.360f) return 2;
     return 0;
 }
+// [XCDE] Cap scaling on sub-full-res 16:9 post-process targets (<= 640x360: bloom, SSAO/TSSAO, godrays, SSR, DoF blur).
+// At 4K (3x) these low-frequency passes otherwise run at 9x pixel count (~30% of total GPU time on RADV). Default cap
+// 1.5x (1080p-equivalent) keeps full-res 1280x720 scene/G-buffer/lighting/UI at native 4K while preserving aspect ratio
+// on ultrawide. XCDE_SUBRES_SCALE_CAP=0 restores uncapped scaling.
+static float subres_scale_cap(void) {
+    static float cap = -1.0f;
+    if (cap < 0.0f) {
+        const char *e = getenv("XCDE_SUBRES_SCALE_CAP");
+        cap = e ? strtof(e, NULL) : 1.5f;
+        if (cap < 0.0f) cap = 0.0f;
+        LOG("[vk] sub-res post-process scale cap: %.2fx%s\n", cap, cap == 0.0f ? " (uncapped)" : "");
+    }
+    return cap;
+}
 // the scale a scalable target is allocated at (now)
 static void target_scale(const TexBackend *b, float *sx, float *sy) {
     if (b->scalable == 2) { *sx = *sy = fminf(g_rs_x, g_rs_y); return; }
+    if (b->scalable == 3) {
+        float cap = subres_scale_cap();
+        if (cap > 0.0f && g_rs_y > cap) {
+            float k = cap / g_rs_y;
+            *sx = g_rs_x * k;
+            *sy = g_rs_y * k;
+            return;
+        }
+    }
     *sx = b->scalable ? g_rs_x : 1;
     *sy = b->scalable ? g_rs_y : 1;
 }
@@ -315,7 +350,7 @@ bool renderer_texture_frame_fresh(NvnTexture *t) {
     if (on < 0) on = getenv("LARECOMP_NO_FRAME_CLEAR") == NULL;
     TexBackend *b = t ? (TexBackend *)t->backend : NULL;
     uint64_t total_frames = renderer_present_count();
-    if (!on || !b || b->scalable != 1 || b->frame_cleared == total_frames + 1) return false;
+    if (!on || !b || (b->scalable != 1 && b->scalable != 3) || b->frame_cleared == total_frames + 1) return false;
     b->frame_cleared = total_frames + 1;
     return true;
 }
@@ -325,7 +360,7 @@ bool renderer_texture_level_fresh(NvnTexture *t) {
     static int keep = -1;
     if (keep < 0) keep = getenv("LARECOMP_KEEP_TARGETS") != NULL;
     if (!b || keep || b->level_gen == g_level_gen) return false;
-    if (b->scalable != 1) { b->level_gen = g_level_gen; return false; }
+    if (b->scalable != 1 && b->scalable != 3) { b->level_gen = g_level_gen; return false; }
     bool fresh = b->level_gen != 0;
     b->level_gen = g_level_gen;
     return fresh;
@@ -453,9 +488,12 @@ static void create_image(NvnTexture *t, TexBackend *b, bool for_render) {
     VkImageUsageFlags usage = VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
     if (depthfmt) usage |= VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT;
     else if (format_supports(vf, VK_FORMAT_FEATURE_COLOR_ATTACHMENT_BIT)) usage |= VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
-    // [XCDE] raw surface loads/stores (SULD/SUST): 32-bit-per-channel formats also get STORAGE usage; the shader sees them
-    // through an unsigned-integer view of the same texel size (vk_storage_view)
-    if (!depthfmt && storage_class(vf) && format_supports(vf, VK_FORMAT_FEATURE_STORAGE_IMAGE_BIT)) usage |= VK_IMAGE_USAGE_STORAGE_BIT;
+    // [XCDE] raw surface loads/stores (SULD/SUST): added lazily via vk_tex_add_storage / storage_wanted so normal
+    // 32-bit-per-channel colour targets keep hardware DCC compression. XCDE_EAGER_STORAGE=1 restores eager STORAGE_BIT.
+    static int eager_storage = -1;
+    if (eager_storage < 0) { const char *e = getenv("XCDE_EAGER_STORAGE"); eager_storage = e && atoi(e) != 0; }
+    if (eager_storage && !depthfmt && storage_class(vf) && format_supports(vf, VK_FORMAT_FEATURE_STORAGE_IMAGE_BIT))
+        usage |= VK_IMAGE_USAGE_STORAGE_BIT;
     VkImageCreateFlags flags = 0;
     if (!depthfmt) flags |= VK_IMAGE_CREATE_MUTABLE_FORMAT_BIT;  // format views (NVN texture views, raw sRGB views)
     if (!depthfmt && !(usage & VK_IMAGE_USAGE_STORAGE_BIT) && samples == 1 && storage_wanted(t)) {  // [XCDE] T192
@@ -466,11 +504,15 @@ static void create_image(NvnTexture *t, TexBackend *b, bool for_render) {
         }
     }
     // [XCDE] #7: with VK_EXT_attachment_feedback_loop_layout a colour attachment may be sampled by the draw that writes
-    // it, in VK_IMAGE_LAYOUT_ATTACHMENT_FEEDBACK_LOOP_OPTIMAL_EXT (exec.c feedback_layout). The bit must be decided
-    // before vkCreateImage. Depth feedback always reads a copy, so depth images keep their compression.
-    if (g_vk.feedback_loop && (usage & VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT))
+    // it, in VK_IMAGE_LAYOUT_ATTACHMENT_FEEDBACK_LOOP_OPTIMAL_EXT (exec.c feedback_layout). Added lazily via
+    // vk_tex_add_feedback / feedback_wanted so non-feedback colour targets keep hardware DCC compression on RADV.
+    // XCDE_EAGER_FEEDBACK=1 restores adding the bit to every colour attachment up front.
+    static int eager_fb = -1;
+    if (eager_fb < 0) { const char *e = getenv("XCDE_EAGER_FEEDBACK"); eager_fb = e && atoi(e) != 0; }
+    if (g_vk.feedback_loop && (usage & VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT) && (eager_fb || feedback_wanted(t)))
         usage |= VK_IMAGE_USAGE_ATTACHMENT_FEEDBACK_LOOP_BIT_EXT;
     b->has_storage = (usage & VK_IMAGE_USAGE_STORAGE_BIT) != 0;
+    b->has_feedback = (usage & VK_IMAGE_USAGE_ATTACHMENT_FEEDBACK_LOOP_BIT_EXT) != 0;
     // [XCDE] spec_lowend_gpu R6b (LASRecomp 03ee802): a mutable image without a format list loses colour compression
     // (DCC on AMD, CCS on Intel). The views XCDE makes (walk + battle routes): the image's own format and, for SULD /
     // SUST, the storage uint format; NVN views may also ask for the sRGB / UNORM twin. Those formats are listed; an image
@@ -1609,6 +1651,47 @@ bool vk_tex_add_storage(NvnTexture *t, VkCommandBuffer cb) {
     defer((Dead){.img = old.image, .mem = old.mem});
     static int nl;
     if (nl++ < 20) LOG("[vk] T192: %llx %ux%u fmt %d re-created with storage usage (SULD / SUST)\n", (unsigned long long)t->addr, b->width, b->height, (int)b->format);
+    return true;
+}
+
+// [XCDE] Lazy VK_IMAGE_USAGE_ATTACHMENT_FEEDBACK_LOOP_BIT_EXT: re-create a colour target with feedback-loop usage on
+// its first native colour-feedback draw (outside a render pass) and copy its contents over. Non-feedback targets never
+// pay the DCC-disable cost on RADV.
+bool vk_tex_add_feedback(NvnTexture *t, VkCommandBuffer cb) {
+    if (!g_vk.feedback_loop) return false;
+    TexBackend *b = vk_tex(t, true);
+    if (!b || !b->image || b->has_feedback || b->feedback_failed) return false;
+    if (b->aspect != VK_IMAGE_ASPECT_COLOR_BIT) { b->feedback_failed = true; return false; }
+    if (!feedback_wanted(t) && nwant_feedback < 64)
+        want_feedback[nwant_feedback++] = (typeof(want_feedback[0])){t->addr, t->format, t->width, t->height};
+    TexBackend old = *b;
+    views_forget(b);
+    b->image = VK_NULL_HANDLE; b->mem = VK_NULL_HANDLE;
+    create_image(t, b, true);
+    if (!b->has_feedback || b->width != old.width || b->height != old.height || b->levels != old.levels || b->layers != old.layers ||
+        b->depth != old.depth) {
+        LOG("[vk] lazy feedback re-creation of %llx did not take (fmt %d)\n", (unsigned long long)t->addr, (int)b->format);
+        if (b->image) defer((Dead){.img = b->image, .mem = b->mem});
+        b->image = old.image; b->mem = old.mem; b->has_feedback = false; b->feedback_failed = true;
+        return false;
+    }
+    VkMemoryBarrier2 mb = {.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER_2, .srcStageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
+                           .srcAccessMask = VK_ACCESS_2_MEMORY_WRITE_BIT, .dstStageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
+                           .dstAccessMask = VK_ACCESS_2_MEMORY_READ_BIT | VK_ACCESS_2_MEMORY_WRITE_BIT};
+    VkDependencyInfo di = {.sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO, .memoryBarrierCount = 1, .pMemoryBarriers = &mb};
+    vkCmdPipelineBarrier2(cb, &di);
+    VkImageCopy rg[16];
+    uint32_t n = 0;
+    for (uint32_t lv = 0; lv < b->levels && n < 16; lv++) {
+        uint32_t d = b->depth >> lv;
+        rg[n++] = (VkImageCopy){.srcSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, lv, 0, b->layers}, .dstSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, lv, 0, b->layers},
+                                .extent = {level_w(b, lv), level_h(b, lv), d ? d : 1}};
+    }
+    vkCmdCopyImage(cb, old.image, VK_IMAGE_LAYOUT_GENERAL, b->image, VK_IMAGE_LAYOUT_GENERAL, n, rg);
+    vkCmdPipelineBarrier2(cb, &di);
+    defer((Dead){.img = old.image, .mem = old.mem});
+    static int nl;
+    if (nl++ < 20) LOG("[vk] %llx %ux%u fmt %d re-created with feedback-loop usage\n", (unsigned long long)t->addr, b->width, b->height, (int)b->format);
     return true;
 }
 
