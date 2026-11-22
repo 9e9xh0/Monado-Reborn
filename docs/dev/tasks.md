@@ -1672,7 +1672,8 @@ Detalle: `docs/PERFORMANCE_UI.md`. Evidencia: `docs/evidence/2026-11-04-performa
   window-close path ends the process through `quick_exit_handler` + `plat_terminate()` (no DLL teardown). Test:
   `tests/unit/test_vk_source_contracts.py` (`test_vendor_upscaler_sdks_are_not_unloaded_by_an_exit_handler`); the
   runtime-only build compiles both edited units. Windows in-game verification pending (exit 5–10 times, `build/crash/`
-  must stay empty). Detail: [CHANGELOG.md](CHANGELOG.md).
+  must stay empty). Triage of both symptoms: [summary.md](../evidence/2026-11-23-issue-216/summary.md);
+  detail: [CHANGELOG.md](CHANGELOG.md).
 - [ ] T-EXIT-DLSS-2 **Streamline integration health** (same report, Windows-only): `presentCommon()` never observed,
   `sl::Resource::desc` (mandatory on Vulkan) never set, the R8 reactive mask tagged as
   `kBufferTypeBiasCurrentColorHint`; 425,692 `isFormatSupported` errors + 64 `getResourceSize` per 10-minute session

@@ -167,3 +167,6 @@ of `tasks.md`; do not move them, they are the record.
 - The report's first symptom (the Monado's ether/particles missing in in-engine cutscenes) still needs a save and a
   reference image; the cheapest A/Bs for the reporter are `cutscenes = 30` (or `XCDE_CUTSCENE_UNQUANTIZE=0`, the #181
   change shipped the day before), `occlusion = off`, a 16:9 window, `frame_gen = 0` and `XCDE_XFB_SHADOW=0`.
+
+Triage of both symptoms, the minidump findings and the A/B table:
+[summary.md](../evidence/2026-11-23-issue-216/summary.md).
