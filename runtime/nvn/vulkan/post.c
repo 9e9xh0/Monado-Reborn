@@ -4,6 +4,15 @@
 #include <string.h>
 
 #include "vk.h"
+// [XCDE] T-LINUX-THREE: the post/present passes used to live in exec.c, whose vkq.h redirection sends every recording
+// call through the ordered "vk-record" worker. Split into this unit they went straight to the driver from the render
+// thread while that worker was replaying into the same command buffer: the present draw raced it (black game image) and
+// the command stream collapsed (free(): invalid size inside vkBeginCommandBuffer). Include it after vk.h, as exec.c does.
+#include "vkq.h"
+// A unit that records after this one splitting again without the header compiles and renders black: fail at build time.
+#if (defined(__linux__) || defined(_WIN32)) && !defined(vkCmdDraw)
+#error "runtime/nvn/vulkan/post.c must include vkq.h after vk.h: its recording has to go through the ordered worker"
+#endif
 #include "temporal.h"
 #include "../renderer.h"
 #include "../../settings.h"
