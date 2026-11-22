@@ -150,7 +150,12 @@ static GuestFn dispatch_slow(Cpu *c) {
         }
     }
     for (int i = 0; i < override_count; i++)
-        if (overrides[i].addr == pc) return overrides[i].fn;
+        if (overrides[i].addr == pc) {  // [XCDE] cache overridden functions in dcache too
+            unsigned h = (unsigned)(pc >> 2) & (DCACHE - 1);
+            dcache[h].addr = pc;
+            dcache[h].fn = overrides[i].fn;
+            return overrides[i].fn;
+        }
     GuestFn f = dispatch_lookup(pc);
     if (!f) {
         uint64_t off;
