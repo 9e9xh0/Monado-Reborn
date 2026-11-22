@@ -41,6 +41,13 @@ static PFN_vkGetInstanceProcAddr p_proxyInstanceProcAddr;
 static PFun_slShutdown *p_slShutdown;
 extern "C" const char *dlss_status(void) { return dlss_note; }
 static void dlss_note_set(const char *text) { snprintf(dlss_note, sizeof dlss_note, "%s", text); DLOG("[dlss] %s\n", text); }
+// [XCDE] GitHub #216: NOT registered with atexit (see the note at the sl_initialized assignment in dlss_init_early).
+// atexit handlers run in reverse order of registration, and DLSS initialises after the window handler in device.c, so
+// an atexit shutdown ran BEFORE the renderer's quick exit: slShutdown unloaded the Streamline plugins while the render
+// thread was still inside dlss_evaluate, whose next Streamline call jumped into the unloaded plugin (the report's
+// 0xc0000005 at an address inside no loaded module). The window close path ends the process through quick_exit_handler
+// and plat_terminate(), which skips the DLL teardown, so the SDK can stay loaded. Kept for a controlled teardown once
+// every renderer thread has been stopped.
 static void dlss_shutdown(void) {
     if (sl_initialized && p_slShutdown) { if (sl_device) vkDeviceWaitIdle(sl_device); p_slShutdown(); }
     sl_initialized = sl_ok = dlss_ok = sl_surface_ready = false;
@@ -122,7 +129,7 @@ extern "C" bool dlss_init_early(void) {
     pref.renderAPI = sl::RenderAPI::eVulkan;
     sl::Result r = p_slInit(pref, sl::kSDKVersion);
     if (r != sl::Result::eOk) { snprintf(dlss_note, sizeof dlss_note, "Streamline no pudo iniciarse (SDK %d)", (int)r); DLOG("[dlss] %s\n", dlss_note); return false; }
-    sl_initialized = true; atexit(dlss_shutdown);
+    sl_initialized = true;  // [XCDE] GitHub #216: no atexit(dlss_shutdown) here (the note at dlss_shutdown has the reason)
     r = p_slGetFeatureRequirements(sl::kFeatureDLSS, reqs);
     if (r != sl::Result::eOk) { snprintf(dlss_note, sizeof dlss_note, "No se pudo cargar el plugin DLSS (SDK %d)", (int)r); DLOG("[dlss] %s\n", dlss_note); return false; }
     sl_ok = true;
@@ -424,6 +431,9 @@ static decltype(&ngx_linux_shutdown) p_ngx_shutdown;
 extern "C" const char *dlss_status(void) { return dlss_note; }
 static void dlss_note_set(const char *text) { snprintf(dlss_note, sizeof dlss_note, "%s", text); rt_logf("[dlss] %s\n", text); }
 
+// [XCDE] GitHub #216: NOT registered with atexit, for the reason next to the Windows dlss_shutdown: NGX would be
+// released and the component dlclosed while a render thread could still be inside an evaluation. The exit path ends the
+// process through quick_exit_handler and plat_terminate() instead, so the component can stay loaded.
 static void dlss_shutdown_linux(void) {
     if (p_ngx_shutdown) {
         if (ngx_device) vkDeviceWaitIdle(ngx_device);
@@ -583,8 +593,7 @@ extern "C" bool dlss_init_early(void) {
                                          : "No se pudo iniciar NVIDIA NGX");
         return false;
     }
-    ngx_prepared = true;
-    atexit(dlss_shutdown_linux);
+    ngx_prepared = true;  // [XCDE] GitHub #216: no atexit(dlss_shutdown_linux) here (the note at the function has the reason)
     dlss_note_set(g_settings.ui_lang ? "NVIDIA NGX runtime loaded; checking RTX GPU/driver"
                                      : "Runtime NVIDIA NGX cargado; comprobando GPU/controlador RTX");
     return true;

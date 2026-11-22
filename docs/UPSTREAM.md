@@ -165,3 +165,17 @@ Rather than retire the preset, the private block is now enlarged with generous h
 The 3x preset still needs in-game verification at the Gaur Plains spot that produced #171.
 
 Diagnostics and reporter context: [summary.md](evidence/2026-11-10-vertex-corruption/summary.md).
+
+## 2026-11-23 — GitHub #216: the DLSS/NGX SDKs are not unloaded at exit
+
+- `runtime/nvn/vulkan/dlss.cpp`: `dlss_shutdown` (Windows Streamline) and `dlss_shutdown_linux` (NGX component) stay,
+  but are no longer registered with `atexit`. Process exit runs those handlers in reverse order of registration, so the
+  shutdown ran before `quick_exit_handler` in `device.c` (registered first) and released the plugins while a render
+  thread was still inside `dlss_evaluate`; the next Streamline call executed unloaded code (the `0xc0000005` of the
+  #216 report, identical in both sessions). The window-close path ends the process through `plat_terminate()` without
+  the DLL teardown, so the SDKs can stay loaded.
+- `runtime/nvn/vulkan/device.c`: the note on `quick_exit_handler` records the invariant (no exit handler may unload a
+  vendor SDK; the hard exit is what makes leaving them loaded safe).
+- `tests/unit/test_vk_source_contracts.py`: source contract pinning the three facts.
+
+Details and the reporter's log evidence: [CHANGELOG](dev/CHANGELOG.md).

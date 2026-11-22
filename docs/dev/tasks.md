@@ -1661,3 +1661,27 @@ Detalle: `docs/PERFORMANCE_UI.md`. Evidencia: `docs/evidence/2026-11-04-performa
   the horizontal targets are left native, and the look offset is kept (1.664 clamped to 0–10). View-matrix probe with
   FSR 3: the camera's world Y rose 23.99 → 28.55 while the leader went 22.99 → 27.91 (camera stays above the ground
   target). Covered by `test_settings_roundtrip.c`; in-game verified with `XCDE_CAM_TRACE=1`.
+
+## Crash on exit with DLSS — 2026-11-23 (GitHub #216)
+
+- [x] T-EXIT-DLSS **The process faulted on every window close with DLSS on.** `dlss_init_early()` registered
+  `atexit(dlss_shutdown)` after `device.c` had registered `quick_exit_handler`, and `atexit` runs in reverse order, so
+  `slShutdown()` unloaded the Streamline plugins while a render thread was still inside `dlss_evaluate`: `0xc0000005`
+  at an address in no loaded module, the same one in both sessions of the #216 report (it was not "after the battle").
+  The Linux NGX path had the same registration and the same `dlclose`. Fix: no exit handler unloads the SDKs; the
+  window-close path ends the process through `quick_exit_handler` + `plat_terminate()` (no DLL teardown). Test:
+  `tests/unit/test_vk_source_contracts.py` (`test_vendor_upscaler_sdks_are_not_unloaded_by_an_exit_handler`); the
+  runtime-only build compiles both edited units. Windows in-game verification pending (exit 5–10 times, `build/crash/`
+  must stay empty). Triage of both symptoms: [summary.md](../evidence/2026-11-23-issue-216/summary.md);
+  detail: [CHANGELOG.md](CHANGELOG.md).
+- [ ] T-EXIT-DLSS-2 **Streamline integration health** (same report, Windows-only): `presentCommon()` never observed,
+  `sl::Resource::desc` (mandatory on Vulkan) never set, the R8 reactive mask tagged as
+  `kBufferTypeBiasCurrentColorHint`; 425,692 `isFormatSupported` errors + 64 `getResourceSize` per 10-minute session
+  (64 MB of log). Fix candidates: fill `desc` from a `VkImageCreateInfo`, tag the mask as
+  `kBufferTypeReactiveMaskHint`, wire the backbuffer tag so Streamline's common plugin sees the present. Needs a
+  Windows run to verify (the errors must go to 0).
+- [ ] T-216-FX **Monado ether/particles missing in issue #216.** The reporter's follow-up runs with FSR 3.1 and
+  with the bilinear upscaler show the same missing layer and no crash on exit, so the present path (DLSS,
+  FSR 3, frame generation, jitter/HUD snapshot) is ruled out and the visual defect is in the game's own draws.
+  Next A/Bs: `occlusion = off`, a 16:9 window (ultrawide `uvb()`), `XCDE_XFB_SHADOW=0`/`XCDE_STORE_SHADOW=0`.
+  A local repro needs the reporter's save slot 0 (`bfsgame*.sav`, 1.4 MB). Triage: [summary.md](../evidence/2026-11-23-issue-216/summary.md).
