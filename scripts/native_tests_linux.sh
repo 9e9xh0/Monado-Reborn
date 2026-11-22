@@ -57,10 +57,11 @@ else
   echo "=== test_translate_cfg: SKIPPED (shaderc headers missing) ==="
 fi
 
-if echo '#include <vk_mem_alloc.h>' | "$CC" $INC -x c -E - >/dev/null 2>&1; then
-  run_test test_texture_index -std=gnu11 -w -ffunction-sections -fdata-sections -Wl,--gc-sections tests/native/test_texture_index.c
+if echo '#include <vk_mem_alloc.h>' | "$CC" $INC -x c -E - >/dev/null 2>&1 && pkg-config --exists sdl3 2>/dev/null; then
+  SDL_CFLAGS="$(pkg-config --cflags sdl3)"
+  run_test test_texture_index -std=gnu11 -w $SDL_CFLAGS -ffunction-sections -fdata-sections -Wl,--gc-sections tests/native/test_texture_index.c
 else
-  echo "=== test_texture_index: SKIPPED (vk_mem_alloc.h missing; set VMA_INCLUDE_DIR) ==="
+  echo "=== test_texture_index: SKIPPED (vk_mem_alloc.h or sdl3 missing) ==="
 fi
 
 if pkg-config --exists sdl3 2>/dev/null; then
