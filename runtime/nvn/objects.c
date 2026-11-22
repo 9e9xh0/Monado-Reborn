@@ -704,7 +704,8 @@ static const uint8_t *code_snapshot(uint64_t code, uint32_t const_offset) {
             memcpy(r, (const void *)(uintptr_t)code, len);
             snap_tab[i].h = h; snap_tab[i].len = len; snap_tab[i].p = r;
             snap_bytes += len;
-            if ((++snap_n & (snap_n - 1)) == 0) LOG("[shader] %llu shader blobs copied at registration (%.1f MB)\n", (unsigned long long)snap_n, snap_bytes / 1048576.0);
+            snap_n++;
+            if ((snap_n & (snap_n - 1)) == 0) LOG("[shader] %llu shader blobs copied at registration (%.1f MB)\n", (unsigned long long)snap_n, snap_bytes / 1048576.0);
             break;
         }
     }

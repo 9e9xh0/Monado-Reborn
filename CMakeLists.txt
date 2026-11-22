@@ -70,10 +70,10 @@ set(OPT -${MONADO_OPT} ${PGO_FLAGS})
 set(RT_UNITS loader dispatch kernel ipc fnprof log services/fs services/romfs_virtual services/am services/acc services/time
     services/hid_set services/kbicons services/misc services/audio services/hwopus hle/heaps hle/pl hle/vi hle/nvn_boot
     hle/fibers hle/input hle/party hle/bindings hle/movie hle/framepace hle/foliage_distance hle/foliage_pool hle/graphics hle/cheats_options hle/cheats_combat hle/cheats_rewards hle/cheats_enemy_health hle/title_exit hle/system_exit hle/desktop_exit_caption hle/expanded_saves hle/expanded_save_scan hle/quickstep_native hle/quickstep_picker hle/quickstep_save hle/quickstep_slot hle/quickstep_stats hle/quickstep_stats_ui hle/quickstep_ui_memory hle/collision_bvh
-    host/stubs host/settings_ini host/stubs_gfx host/main_boot diag/diag diag/sampler diag/watchdog
+    host/stubs host/settings_ini host/main_boot diag/diag diag/sampler diag/watchdog
     diag/crashdump paths)
-set(NVN_UNITS astc cmdbuf formats maxwell/translate objects output_scale smaa_data tegra texpatch vulkan/device
-    vulkan/exec vulkan/precompile vulkan/shaders vulkan/textures vulkan/temporal vulkan/vkq vulkan/fsr4)
+set(NVN_UNITS astc cmdbuf formats maxwell/translate objects output_scale smaa_data tegra vulkan/device
+    vulkan/exec vulkan/post vulkan/precompile vulkan/shaders vulkan/textures vulkan/temporal vulkan/vkq vulkan/fsr4)
 set(IMGUI third_party/imgui)
 set(UI_SOURCES ${IMGUI}/imgui.cpp ${IMGUI}/imgui_draw.cpp ${IMGUI}/imgui_tables.cpp ${IMGUI}/imgui_widgets.cpp
     ${IMGUI}/backends/imgui_impl_vulkan.cpp runtime/nvn/vulkan/imgui_glue.cpp runtime/ui/menu_vk.cpp)
@@ -129,7 +129,8 @@ if(WIN32)
   set(MSYS2_PREFIX "C:/msys64/ucrt64" CACHE PATH "MSYS2 UCRT64 prefix with SDL3, Vulkan, shaderc, FFmpeg, Opus, zlib")
   set(OUT "${ROOT}/build")
   # scripts/build_rt_gfx.sh CF, and the C++ flags of its ImGui / DLSS / VMA units
-  set(RT_C_FLAGS ${OPT} ${MARCH} -fno-strict-aliasing -fvisibility=hidden -w)
+  set(RT_WARN_FLAGS -Wall -Wextra -Wno-unused-parameter -Wno-missing-field-initializers -Wno-sign-compare -Wno-format -Wno-unused-function)
+  set(RT_C_FLAGS ${OPT} ${MARCH} -fno-strict-aliasing -fvisibility=hidden ${RT_WARN_FLAGS})
   set(RT_C_INCLUDES runtime runtime/nvn third_party "${MSYS2_PREFIX}/include")
   set(CXX_FLAGS -std=c++17 -O1 ${MARCH} -fvisibility=hidden -w "SHELL:-idirafter \"${MSYS2_PREFIX}/include\"")
   # scripts/build_boot.sh CF (the game code)
@@ -141,6 +142,9 @@ if(WIN32)
   target_compile_definitions(monado_rt PRIVATE "GAMELIB_ID=\"${GAMELIB_ID}\"")
   set_source_files_properties(runtime/host/main_boot.c PROPERTIES COMPILE_DEFINITIONS XCDE_GFX)
   set_source_files_properties(runtime/nvn/smaa_data.c PROPERTIES INCLUDE_DIRECTORIES "${GEN_INC};${ROOT}/third_party/smaa/Textures")
+  # [XCDE] T-RUNTIME-O2: hot Vulkan/collision units get -O2 on Windows as well as Linux
+  set_source_files_properties(runtime/nvn/vulkan/exec.c runtime/nvn/vulkan/textures.c runtime/hle/collision_bvh.c
+                              PROPERTIES COMPILE_OPTIONS -O2)
 
   add_library(monado_ui OBJECT ${UI_SOURCES})
   target_compile_options(monado_ui PRIVATE ${CXX_FLAGS})
@@ -180,7 +184,8 @@ if(WIN32)
 
   # tools/launcher/build.sh
   set(LAUNCHER_NAME xcde_launcher)
-  set(LAUNCHER_FLAGS -O2 ${MARCH} -std=c++17 -w "SHELL:-idirafter \"${MSYS2_PREFIX}/include\"")
+  set(LAUNCHER_FLAGS -O2 ${MARCH} -std=c++17 "SHELL:-idirafter \"${MSYS2_PREFIX}/include\"")
+  set(LAUNCHER_WARN_FLAGS -Wall -Wextra -Wno-unused-parameter -Wno-missing-field-initializers -Wno-sign-compare -Wno-format-security)
   set(LAUNCHER_LIBS "${MSYS2_PREFIX}/lib/libSDL3.dll.a" "${MSYS2_PREFIX}/lib/libvulkan-1.dll.a")
   set(LAUNCHER_LINK_OPTIONS ${MARCH} -Wl,--subsystem,windows -static-libstdc++)
 
@@ -206,10 +211,12 @@ else()
   pkg_check_modules(LAUNCHER_DEPS REQUIRED IMPORTED_TARGET sdl3 vulkan)
   set(VMA_INCLUDE_DIR "$ENV{VMA_INCLUDE_DIR}" CACHE PATH "Directory with vk_mem_alloc.h, if it is not installed system-wide")
   # scripts/build_linux.sh flags (runtime and game code alike)
-  set(LINUX_FLAGS ${OPT} ${MARCH} -ffp-contract=off -fno-strict-aliasing -D_GNU_SOURCE -w)
+  set(RT_WARN_FLAGS -Wall -Wextra -Wno-unused-parameter -Wno-missing-field-initializers -Wno-sign-compare -Wno-format -Wno-unused-function)
+  set(LINUX_BASE_FLAGS ${OPT} ${MARCH} -ffp-contract=off -fno-strict-aliasing -D_GNU_SOURCE)
   if(NOT MONADO_RELEASE)  # a release runtime keeps default visibility: the game library resolves its symbols (-rdynamic)
-    list(APPEND LINUX_FLAGS -fvisibility=hidden)
+    list(APPEND LINUX_BASE_FLAGS -fvisibility=hidden)
   endif()
+  set(LINUX_FLAGS ${LINUX_BASE_FLAGS} -w)
   set(LINUX_INCLUDES runtime runtime/nvn third_party "${GEN_INC}")
   if(VMA_INCLUDE_DIR)
     list(APPEND LINUX_INCLUDES "${VMA_INCLUDE_DIR}")
@@ -217,12 +224,13 @@ else()
   set(GAME_C_FLAGS ${LINUX_FLAGS})
 
   add_library(monado_rt OBJECT ${RT_SOURCES})
-  target_compile_options(monado_rt PRIVATE ${LINUX_FLAGS})
+  target_compile_options(monado_rt PRIVATE ${LINUX_BASE_FLAGS} ${RT_WARN_FLAGS})
   target_include_directories(monado_rt PRIVATE ${LINUX_INCLUDES} third_party/smaa/Textures)
   target_compile_definitions(monado_rt PRIVATE "GAMELIB_ID=\"${GAMELIB_ID}\"" XCDE_GFX)
   target_link_libraries(monado_rt PRIVATE PkgConfig::DEPS)
-  # [XCDE] T-RUNTIME-O2: the two Vulkan units that dominate the render thread's CPU time
-  set_source_files_properties(runtime/nvn/vulkan/exec.c runtime/nvn/vulkan/textures.c PROPERTIES COMPILE_OPTIONS -O2)
+  # [XCDE] T-RUNTIME-O2: the two Vulkan units that dominate the render thread's CPU time + native collision BVH
+  set_source_files_properties(runtime/nvn/vulkan/exec.c runtime/nvn/vulkan/textures.c runtime/hle/collision_bvh.c
+                              PROPERTIES COMPILE_OPTIONS -O2)
 
   add_library(monado_ui OBJECT ${UI_SOURCES} runtime/nvn/vulkan/dlss.cpp runtime/nvn/vulkan/vma.cpp)
   target_compile_options(monado_ui PRIVATE ${LINUX_FLAGS} -std=c++17)
@@ -239,7 +247,8 @@ else()
 
   # tools/launcher/build_linux.sh
   set(LAUNCHER_NAME monado-launcher)
-  set(LAUNCHER_FLAGS -O2 ${MARCH} -std=c++17 -D_GNU_SOURCE -w)
+  set(LAUNCHER_FLAGS -O2 ${MARCH} -std=c++17 -D_GNU_SOURCE)
+  set(LAUNCHER_WARN_FLAGS -Wall -Wextra -Wno-unused-parameter -Wno-missing-field-initializers -Wno-sign-compare -Wno-format-security)
   set(LAUNCHER_LIBS PkgConfig::LAUNCHER_DEPS ${CMAKE_DL_LIBS})
   set(LAUNCHER_LINK_OPTIONS)
 
@@ -307,6 +316,10 @@ endif()
 add_executable(monado_launcher ${LAUNCHER_SOURCES})
 set_target_properties(monado_launcher PROPERTIES OUTPUT_NAME ${LAUNCHER_NAME} RUNTIME_OUTPUT_DIRECTORY "${OUT}")
 target_compile_options(monado_launcher PRIVATE ${LAUNCHER_FLAGS})
+set_source_files_properties(${IMGUI}/imgui.cpp ${IMGUI}/imgui_draw.cpp ${IMGUI}/imgui_tables.cpp ${IMGUI}/imgui_widgets.cpp
+                            ${IMGUI}/backends/imgui_impl_sdl3.cpp ${IMGUI}/backends/imgui_impl_sdlrenderer3.cpp
+                            PROPERTIES COMPILE_OPTIONS -w)
+set_source_files_properties(tools/launcher/launcher.cpp PROPERTIES COMPILE_OPTIONS "${LAUNCHER_WARN_FLAGS}")
 target_include_directories(monado_launcher PRIVATE ${IMGUI} ${IMGUI}/backends)
 target_link_libraries(monado_launcher PRIVATE ${LAUNCHER_LIBS})
 target_link_options(monado_launcher PRIVATE ${LAUNCHER_LINK_OPTIONS})

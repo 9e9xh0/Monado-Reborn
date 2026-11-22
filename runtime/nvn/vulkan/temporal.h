@@ -18,6 +18,7 @@ float tmp_lod_bias(void);
 bool tmp_lod_bias_forced(void);
 const char *tmp_overlay_info(uint32_t *render_w, uint32_t *render_h, uint32_t *out_w, uint32_t *out_h);  // GitHub #39: upscaler in use + its input size, or NULL
 void tmp_jitter(float j[2]);
+void vk_tmp_frame_state(const TmpCamera **cam, uint64_t *frame, TexBackend **depth, const float **jit, bool *dm1);
 void tmp_reset_history(void);
 void tmp_hud_snapshot(VkCommandBuffer cb, TexBackend *b);
 bool tmp_hud_started(void);

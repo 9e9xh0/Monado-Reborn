@@ -19,7 +19,6 @@
 void vk_watch(VkImage dst, const char *site);  // [XCDE] debugging: log writes to a watched image
 #include "../astc.h"
 #include "../renderer.h"
-#include "../texpatch.h"
 #include "../../env_cache.h"  // (last: cached getenv)
 
 // ================================================================== formats
@@ -299,13 +298,7 @@ bool renderer_texture_first_write(NvnTexture *t) {
 
 static uint32_t g_level_gen = 1;
 void vk_level_change_check(void) {
-    extern const char *game_level_name(void);
-    static char last[64];
-    const char *lv = game_level_name();
-    if (strncmp(lv, last, sizeof last - 1) != 0) {
-        strlcpy(last, lv, sizeof last);
-        if (!strncmp(lv, "TelephoneBox", 12) || getenv("LARECOMP_CLEAR_ALL_LEVELS")) g_level_gen++;
-    }
+    if (getenv("LARECOMP_CLEAR_ALL_LEVELS")) g_level_gen++;
 }
 
 bool renderer_texture_frame_fresh(NvnTexture *t) {
@@ -933,20 +926,20 @@ static bool dz_level(VkCommandBuffer cb, const uint8_t *src, const LevelLayout *
     return true;
 }
 
-static uint64_t up_tp_ns, up_wc_ns, up_hash_ns, up_cmd_ns, up_tr_ns, up_cp_ns;  // (XCDE_PROF_UPLOAD) parts of the last check
+static uint64_t up_wc_ns, up_hash_ns, up_cmd_ns, up_tr_ns, up_cp_ns;  // (XCDE_PROF_UPLOAD) parts of the last check
 // [XCDE] perf: XCDE_PROF_UPLOAD=1 logs every texture check that takes over 2 ms (what made scene changes hitch)
 static void upload_texture(NvnTexture *t, TexBackend *b) {
     static int on = -1;
     if (on < 0) on = getenv("XCDE_PROF_UPLOAD") != NULL;
     if (!on) { upload_texture_(t, b); return; }
     uint64_t t0 = SDL_GetTicksNS(), h0 = prof_tex_full_bytes;
-    up_tp_ns = up_wc_ns = up_hash_ns = up_cmd_ns = up_tr_ns = up_cp_ns = 0;
+    up_wc_ns = up_hash_ns = up_cmd_ns = up_tr_ns = up_cp_ns = 0;
     upload_texture_(t, b);
     uint64_t dt = SDL_GetTicksNS() - t0;
     if (dt > 2000000)
-        LOG("[upload] %.1f ms %ux%u fmt %#x lv %u layers %u hashed %.1f MB astc %d | texpatch %.1f watch %.1f hash %.1f cmd %.1f transient %.1f copy %.1f ms flags %#x stride %llu\n", dt / 1e6, t->width,
+        LOG("[upload] %.1f ms %ux%u fmt %#x lv %u layers %u hashed %.1f MB astc %d | watch %.1f hash %.1f cmd %.1f transient %.1f copy %.1f ms flags %#x stride %llu\n", dt / 1e6, t->width,
             t->height, t->format, t->layout.levels, t->layout.layers, (prof_tex_full_bytes - h0) / 1048576.0, b->astc_bw != 0,
-            up_tp_ns / 1e6, up_wc_ns / 1e6, up_hash_ns / 1e6, up_cmd_ns / 1e6, up_tr_ns / 1e6, up_cp_ns / 1e6, (unsigned)t->flags, (unsigned long long)t->stride);
+            up_wc_ns / 1e6, up_hash_ns / 1e6, up_cmd_ns / 1e6, up_tr_ns / 1e6, up_cp_ns / 1e6, (unsigned)t->flags, (unsigned long long)t->stride);
 }
 static void upload_texture_(NvnTexture *t, TexBackend *b) {
     if (b->gpu_owned) vk_feedback_write_boundary();
@@ -973,8 +966,6 @@ static void upload_texture_(NvnTexture *t, TexBackend *b) {
     if (periodic_frames < 0) { const char *e = getenv("XCDE_TEX_PERIODIC"); periodic_frames = e ? atoll(e) : 600; }
     bool periodic = frame - b->full_frame >= 120 && full_hash_budget >= total;  // (safety net: a full hash now and then)
     if (!full && periodic) { full = true; full_hash_budget -= total; }
-    { uint64_t q = SDL_GetTicksNS(); if (!b->tp) b->tp = texpatch_identify(t) + 1; up_tp_ns += SDL_GetTicksNS() - q; }  // (button prompts / Hero Mode icon: re-uploaded when their look changes)
-    bool restyle = b->tp > 0 && b->uploaded && b->tp_gen != texpatch_generation();
     // The OS's page write tracking (exec.c vk_pages_changed, shared with the vertex cache): texture memory the CPU
     // hasn't written since the last check is not hashed at all (dynamic textures were fully hashed every frame,
     // ~2.4 MB a frame in the overworld). The periodic full hash stays as a safety net. LARECOMP_VK_TEX_WATCH=0: off.
@@ -988,14 +979,14 @@ static void upload_texture_(NvnTexture *t, TexBackend *b) {
         up_wc_ns += SDL_GetTicksNS() - q;
         if (ch >= 0) {
             b->wgen = now;
-            if (!ch && b->uploaded && !restyle) {
+            if (!ch && b->uploaded) {
                 bool watch_periodic = periodic_frames > 0 && (int64_t)(frame - b->full_frame) >= periodic_frames && full_hash_budget >= total;
                 if (!watch_periodic) { prof_tex_watch_skips++; return; }
                 if (b->dynamic) full_hash_budget -= total;  // (the others took theirs above)
             }
         }
     }
-    if (!full && !restyle) {
+    if (!full) {
         prof_tex_samples++;
         uint64_t sh = fnv_sample(mem, total);
         if (sh == b->sample_hash) return;
@@ -1006,7 +997,7 @@ static void upload_texture_(NvnTexture *t, TexBackend *b) {
     up_hash_ns += SDL_GetTicksNS() - hq;
     b->full_frame = frame;
     b->sample_hash = fnv_sample(mem, total);
-    if (b->uploaded && h == b->data_hash && !restyle) return;
+    if (b->uploaded && h == b->data_hash) return;
     // [XCDE] glitch watch (XCDE_GLITCH_WATCH=1): a texture whose contents change soon after its first upload was most
     // likely uploaded while the game was still loading it - drawn wrong (black / garbage) until this re-upload
     static int gw = -1;
@@ -1024,7 +1015,6 @@ static void upload_texture_(NvnTexture *t, TexBackend *b) {
         if (gw) for (uint64_t i = 0; i < total; i += 8) if (*(const uint64_t *)(mem + i)) { b->first_up_zero = false; break; }
     }
     if (b->uploaded && h != b->data_hash) b->dynamic = true;
-    if (b->tp > 0) b->tp_gen = texpatch_generation();
     b->data_hash = h;
     b->uploaded = true;
     if (b->format != mf.vf && !b->astc_bw) return;  // unsupported format: nothing sensible to copy
@@ -1044,7 +1034,6 @@ static void upload_texture_(NvnTexture *t, TexBackend *b) {
                 uint8_t *blocks = malloc((uint64_t)l.wb * l.hb * 16);
                 if (linear) for (uint32_t y = 0; y < l.hb; y++) memcpy(blocks + (uint64_t)y * l.wb * 16, src + (uint64_t)y * t->stride, l.wb * 16);
                 else tegra_deswizzle(src, blocks, l.wb, l.hb, 1, 16, l.block_height_log2, l.block_depth_log2);
-                if (b->tp > 0 && layer == 0) texpatch_apply(b->tp - 1, lv, blocks, l.w, l.h, l.wb * 16);
                 VkSpan s = vk_transient((uint64_t)l.w * l.h * 4, 16);
                 astc_decode_ldr(blocks, l.w, l.h, b->astc_bw, b->astc_bh, b->astc_srgb, s.ptr);
                 free(blocks);
@@ -1064,7 +1053,7 @@ static void upload_texture_(NvnTexture *t, TexBackend *b) {
             static int cpu_only = -1;  // (the debug checks below read the CPU result)
             if (cpu_only < 0) cpu_only = getenv("XCDE_CHECK_TEX") || getenv("XCDE_TRACE_3D");
             VkSpan s;
-            bool on_gpu = !linear && !expand && b->tp <= 0 && !cpu_only && dz_level(cb, src, &l, fi->bpb, &s);
+            bool on_gpu = !linear && !expand && !cpu_only && dz_level(cb, src, &l, fi->bpb, &s);
             if (!on_gpu) s = vk_transient((uint64_t)out_row * l.hb * l.d, 16);
             up_tr_ns += SDL_GetTicksNS() - tq;
             tq = SDL_GetTicksNS();
@@ -1135,7 +1124,6 @@ static void upload_texture_(NvnTexture *t, TexBackend *b) {
             if (getenv("XCDE_PROF_UPLOAD") && SDL_GetTicksNS() - tq > 2000000)
                 LOG("[upload]   level %u layer %u: %ux%ux%u blocks, bpb %u, bh %u bd %u, linear %d, base %d, %ux%u image\n", lv, layer,
                     l.wb, l.hb, l.d, fi->bpb, l.block_height_log2, l.block_depth_log2, (int)linear, (int)b->base_type, b->width, b->height);
-            if (b->tp > 0 && layer == 0) texpatch_apply(b->tp - 1, lv, lin, l.w, l.h, row);
             if (expand) {  // RGB8 -> RGBA8
                 uint8_t *o = s.ptr;
                 uint64_t n = (uint64_t)l.wb * l.hb * l.d;

@@ -98,6 +98,9 @@ VkSpan vk_transient(uint64_t size, uint64_t align);
 VkSpan vk_transient_copy(const void *data, uint64_t size, uint64_t align);
 VkSpan vk_readback(uint64_t size);  // host-cached GPU -> CPU staging (read right after the copy completes)
 VkDescriptorSet vk_alloc_set(VkDescriptorSetLayout layout);
+void vk_bind_graphics_sets(VkCommandBuffer cb, VkPipelineBindPoint point, VkPipelineLayout layout,
+                           uint32_t first, uint32_t count, const VkDescriptorSet *sets,
+                           uint32_t dynamic_count, const uint32_t *offsets);
 
 // ---- textures (textures.c)
 typedef struct TexBackend {
@@ -122,8 +125,6 @@ typedef struct TexBackend {
     uint32_t pending_w, pending_h, pending_stride;
     uint8_t astc_bw, astc_bh;  // ASTC without GPU support: decoded to RGBA8 on upload (runtime/nvn/astc.c)
     bool astc_srgb;
-    int tp;              // runtime/nvn/texpatch.c: 0 not checked yet, -1 none, else known UI texture + 1
-    uint32_t tp_gen;     // texpatch_generation() it was last uploaded with
     int reg;  // slot in textures.c's live list + 1 (a reboot destroys them all)
     struct TexBackend *address_next; // T260: renderer-thread address index, same sharing rules as the live list
     unsigned address_bucket;
