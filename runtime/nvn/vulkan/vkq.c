@@ -527,16 +527,17 @@ static void *q_main(void *arg) {
             for (int i = 0; i < q_spin && atomic_load(&q_w) == r; i++) q_pause();
             if (atomic_load(&q_w) == r) {
                 pthread_mutex_lock(&q_mu);
-                while (atomic_load(&q_w) == r) {
-                    // q_wake claims a signal by clearing q_sleeping. A wake
-                    // can find the queue empty (or be spurious), so re-arm
-                    // before EVERY wait, not only the first one. Otherwise
-                    // queued work can be left behind a sleeping worker whose
-                    // flag is zero, and vkq_drain waits forever.
-                    atomic_store(&q_sleeping, 1);
+                for (;;) {
+                    // Dekker with vkq_drain: publish q_sleeping=1 with seq_cst
+                    // BEFORE checking q_w, and re-arm on every iteration (since
+                    // q_wake clears q_sleeping on signal). Setting q_sleeping=1
+                    // after checking q_w allowed vkq_drain to see q_sleeping==0
+                    // and sleep on q_dcv right before q_main slept on q_cv.
+                    atomic_store_explicit(&q_sleeping, 1, memory_order_seq_cst);
+                    if (atomic_load_explicit(&q_w, memory_order_seq_cst) != r) break;
                     pthread_cond_wait(&q_cv, &q_mu);
                 }
-                atomic_store(&q_sleeping, 0);
+                atomic_store_explicit(&q_sleeping, 0, memory_order_release);
                 pthread_mutex_unlock(&q_mu);
             }
             continue;
