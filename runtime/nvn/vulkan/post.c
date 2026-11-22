@@ -267,7 +267,7 @@ static VkImageView post_process(VkCommandBuffer cb, TexBackend *b, double ow_d, 
             // [XCDE] GitHub #103: b.x = XCDE_TMP_HUD_OLD (tmp_hud.frag: the composite before #103)
             static int hud_old = -1;
             if (hud_old < 0) { const char *e = getenv("XCDE_TMP_HUD_OLD"); hud_old = e && *e && *e != '0'; }
-            float ph[8] = {1.0f / ow, 1.0f / oh, 0, 0, (float)hud_old, fuse_srgb ? 1.0f : 0.0f};
+            float ph[8] = {1.0f / ow, 1.0f / oh, 1.0f / b->width, 1.0f / b->height, (float)hud_old, fuse_srgb ? 1.0f : 0.0f};
             VkImageView hi[3] = {t, v, scene};
             post_pass(cb, "tmp_hud.frag", hi, 3, hud, ph, false);
             vk_full_barrier(cb);

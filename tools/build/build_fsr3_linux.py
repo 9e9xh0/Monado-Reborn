@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Build Monado's native FSR 3.1.4 Vulkan component from pinned AMD SDK sources.
 Only Monado's LDR, render-resolution unjittered motion, normal-depth permutations
-are built. FP32 by default; FP16 variants of the two pyramid passes on request
-(XCDE_FSR3_FP16=1, GPU with shaderFloat16) and wave64 on request (XCDE_FSR3_WAVE64=1).
+are built. FP16 variants are enabled by default on GPUs with shaderFloat16
+(XCDE_FSR3_FP16=0 forces FP32); wave64 is opt-in (XCDE_FSR3_WAVE64=1).
 """
 import argparse
 import json
@@ -167,19 +167,28 @@ def main():
     # Sharpening remains a pass permutation.
     lut = 0
     lut_passes = {PASSES.index('accumulate'), 7}  # (7: accumulate + sharpen)
-    # [XCDE] T-FSR3-FP16: 16-bit variants where FSR 3.1.4 has PC half-precision
-    # code (the two SPD pyramids). Compiled with FFX_HALF=1 the other passes emit
-    # no float16 instructions (their half paths are Xbox-only) and RCAS is never
-    # FP16 off Xbox, so they keep the FP32 blobs. Picked when the SDK requests
-    # ALLOW_FP16, i.e. the GPU reports shaderFloat16 (Monado's device enables it).
-    half_passes = {PASSES.index('luma_pyramid'), PASSES.index('shading_change_pyramid')}
-    variants = ([(p, n, 0, 0) for p, n in enumerate(PASSES)] + [(p, PASSES[p], 1, 0) for p in sorted(half_passes)] +
-                [(p, PASSES[p], 0, 1) for p in sorted(lut_passes)])
+    # [XCDE] T-FSR3-FP16: 16-bit variants matching AMD SDK ffx_fsr3upscaler_shaderblobs.cpp:
+    # shading_change, prepare_reactivity, accumulate(+sharpen), autogen_reactive.
+    # luma_pyramid / shading_change_pyramid are intentionally FP32-only (their SDK 1.1.4
+    # SpdLoadSourceImageH / SpdStoreH callbacks are empty stubs) and RCAS is FP32 off Xbox.
+    # FFX_FSR3UPSCALER_OPTION_REPROJECT_SAMPLERS_USE_DATA_HALF=1 (from SDK CMakeCompileFSR3UpscalerShaders.txt)
+    # activates the 16-bit bicubic history reprojection path in accumulate.
+    half_passes = {PASSES.index('shading_change'), PASSES.index('prepare_reactivity'),
+                   PASSES.index('accumulate'), 7, PASSES.index('autogen_reactive')}
+    variants = ([(p, n, 0, 0) for p, n in enumerate(PASSES)] +
+                [(p, PASSES[p], 1, 0) for p in sorted(half_passes)] +
+                [(p, PASSES[p], 0, 1) for p in sorted(lut_passes)] +
+                [(p, PASSES[p], 1, 1) for p in sorted(lut_passes & half_passes)])
     for pass_id, name, half, use_lut in variants:
         sharp = int(pass_id == 7)
         tag = f'p{pass_id}_{use_lut}' + ('h' if half else '')
         spv = out/f'{tag}.spv'
         flags = {'FFX_GPU':1,'FFX_GLSL':1,'FFX_HALF':half,
+                 'FFX_FSR3UPSCALER_OPTION_UPSAMPLE_SAMPLERS_USE_DATA_HALF':0,
+                 'FFX_FSR3UPSCALER_OPTION_ACCUMULATE_SAMPLERS_USE_DATA_HALF':0,
+                 'FFX_FSR3UPSCALER_OPTION_REPROJECT_SAMPLERS_USE_DATA_HALF':1,
+                 'FFX_FSR3UPSCALER_OPTION_POSTPROCESSLOCKSTATUS_SAMPLERS_USE_DATA_HALF':0,
+                 'FFX_FSR3UPSCALER_OPTION_UPSAMPLE_USE_LANCZOS_TYPE':2,
                  'FFX_FSR3UPSCALER_OPTION_REPROJECT_USE_LANCZOS_TYPE':use_lut,
                  'FFX_FSR3UPSCALER_OPTION_HDR_COLOR_INPUT':0,
                  'FFX_FSR3UPSCALER_OPTION_LOW_RESOLUTION_MOTION_VECTORS':1,
@@ -209,22 +218,26 @@ def main():
                   ','.join(('&bp%d_amd' % p) if p in amd else 'nullptr' for p in range(len(PASSES)))+'};\n'
                   'const FfxShaderBlob *lut[] = {'+
                   ','.join(('&bp%d_1' if p in lut_passes else '&bp%d_0')%p for p in range(len(PASSES)))+'};\n'
+                  'const FfxShaderBlob *lut_half[] = {'+
+                  ','.join(('&bp%d_1h' if (p in lut_passes and p in half_passes) else ('&bp%d_1' if p in lut_passes else ('&bp%d_0h' if p in half_passes else '&bp%d_0')))%p for p in range(len(PASSES)))+'};\n'
                   'if (pass >= sizeof(table)/sizeof(table[0])) return FFX_ERROR_INVALID_ARGUMENT;\n'
                   '// [XCDE] T-FSR3-LUT: options bit 0 = LUT history; the SDK sets it with 32/64-lane subgroups (AMD RDNA).\n'
                   '// XCDE_FSR3_LUT=0: the analytical history everywhere (also disables AMD\'s LUT modules below).\n'
                   'static const bool use_lut = [] { const char *e = std::getenv("XCDE_FSR3_LUT"); return !(e && *e == \'0\'); }();\n'
                   'if (!use_lut) options &= ~1u;\n'
+                  '// [XCDE] T-FSR3-FP16: options bit 7 = FSR3UPSCALER_SHADER_PERMUTATION_ALLOW_FP16 (set when GPU supports shaderFloat16).\n'
+                  '// Enabled by default; XCDE_FSR3_FP16=0 forces FP32.\n'
+                  'static const bool use_fp16 = [] { const char *e = std::getenv("XCDE_FSR3_FP16"); return !(e && *e == \'0\'); }();\n'
+                  'if (!use_fp16) options &= ~128u;\n'
                   '// [XCDE] T-FSR3-AMD-SPIRV: AMD\'s modules exactly where its own host picks them: LUT (bit 0) + ALLOW_FP16\n'
                   '// (bit 7, GPU shaderFloat16); RCAS (pass 8) is FP32. They pass the stationary-detail regression with the\n'
                   '// corrected LUT (compat.h abs fix). XCDE_FSR3_AMD_SHADERS=0: our GLSL builds only.\n'
                   'static const bool use_amd = [] { const char *e = std::getenv("XCDE_FSR3_AMD_SHADERS"); return !(e && *e == \'0\'); }();\n'
                   'if (use_amd && amd[pass] && (pass == 8 ? (options & 129) == 1 : (options & 129) == 129)) {\n'
                   '  std::memcpy(out,amd[pass],sizeof(*out)); return FFX_OK; }\n'
-                  'if (options & 1) { std::memcpy(out,lut[pass],sizeof(*out)); return FFX_OK; }\n'
-                  '// [XCDE] T-FSR3-FP16: options bit 7 = FSR3UPSCALER_SHADER_PERMUTATION_ALLOW_FP16. Opt-in (XCDE_FSR3_FP16=1):\n'
-                  '// 4K Balanced timing on an RX 6900 XT showed no difference (2.43 ms either way) and FP16 changes the output.\n'
-                  'static const bool fp16 = [] { const char *e = std::getenv("XCDE_FSR3_FP16"); return e && *e == \'1\'; }();\n'
-                  'std::memcpy(out,((options & 128) && fp16 ? half : table)[pass],sizeof(*out)); return FFX_OK; }\n'
+                  'const bool is_lut = (options & 1) != 0, is_fp16 = (options & 128) != 0;\n'
+                  'const FfxShaderBlob **sel = is_lut ? (is_fp16 ? lut_half : lut) : (is_fp16 ? half : table);\n'
+                  'std::memcpy(out,sel[pass],sizeof(*out)); return FFX_OK; }\n'
                   '// [XCDE] T-FSR3-WAVE64: XCDE_FSR3_WAVE64=1 asks the Vulkan backend for 64-lane subgroups\n'
                   '// (requiredSubgroupSize, only where the GPU allows 64). AMD uses wave64 for FSR on RDNA under\n'
                   '// DX12; its Vulkan backend never requests it. Opt-in until measured; the shaders are unchanged.\n'

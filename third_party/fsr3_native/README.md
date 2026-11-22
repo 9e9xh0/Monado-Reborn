@@ -21,9 +21,12 @@ needed. Derived SDK files and shader binaries stay under ignored `build/`.
 No game content, Windows DLL, Proton, DXC or model weights are used.
 
 The build prepares only Monado's linear LDR, normal-depth, unjittered
-render-resolution motion-vector shader permutations, in FP32. The SDK's analytical Lanczos history filter is used on all GPUs; sharpening
-variants are included. The LUT history permutation was removed after a synthetic
-Native AA sequence reproduced severe stationary contrast loss. See
+render-resolution motion-vector shader permutations, with both FP32 and FP16
+variants (matching AMD's SDK 1.1.4 shader blobs: FP16 is enabled by default on
+GPUs with `shaderFloat16` via `FFX_FSR3UPSCALER_OPTION_REPROJECT_SAMPLERS_USE_DATA_HALF=1`,
+with `XCDE_FSR3_FP16=0` to force FP32). Both the LUT history filter (selected on
+32/64-lane subgroup GPUs) and the analytical Lanczos history filter are built,
+including sharpening variants. See
 `tests/native/test_fsr3_temporal.cpp` and `docs/evidence/linux-fsr3/stationary-history.md`. Shader reflection is read directly from
 glslang's SPIR-V descriptor names/types/bindings. `-Os` removes unused bindings
 before reflection; these must match the SDK's resource tables.

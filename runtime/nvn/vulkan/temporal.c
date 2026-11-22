@@ -369,10 +369,10 @@ static VkDescriptorSetLayout prep_set_layout;
 static VkPipeline prep_pipe;
 static void prep_pipeline(void) {
     if (prep_pipe) return;
-    VkDescriptorSetLayoutBinding b[4];
-    for (uint32_t i = 0; i < 4; i++)
+    VkDescriptorSetLayoutBinding b[3];
+    for (uint32_t i = 0; i < 3; i++)
         b[i] = (VkDescriptorSetLayoutBinding){i, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, NULL};
-    VkDescriptorSetLayoutCreateInfo li = {.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO, .bindingCount = 4, .pBindings = b};
+    VkDescriptorSetLayoutCreateInfo li = {.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO, .bindingCount = 3, .pBindings = b};
     VK_CHECK(vkCreateDescriptorSetLayout(g_vk.dev, &li, NULL, &prep_set_layout));
     VkPushConstantRange r = {VK_SHADER_STAGE_FRAGMENT_BIT, 0, 112};  // ([XCDE] +16: pc.c.x = linear output)
     VkPipelineLayoutCreateInfo ci = {.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO, .setLayoutCount = 1,
@@ -436,7 +436,7 @@ static bool mat_inv(const double m[16], double o[16]) {  // Gauss-Jordan
     return true;
 }
 
-static void prep(VkCommandBuffer cb, VkImageView color_view, VkImageView scene_view, VkImageView vel_view, TexBackend *depth,
+static void prep(VkCommandBuffer cb, VkImageView color_view, VkImageView vel_view, TexBackend *depth,
                  const double reproj[16], bool have_prev, const float jit[2], bool dm1, uint32_t rw, uint32_t rh) {
     prep_pipeline();
     vk_full_barrier(cb);
@@ -451,15 +451,14 @@ static void prep(VkCommandBuffer cb, VkImageView color_view, VkImageView scene_v
     static const VkComponentMapping id = {0};
     VkImageView dv = vk_image_view(depth, VK_IMAGE_VIEW_TYPE_2D, depth->format, 0, 1, 0, 1, id, VK_IMAGE_ASPECT_DEPTH_BIT);
     VkDescriptorSet ds = vk_alloc_set(prep_set_layout);
-    VkDescriptorImageInfo ii[4] = {{vk_default_sampler(false), color_view, VK_IMAGE_LAYOUT_GENERAL},
+    VkDescriptorImageInfo ii[3] = {{vk_default_sampler(false), color_view, VK_IMAGE_LAYOUT_GENERAL},
                                    {vk_default_sampler(false), dv, VK_IMAGE_LAYOUT_GENERAL},
-                                   {vk_default_sampler(false), scene_view, VK_IMAGE_LAYOUT_GENERAL},
                                    {vk_default_sampler(false), vel_view ? vel_view : color_view, VK_IMAGE_LAYOUT_GENERAL}};
-    VkWriteDescriptorSet w[4];
-    for (int i = 0; i < 4; i++)
+    VkWriteDescriptorSet w[3];
+    for (int i = 0; i < 3; i++)
         w[i] = (VkWriteDescriptorSet){.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, .dstSet = ds, .dstBinding = (uint32_t)i,
                                       .descriptorCount = 1, .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, .pImageInfo = &ii[i]};
-    vkUpdateDescriptorSets(g_vk.dev, 4, w, 0, NULL);
+    vkUpdateDescriptorSets(g_vk.dev, 3, w, 0, NULL);
     vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, prep_pipe);
     vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, prep_layout, 0, 1, &ds, 0, NULL);
     VkViewport vp = {0, 0, (float)rw, (float)rh, 0, 1};
@@ -744,9 +743,9 @@ VkImageView tmp_upscale(VkCommandBuffer cb, TexBackend *color, VkImageView color
     }
     vk_gp_mark(cb, "post: tmp_prep %ux%u", rw, rh);
     if (!getenv("XCDE_TMP_VEL_FIT")) {
-        prep(cb, snap ? img[4].v : color_view, snap ? img[4].v : color_view, vel_view, depth, reproj, have_prev, jitter, dm1, rw, rh);
+        prep(cb, snap ? img[4].v : color_view, vel_view, depth, reproj, have_prev, jitter, dm1, rw, rh);
     } else {
-        prep(cb, snap ? img[4].v : color_view, snap ? img[4].v : color_view, VK_NULL_HANDLE, depth, reproj, have_prev, jitter, dm1, rw, rh);
+        prep(cb, snap ? img[4].v : color_view, VK_NULL_HANDLE, depth, reproj, have_prev, jitter, dm1, rw, rh);
     }
     vel_fit(cb, rw, rh);  // [XCDE] T215 (research)
     mv_shot(cb, rw, rh, reproj, have_prev);  // [XCDE] T228 (research)
