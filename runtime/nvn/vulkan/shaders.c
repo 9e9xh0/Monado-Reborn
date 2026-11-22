@@ -525,20 +525,25 @@ static const char *builtin_src(const char *name, int *stage) {
                "  vec3 up = texture(upTex, uv).rgb;\n"
                "  if (pc.b.y != 0.0) up = lin2srgb(up);\n"
                "  vec3 fin = texture(finalTex, uv).rgb;\n"
-               "  vec3 d = fin - texture(sceneTex, uv).rgb;\n"
+               "  vec3 s0 = texture(sceneTex, uv).rgb;\n"
+               "  vec3 d = fin - s0;\n"
                "  float m = max(abs(d.r), max(abs(d.g), abs(d.b)));\n"
                "  if (pc.b.x == 0.0 && m <= 1.5 / 255.0) { o = vec4(up, 1.0); return; }\n"
                // [XCDE] T220: the weight from the HUD change around the pixel (one render texel each way): the
                // anti-aliased edge of a letter took the upscaled scene under it, and FSR 3's sharp grass showed
                // through text edges (frayed letters on the title screen); DLSS's smoother output hid it
-               "  vec2 rt = 1.0 / vec2(textureSize(finalTex, 0));\n"
-               "  float mm = m;\n"
-               "  for (int i = 0; i < 4; i++) {\n"
-               "    vec2 q = uv + rt * vec2(i == 0 ? 1.0 : i == 1 ? -1.0 : 0.0, i == 2 ? 1.0 : i == 3 ? -1.0 : 0.0);\n"
-               "    vec3 e = abs(texture(finalTex, q).rgb - texture(sceneTex, q).rgb);\n"
-               "    mm = max(mm, max(e.r, max(e.g, e.b)));\n"
+               "  vec2 rt = pc.a.zw;\n"
+               "  if (pc.b.x != 0.0) {\n"
+               "    float mm = m;\n"
+               "    for (int i = 0; i < 4; i++) {\n"
+               "      vec2 q = uv + rt * vec2(i == 0 ? 1.0 : i == 1 ? -1.0 : 0.0, i == 2 ? 1.0 : i == 3 ? -1.0 : 0.0);\n"
+               "      vec3 e = abs(texture(finalTex, q).rgb - texture(sceneTex, q).rgb);\n"
+               "      mm = max(mm, max(e.r, max(e.g, e.b)));\n"
+               "    }\n"
+               "    float w = smoothstep(1.5 / 255.0, 0.03, mm);\n"
+               "    o = vec4(mm > 1.5 / 255.0 ? mix(clamp(up + d, 0.0, 1.0), fin, w) : up, 1.0);\n"
+               "    return;\n"
                "  }\n"
-               "  float w = smoothstep(1.5 / 255.0, 0.03, mm);\n"
                // [XCDE] GitHub #103: the scene inside fin (the game's render-size image) is JITTERED: exec.c moves the
                // scene's viewport by the Halton offset and only the upscaler undoes it. Wherever fin was taken
                // under a see-through HUD pixel (text outlines and drop shadows, the minimap rim, T220's one-texel
@@ -552,19 +557,23 @@ static const char *builtin_src(const char *name, int *stage) {
                //  - where the scene is flat the old weight (w, T216: strong change = the game's pixel) - a flat
                //    scene does not shake anyway.
                // Pixels the HUD did not change stay the upscaled scene. XCDE_TMP_HUD_OLD=1: the composite before #103.
-               "  if (pc.b.x != 0.0) { o = vec4(mm > 1.5 / 255.0 ? mix(clamp(up + d, 0.0, 1.0), fin, w) : up, 1.0); return; }\n"
-               "  vec3 s0 = fin - d;\n"
+               // Center (0,0) is already fetched above (with m > 1.5/255) and cardinal mm is folded into the 3x3 loop,
+               // avoiding 10 redundant texture fetches per HUD pixel.
                "  vec3 lo = max(d / max(1.0 - s0, vec3(1.0 / 255.0)), -d / max(s0, vec3(1.0 / 255.0)));\n"
                "  float aMin = clamp(max(lo.r, max(lo.g, lo.b)), 0.0, 1.0);\n"
-               "  vec3 sf = vec3(0.0), ss = vec3(0.0), sfs = vec3(0.0), sss = vec3(0.0);\n"
-               "  float n = 0.0;\n"
+               "  vec3 sf = fin, ss = s0, sfs = fin * s0, sss = s0 * s0;\n"
+               "  float n = 1.0, mm = m;\n"
                "  for (int y = -1; y <= 1; y++)\n"
                "    for (int x = -1; x <= 1; x++) {\n"
+               "      if (x == 0 && y == 0) continue;\n"
                "      vec2 q = uv + rt * vec2(x, y);\n"
                "      vec3 f = texture(finalTex, q).rgb, s = texture(sceneTex, q).rgb, e = abs(f - s);\n"
-               "      if (max(e.r, max(e.g, e.b)) <= 1.5 / 255.0) continue;\n"  // (only texels the HUD changed)
+               "      float em = max(e.r, max(e.g, e.b));\n"
+               "      if (abs(x) + abs(y) == 1) mm = max(mm, em);\n"
+               "      if (em <= 1.5 / 255.0) continue;\n"  // (only texels the HUD changed)
                "      sf += f; ss += s; sfs += f * s; sss += s * s; n += 1.0;\n"
                "    }\n"
+               "  float w = smoothstep(1.5 / 255.0, 0.03, mm);\n"
                "  vec3 cv = sfs / n - sf * ss / (n * n), vr = sss / n - ss * ss / (n * n);\n"
                "  float V = vr.r + vr.g + vr.b;\n"
                "  float aReg = clamp(1.0 - (cv.r + cv.g + cv.b) / max(V, 1e-6), 0.0, 1.0);\n"
@@ -769,8 +778,7 @@ static const char *builtin_src(const char *name, int *stage) {
         return "#version 450\n"
                "layout(set = 0, binding = 0) uniform sampler2D colorTex;\n"
                "layout(set = 0, binding = 1) uniform sampler2D depthTex;\n"
-               "layout(set = 0, binding = 2) uniform sampler2D sceneTex;\n"  // [XCDE] the game image before the HUD
-               "layout(set = 0, binding = 3) uniform sampler2D velTex;\n"  // [XCDE] T215: the game's velocity buffer
+               "layout(set = 0, binding = 2) uniform sampler2D velTex;\n"  // [XCDE] T215: the game's velocity buffer
                "layout(push_constant) uniform P { mat4 m; vec4 a; vec4 b; vec4 c; } pc;\n"
                "layout(location = 0) out vec4 oColor;\n"
                "layout(location = 1) out vec2 oMv;\n"
@@ -778,17 +786,21 @@ static const char *builtin_src(const char *name, int *stage) {
                "layout(location = 3) out float oHud;\n"
                "void main() {\n"
                "  ivec2 p = ivec2(gl_FragCoord.xy);\n"
+               "  ivec2 rsz = ivec2(pc.a.zw);\n"
+               "  vec2 invSz = 1.0 / pc.a.zw;\n"
+               "  vec2 normP = vec2(p) * invSz;\n"
                "  ivec2 csz = textureSize(colorTex, 0), dsz = textureSize(depthTex, 0);\n"
-               "  ivec2 cp = min(ivec2(vec2(p) * vec2(csz) / pc.a.zw), csz - 1);\n"
+               "  ivec2 cp = csz == rsz ? p : min(ivec2(normP * vec2(csz)), csz - 1);\n"
                "  vec3 c = texelFetch(colorTex, cp, 0).rgb;\n"
                // [XCDE] T-LINUX-FSR3 / T-FSR4-LITE: the native Linux upscalers take linear colour (pc.c.x)
-               "  vec3 lin = mix(pow((max(c, vec3(0.0)) + 0.055) / 1.055, vec3(2.4)), c / 12.92, lessThanEqual(c, vec3(0.04045)));\n"
-               "  oColor = vec4(pc.c.x > 0.5 ? lin : c, 1.0);\n"
-               "  vec3 dh = abs(c - texelFetch(sceneTex, min(cp, textureSize(sceneTex, 0) - 1), 0).rgb);\n"
-               "  oHud = max(dh.r, max(dh.g, dh.b)) > 1.5 / 255.0 ? 1.0 : 0.0;\n"  // (pixels the HUD passes changed)
-               "  float d = texelFetch(depthTex, min(ivec2(vec2(p) * vec2(dsz) / pc.a.zw), dsz - 1), 0).r;\n"
+               "  if (pc.c.x > 0.5)\n"
+               "    c = mix(pow((max(c, vec3(0.0)) + 0.055) / 1.055, vec3(2.4)), c / 12.92, lessThanEqual(c, vec3(0.04045)));\n"
+               "  oColor = vec4(c, 1.0);\n"
+               "  oHud = 0.0;\n"
+               "  ivec2 dp = dsz == rsz ? p : min(ivec2(normP * vec2(dsz)), dsz - 1);\n"
+               "  float d = texelFetch(depthTex, dp, 0).r;\n"
                "  oDepth = pc.c.y > 0.5 ? 1.0 - d : d;\n"  // [XCDE] FSR 4 Lite: reversed depth (temporal.c prep)
-               "  vec2 uv = (gl_FragCoord.xy - pc.a.xy) / pc.a.zw;\n"
+               "  vec2 uv = (gl_FragCoord.xy - pc.a.xy) * invSz;\n"
                "  vec4 ndc = vec4(uv.x * 2.0 - 1.0, 1.0 - uv.y * 2.0, pc.b.x > 0.5 ? d * 2.0 - 1.0 : d, 1.0);\n"
                "  vec4 q = pc.m * ndc;\n"
                "  vec2 puv = vec2(q.x / q.w * 0.5 + 0.5, 0.5 - q.y / q.w * 0.5);\n"
@@ -801,7 +813,8 @@ static const char *builtin_src(const char *name, int *stage) {
                // minus current, as ours - measured against the camera motion on static scenery: XCDE_TMP_VEL_FIT)
                "  if (pc.b.z > 0.5 && d < 1.0) {\n"
                "    ivec2 vsz = textureSize(velTex, 0);\n"
-               "    vec4 v = texelFetch(velTex, min(ivec2(vec2(p) * vec2(vsz) / pc.a.zw), vsz - 1), 0);\n"
+               "    ivec2 vp = vsz == rsz ? p : min(ivec2(normP * vec2(vsz)), vsz - 1);\n"
+               "    vec4 v = texelFetch(velTex, vp, 0);\n"
                "    int ab = int(v.a * 3.0 + 0.5);\n"
                "    vec2 gv = vec2((ab & 1) != 0 ? -v.r * v.r : v.r * v.r, (ab & 2) != 0 ? v.g * v.g : -v.g * v.g);\n"
                // [XCDE] T228: the game's velocity is mostly the camera's motion (corr 0.993 with ours), stored in 10
@@ -816,7 +829,7 @@ static const char *builtin_src(const char *name, int *stage) {
                "    bool far = any(greaterThan(abs(gv - oMv), vec2(0.1)));\n"
                "    bool dyn = !far && any(greaterThan(abs(gv - oMv), step));\n"
                "    oMv = (pc.b.w > 0.5 || far) && !dyn ? oMv : gv;\n"
-               "    oHud = max(oHud, dyn ? 0.4 : 0.0);\n"
+               "    if (dyn) oHud = 0.4;\n"
                "  }\n"
                "}\n";
     }

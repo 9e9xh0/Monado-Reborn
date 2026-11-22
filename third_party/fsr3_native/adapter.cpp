@@ -24,6 +24,7 @@ struct Context {
     FfxResourceInternal shared[3]{};
     unsigned sharedCount = 0;
     bool created = false;
+    bool fp16 = false;
     VkDeviceContext device{};
 };
 static ffxReturnCode_t result(FfxErrorCode code) {
@@ -67,6 +68,11 @@ EXPORT ffxReturnCode_t ffxCreateContext(ffxContext *out, ffxCreateContextDescHea
     err=ffxFsr3UpscalerContextCreate(&c->fsr,&desc);
     if (err != FFX_OK) { release(c); return result(err); }
     c->created=true;
+    FfxDeviceCapabilities caps{};
+    if (c->backend.fpGetDeviceCapabilities(&c->backend, &caps) == FFX_OK) {
+        const char *e = std::getenv("XCDE_FSR3_FP16");
+        c->fp16 = caps.fp16Supported && !(e && *e == '0');
+    }
     FfxFsr3UpscalerSharedResourceDescriptions shared{};
     err=ffxFsr3UpscalerGetSharedResourceDescriptions(&c->fsr,&shared);
     FfxCreateResourceDescription descriptions[]={shared.dilatedDepth,shared.dilatedMotionVectors,shared.reconstructedPrevNearestDepth};
@@ -85,7 +91,8 @@ EXPORT ffxReturnCode_t ffxQuery(ffxContext *context, ffxQueryDescHeader *header)
     if (!context || !*context || !header) return FFX_API_RETURN_ERROR_PARAMETER;
     if (header->type != FFX_API_QUERY_DESC_TYPE_GET_PROVIDER_VERSION) return FFX_API_RETURN_ERROR_UNKNOWN_DESCTYPE;
     auto *d=reinterpret_cast<ffxQueryGetProviderVersion*>(header);
-    d->versionId=0; d->versionName="FSR 3.1.4 native Vulkan (FP32)"; return FFX_API_RETURN_OK;
+    auto *c=static_cast<Context*>(*context);
+    d->versionId=0; d->versionName=c->fp16 ? "FSR 3.1.4 native Vulkan (FP16)" : "FSR 3.1.4 native Vulkan (FP32)"; return FFX_API_RETURN_OK;
 }
 EXPORT ffxReturnCode_t ffxConfigure(ffxContext*, const ffxConfigureDescHeader*) {
     return FFX_API_RETURN_ERROR_UNKNOWN_DESCTYPE;
