@@ -46,7 +46,7 @@ objects=()
 # The units of scripts/build_rt_gfx.sh, with the Linux platform layer.
 rt=(loader dispatch kernel ipc fnprof log platform/linux services/fs services/romfs_virtual services/am services/acc services/time
     services/hid_set services/kbicons services/misc services/audio services/hwopus hle/heaps hle/pl hle/vi hle/nvn_boot
-    hle/fibers hle/input hle/party hle/bindings hle/movie hle/framepace hle/foliage_distance hle/foliage_pool hle/graphics hle/cheats_options hle/cheats_combat hle/cheats_rewards hle/cheats_enemy_health hle/title_exit hle/system_exit hle/desktop_exit_caption hle/expanded_saves hle/expanded_save_scan hle/quickstep_native hle/quickstep_picker hle/quickstep_save hle/quickstep_slot hle/quickstep_stats hle/quickstep_stats_ui hle/quickstep_ui_memory
+    hle/fibers hle/input hle/party hle/bindings hle/movie hle/framepace hle/foliage_distance hle/foliage_pool hle/graphics hle/cheats_options hle/cheats_combat hle/cheats_rewards hle/cheats_enemy_health hle/title_exit hle/system_exit hle/desktop_exit_caption hle/expanded_saves hle/expanded_save_scan hle/quickstep_native hle/quickstep_picker hle/quickstep_save hle/quickstep_slot hle/quickstep_stats hle/quickstep_stats_ui hle/quickstep_ui_memory hle/collision_bvh
     host/stubs host/settings_ini host/stubs_gfx
     host/gamelib_static host/main_boot diag/diag diag/sampler diag/watchdog diag/crashdump paths)
 nvn=(astc cmdbuf formats maxwell/translate objects output_scale smaa_data tegra texpatch vulkan/device vulkan/exec
@@ -58,7 +58,7 @@ for f in "${rt[@]}"; do
   # [XCDE] T-RUNTIME-O2: the two Vulkan units that dominate the render thread's CPU time get -O2 (measured +5-9 %
   # FPS on RADV); everything else, the game code and the FP / aliasing policy stay as they are.
   unit_flags=()
-  case "$f" in nvn/vulkan/exec|nvn/vulkan/textures) unit_flags=(-O2);; esac
+  case "$f" in nvn/vulkan/exec|nvn/vulkan/textures|hle/collision_bvh) unit_flags=(-O2);; esac
   "$CC" "${flags[@]}" "${unit_flags[@]}" -DXCDE_GFX -Ithird_party/smaa/Textures -c "runtime/$f.c" -o "$obj"
   objects+=("$obj")
 done

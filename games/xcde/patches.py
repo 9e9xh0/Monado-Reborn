@@ -1080,7 +1080,6 @@ PATCHES[0x70004f55f8] = Patch(0x540010e0, _cutscene_cam_interp, 'T224',
 PATCHES[0x700050c374] = Patch(0x1e201901, _cutscene_track_unquantize, 'T224',
                               'fdiv s1, s8, s0 - skip 30 Hz sequence track time quantization above 30 fps')
 
-
 # [XCDE] GitHub #179: volumetric cloud scroll speed above 30 FPS.
 # f_700062f860 (ml::Scn::update) passes Scene+0x3848 (Scene+0x37d4 * Scene+0x3844)
 # to CloudManager::update (f_700061cb70) before per-view setup (f_7000631a20)
@@ -1100,3 +1099,31 @@ def _cloud_dt_scale(gen, addr):
 
 PATCHES[0x700062fa60] = Patch(0xbd784a60, _cloud_dt_scale, 'GH-179',
                               'ldr s0, [x19, #0x3848] -> scale CloudManager dt by Scene+0x37e0 (UpdateInfo+0xc)')
+
+
+# Native C replacements for hot math/culling kernels (runtime/hle/collision_bvh.c)
+PATCHES[0x70006f5460] = Patch(
+    0xb9400828,
+    lambda gen, addr: '{ extern void xcde_frustum_sphere(Cpu *c); xcde_frustum_sphere(c); return; }',
+    'PERF', 'native sphere-vs-frustum test (f_70006f5460)',
+)
+PATCHES[0x700001cf30] = Patch(
+    0xd10143ff,
+    lambda gen, addr: '{ extern void xcde_bone_trs_mat(Cpu *c); xcde_bone_trs_mat(c); return; }',
+    'PERF', 'native bone TRS-to-matrix (f_700001cf30)',
+)
+PATCHES[0x7000726950] = Patch(
+    0xfc1f0fe8,
+    lambda gen, addr: '{ extern void xcde_col_seg_seg(Cpu *c); xcde_col_seg_seg(c); return; }',
+    'PERF', 'native segment-segment closest points (f_7000726950)',
+)
+PATCHES[0x700077d430] = Patch(
+    0xd10203ff,
+    lambda gen, addr: '{ extern void xcde_anim_eval_vec3(Cpu *c); xcde_anim_eval_vec3(c); return; }',
+    'PERF', 'native cubic vec3 keyframe eval (f_700077d430)',
+)
+PATCHES[0x700077d710] = Patch(
+    0xd10203ff,
+    lambda gen, addr: '{ extern void xcde_anim_eval_quat(Cpu *c); xcde_anim_eval_quat(c); return; }',
+    'PERF', 'native cubic quat keyframe eval + normalize (f_700077d710)',
+)
