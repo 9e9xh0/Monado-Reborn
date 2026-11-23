@@ -77,6 +77,7 @@ command line (`curl`'s output path was made relative for exactly this reason).
   `runtime/paths.c` (`getcwd`, `stat`, `chdir`, `fopen`) and the runtime's other file calls would still read the install
   folder in the system code page, so the game itself is expected to stop at its data-root check under a non-ASCII
   folder. Tracked as `T-UTF8-RUNTIME` in [`tasks.md`](../../dev/tasks.md); this issue is the launcher half.
-- **No physical Windows machine here.** The Windows CI job compiles the launcher and runs the new native test on
-  windows-latest; a real Windows run of the package under `C:\Users\João\…` remains to be done by the reporter or the
-  maintainer.
+- **Only CI on real Windows, not the reporter's machine.** The Windows CI job (`windows-components`, run 45093578036)
+  built the launcher with the same zig + ucrt64 SDK and ran the new native test on windows-latest:
+  `test_utf8_paths_build: PASS`, `test_utf8_paths: PASS` (the `CreateProcessA` 267 is printed there too, not asserted).
+  A run of the shipped package under `C:\Users\João\…` remains to be done by the reporter or the maintainer.

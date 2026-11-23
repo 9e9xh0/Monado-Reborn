@@ -212,5 +212,7 @@ Triage of both symptoms, the minidump findings and the A/B table:
   [summary.md](../evidence/2026-11-23-issue-218/summary.md).
 - Still open: the game's own paths are ANSI on Windows (`plat_exe_path` = `GetModuleFileNameA`, `getcwd`, `stat`,
   `fopen` in `runtime/paths.c` and the ~90 file calls elsewhere), so a package under a non-ASCII folder is expected to
-  stop at the game's data-root check. Tracked as `T-UTF8-RUNTIME`; real Windows verification of the launcher fix is
-  pending (the Windows CI job compiles it and runs the native test there).
+  stop at the game's data-root check. Tracked as `T-UTF8-RUNTIME`; a run of the shipped package under
+  `C:\Users\João\…` is still worth doing. The Windows CI job (windows-latest) built the launcher with the ucrt64
+  SDK and ran `tests/native/test_utf8_paths.c` green (run 45093578036: `test_utf8_paths_build: PASS`,
+  `test_utf8_paths: PASS`).

@@ -1709,7 +1709,9 @@ Detalle: `docs/PERFORMANCE_UI.md`. Evidencia: `docs/evidence/2026-11-04-performa
   Verified under Wine 11 (code page 1252) with the real Windows launcher: the fixed build writes `build/launcher.log`
   and starts `curl.exe` / `monado-gamebuild.exe` stand-ins in `Z:\…\João-😀\…`; a build from `HEAD` starts neither.
   Evidence: [summary.md](../evidence/2026-11-23-issue-218/summary.md); detail: [CHANGELOG.md](CHANGELOG.md).
-  Real Windows verification pending (the Windows CI job compiles the launcher and runs the native test).
+  Windows CI (windows-latest) builds the launcher with the ucrt64 SDK and ran `tests/native/test_utf8_paths.c` green
+  (run 45093578036: `test_utf8_paths_build: PASS`, `test_utf8_paths: PASS`). Pending: a run of the shipped package
+  under `C:\Users\João\…` (and the game's own half, T-UTF8-RUNTIME).
 - [ ] T-UTF8-RUNTIME **The game's own Windows paths are still ANSI:** `runtime/platform/windows.c` `plat_exe_path`
   (`GetModuleFileNameA`), `runtime/paths.c` (`getcwd`, `stat`, `chdir`, `fopen`, `mkdir`) and the runtime's other file
   calls (≈90 `fopen` sites: `services/fs.c`, `host/settings_ini.c`, the Vulkan caches). After T277 the launcher builds
