@@ -3,24 +3,32 @@
   "format": 1,
   "name": "Monado (Xenoblade Chronicles: Definitive Edition)",
   "repo": "Ivanprestef2/Monado-Reborn",
-  "game": {
-    "kind": "folder",
-    "label": "Your own copy of Xenoblade Chronicles: Definitive Edition 2.0.0 (base game with the update applied), extracted to plain folders: pick the folder that holds exefs and romfs.",
-    "check": {
-      "file": "exefs/main",
-      "nup_build_id": "7e1df8e08d60544bbdca1e333c153c97"
+  "inputs": [
+    {
+      "id": "game",
+      "label": "Your own copy of Xenoblade Chronicles: Definitive Edition 2.0.0 (the base game with the 2.0.0 update applied), extracted to plain folders: pick the folder that holds exefs and romfs.",
+      "formats": [{ "type": "folder" }],
+      "check": {
+        "file": "exefs/main",
+        "nup_build_id": "7e1df8e08d60544bbdca1e333c153c97"
+      }
     }
-  },
+  ],
   "start": {
-    "program": ["build/xcde.exe"],
-    "args": ["--game", "{game}"]
+    "program": ["build/xcde.exe", "Monado-x86_64.AppImage"],
+    "args": ["--game", "{input:game}"],
+    "env": { "MONADO_DATA_ROOT": "{install}" }
   },
   "prepare": {
-    "program": ["build/gamebuild/monado-gamebuild.exe"],
-    "args": ["--root", "{game}", "--out", "{install}/gamebuild", "--resources", "{install}/build/gamebuild"],
-    "label": "Preparing the game code from your copy",
-    "timeout": 3600,
-    "done": ["{install}/gamebuild/lasgame.dll", "{install}/gamebuild/lasgame.dll.id"]
+    "program": ["build/gamebuild/monado-gamebuild.exe", "Monado-x86_64.AppImage"],
+    "args": ["--prepare", "--root", "{input:game}", "--out", "{install}/gamebuild"],
+    "env": { "MONADO_DATA_ROOT": "{install}" },
+    "label": "Building the game code from your copy",
+    "done": ["{install}/gamebuild/build.json"]
+  },
+  "system": {
+    "windows": { "version": "10", "graphics": { "vulkan": "1.2" } },
+    "linux": { "glibc": "2.39", "graphics": { "vulkan": "1.2" } }
   },
   "config": [
     {
@@ -191,6 +199,9 @@
       "defaults": { "language": "auto" }
     }
   ],
+  "exit_codes": {
+    "2": "Monado couldn't find your copy of the game (the folder with exefs and romfs). Pick it again on the game's page."
+  },
   "actions": [
     { "id": "saves", "label": "Saves", "help": "Your save files.", "open": "saves" },
     { "id": "logs", "label": "Logs", "help": "The game's logs, useful when reporting a problem.", "open": "logs" },

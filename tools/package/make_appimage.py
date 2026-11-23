@@ -166,6 +166,8 @@ def main():
             shutil.copy2(dep, target)
         for name in ('AppRun', 'monado.desktop', 'monado.svg'):
             shutil.copy2(ROOT / 'packaging/linux' / name, appdir / name)
+        # RecompLauncher reads /recomplauncher.json from the AppImage itself (no file beside it in a release)
+        shutil.copy2(ROOT / 'recomplauncher.json', appdir / 'recomplauncher.json')
         shutil.copy2(ROOT / 'data/variants_seed.bin', share / 'variants_seed.bin')
         if a.release:  # the first-start builder and its resources (AppRun exports XCDE_GAMEBUILD_DIR)
             shutil.copytree(a.gamebuild.resolve(), share / 'gamebuild', symlinks=False,

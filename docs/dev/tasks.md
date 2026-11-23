@@ -1749,3 +1749,24 @@ Detalle: `docs/PERFORMANCE_UI.md`. Evidencia: `docs/evidence/2026-11-04-performa
   (`_fullpath`, ANSI) is unused by the game but any new caller must use the wide resolve in `runtime/paths.c` instead.
   Developer-only debug switches that take a path (`XCDE_GLSL_DIR`, `XCDE_REC_OUT`) are still narrow; no normal run
   reaches them.
+
+## RecompLauncher support — 2026-11-23 (T279)
+
+- [x] T279 **`recomplauncher.json` in RecompLauncher's current format, for Windows and Linux.** The file shipped since
+  v15 used the deprecated top-level `game` field and `{game}` (RecompLauncher 1.0 stops reading both), had
+  `prepare.timeout` and, in release packages, `prepare.version`, which RecompLauncher's schema refuses, and only
+  named `build/xcde.exe`, so the Linux AppImage (which carried no manifest) could not be set up. Now: the copy is the
+  named input `game` (an extracted folder, checked by `exefs/main` and its build ID); `start.program` and
+  `prepare.program` name the Windows executables and then `Monado-x86_64.AppImage`, with one argument list for both
+  (`--game {input:game}`; `--prepare --root {input:game} --out {install}/gamebuild`); `MONADO_DATA_ROOT={install}`
+  keeps Linux on the Windows package's layout (`xcde.ini`, `save/`, `gamebuild/` in the install folder);
+  `prepare.done` is `gamebuild/build.json` (written last on both systems); `system` and `exit_codes` added.
+  `packaging/linux/AppRun` gained `--game <dump>` (the game directly, without a `targets` link inside the install
+  folder that RecompLauncher moves and backs up) and `--prepare <builder args>`; `make_appimage.py` puts the manifest
+  at the AppDir root and `make_portable.py` copies it unchanged. The builder accepts `--prepare` and prints
+  `progress <0..1> <text>` lines when `RECOMPLAUNCHER=1`. RecompLauncher's Big Picture mode
+  (`RECOMPLAUNCHER_MODE=bigpicture`) opens the game fullscreen without changing the saved setting, like gamescope,
+  and the launcher skips its own update banner under RecompLauncher (it installs every release itself).
+  Tests: `tests/unit/test_recomplauncher_support.py` (AppRun run against stand-in programs, the progress lines,
+  source contracts) and `tests/unit/test_make_portable.py` (the manifest). The manifest validates against
+  RecompLauncher's published schema. Pending: a full setup and Play from RecompLauncher on Windows and Linux.

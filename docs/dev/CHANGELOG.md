@@ -260,3 +260,24 @@ Triage of both symptoms, the minidump findings and the A/B table:
   narrow CRT (relative ASCII names in practice), `platform/win_compat.h`'s `realpath` shim (`_fullpath`) is not used
   by the game, and developer-only debug switches that take a path (`XCDE_GLSL_DIR`, `XCDE_REC_OUT`) are still narrow.
   The reported install, dump and save paths are covered.
+
+## RecompLauncher support (T279, 2026-11-23)
+
+- `recomplauncher.json`: the player's copy is the named input `game` (the top-level `game` field and `{game}` are
+  deprecated in RecompLauncher's format); one file covers the Windows zip and the Linux AppImage (`start.program` and
+  `prepare.program` list both, with one argument list); `prepare.timeout` (not in the schema) is gone, `prepare.done`
+  is `gamebuild/build.json`; `system` (Windows 10, glibc 2.39, Vulkan 1.2) and `exit_codes` (2: no copy) added.
+  Validated against https://recomplauncher.com/schema/recomplauncher.json (the old file failed it on
+  `prepare.timeout`, and release packages added `prepare.version`).
+- `tools/package/make_portable.py` copies the manifest unchanged (RecompLauncher runs the setup step again after
+  every new release; the builder's fingerprint makes that a no-op when nothing changed).
+  `tools/package/make_appimage.py` puts it at the AppDir root, where RecompLauncher reads it from the AppImage.
+- `packaging/linux/AppRun`: `--game <dump>` plays without the `targets` link, `--prepare` runs the bundled builder.
+  RecompLauncher passes `MONADO_DATA_ROOT={install}`, so the Linux install keeps the Windows layout.
+- `tools/gamebuild/gamebuild.py`: `--prepare` is accepted (and ignored), and with `RECOMPLAUNCHER=1` every progress
+  update is also printed as `progress <0..1> <text>`; "Already built" when the build is up to date.
+- `runtime/nvn/vulkan/device.c`: `RECOMPLAUNCHER_MODE=bigpicture` opens the window fullscreen without changing the
+  saved setting. `tools/launcher/launcher.cpp`: no update check at start under RecompLauncher.
+- Tests: `tests/unit/test_recomplauncher_support.py`, `tests/unit/test_make_portable.py`; the unit suite, the package
+  guard and the documentation/path checks pass on Linux. Not done here: a full setup and Play from RecompLauncher
+  (needs a dump), and a Windows build of the two C/C++ edits (CI compiles them).

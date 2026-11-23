@@ -122,6 +122,9 @@ class SourceContracts(unittest.TestCase):
         launcher = (ROOT / 'tools/launcher/launcher.cpp').read_text(encoding='utf-8')
         self.assertIn('upd_is_release_build() && !from_recomplauncher) upd_start(false);', launcher)
 
+    def test_appimage_carries_the_manifest(self):
+        packager = (ROOT / 'tools/package/make_appimage.py').read_text(encoding='utf-8')
+        self.assertIn("shutil.copy2(ROOT / 'recomplauncher.json', appdir / 'recomplauncher.json')", packager)
 
 
 if __name__ == '__main__':
