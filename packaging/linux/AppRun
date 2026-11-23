@@ -6,7 +6,7 @@
 #   <data>/build/linux/monado -> the game executable inside this mount
 #   ./Monado-x86_64.AppImage [dump directory]       launcher
 #   ./Monado-x86_64.AppImage --play [dump directory] the game directly
-#   ./Monado-x86_64.AppImage --game <dump directory> the game directly, without the targets link (RecompLauncher)
+#   ./Monado-x86_64.AppImage --game <dump directory or .nup> the game directly, without the targets link (RecompLauncher)
 #   ./Monado-x86_64.AppImage --prepare <builder args> the first-start game code builder (RecompLauncher's setup step)
 # RecompLauncher (recomplauncher.json) unpacks the AppImage into the game's install folder and passes that folder as
 # MONADO_DATA_ROOT, so Linux keeps the Windows package's layout (xcde.ini, save/ and gamebuild/ in the install folder).
@@ -58,7 +58,7 @@ case "${1:-}" in
   --game) direct=1; game_opt=1; shift;;
 esac
 case "${1:-}" in
-  -h|--help) echo "usage: ${APPIMAGE:-AppRun} [--play | --game <dump directory> | --prepare <builder args>] [dump directory]"; exit 0;;
+  -h|--help) echo "usage: ${APPIMAGE:-AppRun} [--play | --game <dump directory or .nup> | --prepare <builder args>] [dump directory]"; exit 0;;
 esac
 root=${1:-${MONADO_GAME_ROOT:-}}
 if [ "$#" -gt 0 ]; then shift; fi
@@ -77,7 +77,11 @@ fi
 mkdir -p -- "$data/build/linux"
 data=$(CDPATH= cd -- "$data" && pwd)
 export LARECOMP_DATA_ROOT="$data"
-if [ -n "$root" ]; then
+if [ -n "$game_opt" ] && [ -f "$root" ] && [ "$(head -c 3 -- "$root" 2>/dev/null)" = NUP ]; then
+  # [XCDE] T280: --game with a .nup package, read in place by the game (runtime/services/game_files.c). Only --game:
+  # the other modes link the dump as targets/, a folder the launcher reads.
+  dump="$(CDPATH= cd -- "$(dirname -- "$root")" && pwd -P)/$(basename -- "$root")"
+elif [ -n "$root" ]; then
   [ -f "$root/exefs/main" ] && [ -d "$root/romfs" ] || { echo "$root must contain exefs/main and romfs/ (your dump)" >&2; exit 2; }
   # GitHub #86 (Steam Deck): with the AppImage inside the data folder, "targets next to the AppImage" IS
   # $data/targets, and a logical pwd gave back that link's own path, so it was relinked to itself (a loop: the dump

@@ -1,6 +1,7 @@
 """Validate a user-supplied dump against a game profile (FR-001..004, FR-006).
 
-Accepts a folder holding exefs/ and romfs/ (or --exefs/--romfs separately). Never reads encrypted containers
+Accepts a folder holding exefs/ and romfs/ (or --exefs/--romfs separately), or a .nup package, whose exefs and romfs
+are already decrypted and read in place (T280, tools/extract/nup.py). Never reads encrypted containers
 (.nsp/.xci/.nca/.nsz/.xcz) and never opens key files (Constitution art. II).
 
 The modules' build-ids are the version gate (FR-003). A romfs from another region has the same build-ids but
@@ -15,7 +16,8 @@ import os
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from manifest import build_manifest  # noqa: E402
+import nup  # noqa: E402
+from manifest import build_manifest, manifest_of  # noqa: E402
 
 ERR_OK, ERR_USAGE, ERR_CONTAINER, ERR_EXEFS, ERR_VERSION, ERR_ROMFS = 0, 1, 2, 3, 4, 5
 CONTAINER_EXT = ('.nsp', '.xci', '.nca', '.nsz', '.xcz')
@@ -49,6 +51,10 @@ def _read_build_id(path):
             head = f.read(0x48)
     except OSError:
         return None
+    return _build_id_of_head(head)
+
+
+def _build_id_of_head(head):
     if len(head) < 0x48 or head[:4] != b'NSO0':
         return None
     return head[0x40:0x48].hex()
@@ -89,6 +95,8 @@ def _romfs_messages(got, exp, allow_variant):
 
 def check_dump(path, profile, exefs=None, romfs=None, allow_romfs_variant=True):
     r = Result()
+    if path is not None and os.path.isfile(path) and nup.is_package(path):
+        return _check_package(r, path, profile, allow_romfs_variant)
     if path is not None:
         low = path.lower()
         if os.path.isfile(path):
@@ -109,14 +117,34 @@ def check_dump(path, profile, exefs=None, romfs=None, allow_romfs_variant=True):
                           'The extracted content is needed (exefs and romfs).')
     if not exefs or not os.path.isdir(exefs):
         return r.fail(ERR_EXEFS, 'The exefs folder is missing.')
+    have_romfs = romfs and os.path.isdir(romfs)
+    return _check_contents(r, profile, allow_romfs_variant,
+                           exefs_has=lambda name: os.path.isfile(os.path.join(exefs, name)),
+                           build_id_of=lambda name: _read_build_id(os.path.join(exefs, name)),
+                           romfs_manifest=lambda: build_manifest(romfs) if have_romfs else None)
 
+
+def _check_package(r, path, profile, allow_romfs_variant):
+    """A .nup package (T280): its newest title's exefs and romfs, read in place. Already decrypted: no keys."""
+    try:
+        package = nup.NupPackage(path)
+    except (nup.NupError, OSError) as error:
+        return r.fail(ERR_USAGE, str(error))
+    return _check_contents(r, profile, allow_romfs_variant,
+                           exefs_has=lambda name: package.find('exefs/' + name) is not None,
+                           build_id_of=lambda name: _build_id_of_head(package.read('exefs/' + name, 0x48)),
+                           romfs_manifest=lambda: manifest_of((rel, size) for rel, size, _ in package.walk('romfs')))
+
+
+def _check_contents(r, profile, allow_romfs_variant, exefs_has, build_id_of, romfs_manifest):
+    """The checks on a dump's contents, wherever they are: exefs files, the version by build id, the romfs manifest."""
     # exefs: required files, NSO magic
-    missing = [n for n in profile['exefs_required'] if not os.path.isfile(os.path.join(exefs, n))]
+    missing = [n for n in profile['exefs_required'] if not exefs_has(n)]
     if missing:
         return r.fail(ERR_EXEFS, 'Files missing in exefs: ' + ', '.join(missing))
     ids = {}
     for m in profile['modules']:
-        bid = _read_build_id(os.path.join(exefs, m['name']))
+        bid = build_id_of(m['name'])
         if bid is None:
             return r.fail(ERR_EXEFS, f'exefs/{m["name"]} is not a valid NSO.')
         ids[m['name']] = bid
@@ -130,10 +158,10 @@ def check_dump(path, profile, exefs=None, romfs=None, allow_romfs_variant=True):
         return r.fail(ERR_VERSION, *lines)
 
     # romfs: aggregate manifest
-    if not romfs or not os.path.isdir(romfs):
+    got = romfs_manifest()
+    if got is None:
         return r.fail(ERR_ROMFS, 'The romfs folder is missing.')
     exp = profile['romfs_manifest']
-    got = build_manifest(romfs)
     if got['sha256'] == exp['sha256']:
         r.messages.append(f'OK: version {profile["version"]}, {got["files"]} files in romfs.')
         return r

@@ -7,17 +7,23 @@ import os
 
 
 def build_manifest(romfs):
-    dirs, lines = {}, []
+    entries = []
     for root, _, files in os.walk(romfs):
         for f in files:
             p = os.path.join(root, f)
-            rel = os.path.relpath(p, romfs).replace(os.sep, '/')
-            size = os.path.getsize(p)
-            top = rel.split('/', 1)[0] if '/' in rel else '.'
-            d = dirs.setdefault(top, [0, 0])
-            d[0] += 1
-            d[1] += size
-            lines.append(f'{rel}\t{size}')
+            entries.append((os.path.relpath(p, romfs).replace(os.sep, '/'), os.path.getsize(p)))
+    return manifest_of(entries)
+
+
+def manifest_of(entries):
+    """The manifest from (path below romfs/, size) pairs: a folder's files, or a .nup package's (T280)."""
+    dirs, lines = {}, []
+    for rel, size in entries:
+        top = rel.split('/', 1)[0] if '/' in rel else '.'
+        d = dirs.setdefault(top, [0, 0])
+        d[0] += 1
+        d[1] += size
+        lines.append(f'{rel}\t{size}')
     lines.sort()
     h = hashlib.sha256('\n'.join(lines).encode('utf-8')).hexdigest()
     return {'dirs': dict(sorted(dirs.items())), 'files': len(lines), 'bytes': sum(v[1] for v in dirs.values()), 'sha256': h}

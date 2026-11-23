@@ -17,7 +17,7 @@ beside the executable, or `../share/monado/gamebuild` in an AppImage):
     include/               cpu.h, simd.h, simd_fp.h (the guest ABI)
     games/                 profile.json, patches.py, hle_symbols.txt
 
-Usage: monado-gamebuild --root <dump> [--out DIR] [--resources DIR] [--jobs N]
+Usage: monado-gamebuild --root <dump folder or .nup> [--out DIR] [--resources DIR] [--jobs N]
                         [--force] [--dry-run] [--precompile]
        gamebuild.py --write-costs <gamebuild.log> games/xcde/compile_cost.json   (after a release's lifter change)
 Exit codes: 0 ok, 1 usage, 2 bad game files, 3 generation failed, 4 compile failed,
@@ -45,6 +45,7 @@ for _sub in ('tools/lifter', 'tools/extract'):
         sys.path.insert(0, str(_path))
 
 import gen  # noqa: E402  (tools/lifter/gen.py)
+import nup  # noqa: E402  (tools/extract/nup.py, T280)
 
 # GitHub #86: zig could sit idle for good on some Windows PCs and the log showed nothing past the lifting. Every step
 # is now logged with a timestamp and flushed at once, each compiler command is written before it runs, the final link
@@ -382,7 +383,12 @@ def fingerprint(dump, resources, link):
     h = hashlib.sha256()
     h.update((resources / 'gamelib-id.txt').read_text(encoding='utf-8').strip().encode())
     h.update(json.dumps(link, sort_keys=True).encode())
+    package = nup_package(dump)
     for name, relative in (('main', 'exefs/main'), ('sdk', 'exefs/sdk')):
+        if package:  # (a package copied or rebuilt with the same modules needs no new build: their size and build id)
+            head = package.read(relative, 0x60)
+            h.update(f'{name} nup {package.sizes[package.find(relative)]} {head[0x40:0x60].hex()}\n'.encode())
+            continue
         path = dump / relative
         st = path.stat()
         h.update(f'{name} {st.st_size} {int(st.st_mtime)}\n'.encode())
@@ -400,6 +406,28 @@ def fingerprint(dump, resources, link):
 
 def load_profile(resources):
     return json.loads((resources / 'games/profile.json').read_text(encoding='utf-8'))
+
+
+# ---- a .nup package as the dump (T280): its exefs and romfs are already decrypted and read in place
+def nup_package(dump):
+    """The package the dump is (tools/extract/nup.py), or None for a folder with exefs/ and romfs/."""
+    return nup.NupPackage(dump) if dump.is_file() and nup.is_package(dump) else None
+
+
+def exefs_folder(dump, out, modules):
+    """The folder the lifter reads the modules from: the dump's exefs/, or for a package a copy of the modules it lifts
+    in <out>/nup-exefs/ (the lifter reads files; written again only when the package's module differs)."""
+    package = nup_package(dump)
+    if not package:
+        return dump / 'exefs'
+    folder = out / 'nup-exefs'
+    folder.mkdir(parents=True, exist_ok=True)
+    for module in modules:
+        data = package.read('exefs/' + module['name'])
+        target = folder / module['name']
+        if not target.is_file() or target.read_bytes() != data:
+            target.write_bytes(data)
+    return folder
 
 
 def validate(dump, resources, strict=False):
@@ -420,12 +448,13 @@ def generate_modules(dump, resources, out, jobs, log):
     modules = [m for m in profile['modules'] if m.get('lift')]
     generated = out / 'generated'
     generated.mkdir(parents=True, exist_ok=True)
+    exefs = exefs_folder(dump, out, modules)  # [T280] the dump's exefs/, or the modules from its .nup package
     # Lifting time follows the module's size (main and sdk are 6.6 and 5.4 MB): the bar moves by bytes, not modules.
-    sizes = [(dump / 'exefs' / m['name']).stat().st_size for m in modules]
+    sizes = [(exefs / m['name']).stat().st_size for m in modules]
     total_size = sum(sizes) or 1
     for index, module in enumerate(modules):
         report(out, 'generate', index, len(modules), f'Reading {module["name"]}', sum(sizes[:index]) / total_size)
-        argv = [module['name'], str(dump / 'exefs' / module['name']), str(module['base']),
+        argv = [module['name'], str(exefs / module['name']), str(module['base']),
                 str(generated / module['name']),
                 '--simd', 'c',
                 '--patches', str(resources / 'games/patches.py'),
@@ -613,7 +642,7 @@ def link_library(resources, out, link, units, log):
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description='Build the game code library from a local game dump.')
-    parser.add_argument('--root', help='folder holding exefs/ and romfs/')
+    parser.add_argument('--root', help='folder holding exefs/ and romfs/, or a .nup package')
     parser.add_argument('--out', help='build folder (default: <data root>/gamebuild)')
     parser.add_argument('--resources', help='shipped gamebuild resources')
     parser.add_argument('--jobs', type=int,
@@ -638,9 +667,14 @@ def main(argv=None):
     if not args.root:
         parser.error('--root is required')
 
+    dump = Path(args.root).expanduser().resolve()
+    try:
+        nup_package(dump)  # (a .nup that can't be used stops here, with the reason: exit code 2, bad game files)
+    except (nup.NupError, OSError) as error:
+        print(f'gamebuild: {error}', flush=True)
+        return 2
     resources = resources_dir(args.resources)
     link = json.loads((resources / 'link.json').read_text(encoding='utf-8'))
-    dump = Path(args.root).expanduser().resolve()
     out = Path(args.out).expanduser().resolve() if args.out else default_data_root() / 'gamebuild'
     jobs = args.jobs or default_jobs()
     set_shares(jobs)

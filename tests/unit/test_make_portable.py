@@ -135,7 +135,12 @@ class LauncherManifest(unittest.TestCase):
         self.assertNotIn('game', manifest)  # (the deprecated top-level field, dropped by RecompLauncher 1.0)
         game = manifest['inputs'][0]
         self.assertEqual(game['id'], 'game')
-        self.assertEqual(game['formats'], [{'type': 'folder'}])
+        self.assertEqual(game['formats'][0], {'type': 'folder'})
+
+    def test_manifest_takes_a_nup_package_too(self):
+        # T280: the launcher checks a .nup by the build id of its newest title's exefs/main
+        formats = self.manifest()['inputs'][0]['formats']
+        self.assertIn({'type': 'file', 'extensions': ['nup']}, formats)
 
     def test_manifest_rejects_an_unexpected_game_version(self):
         check = self.manifest()['inputs'][0]['check']

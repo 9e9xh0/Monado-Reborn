@@ -6,8 +6,8 @@
   "inputs": [
     {
       "id": "game",
-      "label": "Your own copy of Xenoblade Chronicles: Definitive Edition 2.0.0 (the base game with the 2.0.0 update applied), extracted to plain folders: pick the folder that holds exefs and romfs.",
-      "formats": [{ "type": "folder" }],
+      "label": "Your own copy of Xenoblade Chronicles: Definitive Edition 2.0.0 (the base game with the 2.0.0 update): the folder that holds exefs and romfs, or a .nup package with the update in it, made without compression.",
+      "formats": [{ "type": "folder" }, { "type": "file", "extensions": ["nup"] }],
       "check": {
         "file": "exefs/main",
         "nup_build_id": "7e1df8e08d60544bbdca1e333c153c97"
