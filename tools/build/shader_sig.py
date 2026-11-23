@@ -7,12 +7,18 @@ that only touched the launcher, the UI or gameplay code - precompiled all shader
 every translation and the driver pipeline creation).
 
 The fingerprint covers the sources that decide what the precompiled artifacts are: the Maxwell-to-GLSL translator, the
-GLSL-to-SPIR-V compiler with its cache key and options, and the precompile's own program/key guesses (new guesses mean
-new jobs to warm). It is a whole-file hash, comments included: any edit in those files costs one precompile run, which
-is the conservative side of the choice. It does not cover the graphics driver (its shader caches are its own; press "Precompile shaders"
-after a driver update) and it deliberately does not cover gameplay code: a runtime change that only selects different
-jobs cannot invalidate what is already warm, it can only make the warm-up less complete until the next translator
-change or an explicit run.
+GLSL-to-SPIR-V compiler with its cache key and options, the precompile's own program/key guesses (new guesses mean
+new jobs to warm), the shader content hash the precompile duplicates (runtime/nvn/objects.c) and the runtime acceptance
+of the precompiled SPIR-V (runtime/cache_validation.h). It is a whole-file hash, comments included: any edit in those
+files costs one precompile run, which is the conservative side of the choice. It does not cover the graphics driver (its
+shader caches are its own; press "Precompile shaders" after a driver update) and it deliberately does not cover gameplay
+code: a runtime change that only selects different jobs cannot invalidate what is already warm, it can only make the
+warm-up less complete until the next translator change or an explicit run.
+
+runtime/nvn/vulkan/exec.c's build path (vk_precompile_program / vk_precompile_variant / the pipeline library keys) is
+also an input, but that file changes for gameplay too: it is covered by XCDE_PRECOMPILE_ARTIFACTS_REV in
+runtime/nvn/vulkan/precompile_rev.h instead, which precompile_sig.c mixes into the signature. Bump the revision when
+what that path builds changes.
 
 The build generates <build>/inc/shader_sig.h from this (CMake and the shell build scripts). A native test can compile
 runtime/nvn/vulkan/precompile_sig.c with -DXCDE_SHADER_SIG="..." instead of generating it.
@@ -24,20 +30,24 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 
 # Sources whose change can change the precompiled shaders or the jobs that warm them (see the module docstring).
-# The translator folder is fingerprinted whole: a new helper header there belongs to it too.
+# The translator folder is fingerprinted whole (recursively): a new helper header or subfolder there belongs to it too.
 TRANSLATOR_DIR = 'runtime/nvn/maxwell'
 SOURCES = (
     'runtime/nvn/vulkan/shaders.c',
     'runtime/nvn/vulkan/shaders.h',
     'runtime/nvn/vulkan/vk.h',
     'runtime/nvn/vulkan/precompile.c',
+    # [XCDE] T282 review: the content hash precompile.c duplicates (objects.c set_shaders) is what matches the seed /
+    # variant records, and cache_validation.h decides whether the runtime accepts a precompiled SPIR-V entry.
+    'runtime/nvn/objects.c',
+    'runtime/cache_validation.h',
 )
 
 
 def sources(root=ROOT):
     """Every fingerprint input, sorted, as paths relative to the repository root."""
     files = {name for name in SOURCES if (root / name).is_file()}
-    files.update(p.relative_to(root).as_posix() for p in (root / TRANSLATOR_DIR).glob('*') if p.is_file())
+    files.update(p.relative_to(root).as_posix() for p in (root / TRANSLATOR_DIR).rglob('*') if p.is_file())
     if (root / 'tools/build/shader_sig.py').is_file():
         files.add('tools/build/shader_sig.py')
     return sorted(files)

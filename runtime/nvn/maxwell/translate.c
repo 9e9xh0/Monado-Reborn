@@ -16,6 +16,7 @@
 #endif
 #include <math.h>
 #include <stdarg.h>
+#include <stdatomic.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -124,7 +125,7 @@ static uint32_t norm_target(int64_t t) {
 // XCDE_STATIC_STACKS=0: never resolve.
 typedef struct { uint8_t n[3]; uint32_t s[3][16]; } StkState;
 static uint32_t *resolve_stacks(const uint8_t *code8, size_t end) {
-    static int on = -1;
+    static _Thread_local int on = -1;
     if (on < 0) on = !getenv("XCDE_STATIC_STACKS") || atoi(getenv("XCDE_STATIC_STACKS")) != 0;
     if (!on || end < 2) return NULL;
     const uint64_t *code = (const uint64_t *)code8;
@@ -659,7 +660,7 @@ static const char *RSC2(Ctx *c, int slot, const char *fmt, ...) {
     // game's 720p grid at any higher render resolution, also behind DLSS / FSR (GitHub #29). rscf() changes only
     // proven own-pixel reads at the same scale; offset reads and unscaled textures keep the old mapping. GLSL only
     // (the MSL path has no rscf). XCDE_RSC_PIXEL=0: the old block-centre reads.
-    static int pix = -1;
+    static _Thread_local int pix = -1;
     if (pix < 0) { const char *e = getenv("XCDE_RSC_PIXEL"); pix = !(e && *e == '0'); }
     if (pix && c->stage == STAGE_FRAGMENT && c->glsl)
         snprintf(o, 1024, "rscf(%s, rscale[%d], rscale[0], gl_FragCoord.xy)", inner, slot + 1);
@@ -679,7 +680,8 @@ static const char *alayer(Ctx *c, const char *r, int slot, char *buf) {
 // Outside that case it is a guaranteed no-op that only costs one UBO read per sample; with this off the
 // shaders are V11's again in 16:9. device.c sets it when the swapchain is created; true by default so a
 // shader compiled before the swapchain exists keeps the remap (loses the benefit, breaks nothing).
-bool g_wide_box_possible = true;  // (false = do not emit uvb)
+// [XCDE] T282 review: _Atomic because the render thread writes it on a resize while precompile workers read it.
+_Atomic bool g_wide_box_possible = true;  // (false = do not emit uvb)
 
 // GLSL texture lookup on slot `slot` (its type is final here: a conflicting use fails in tex_slot).
 // co: coordinate expressions (1 for 1D, 2 for 2D, 3 for 3D / cube), layer: uint expression or NULL, dref: depth
@@ -703,7 +705,7 @@ static void glsl_sample(Ctx *c, char *out, int slot, const char *const *co, cons
     // float (AMD / Intel) don't fail a lit surface against its own stored depth. Inline (not a preamble helper: that
     // would change every shader's source and its caches). XCDE_D16_REF=0: off.
     char dq[900];
-    static int d16 = -1;
+    static _Thread_local int d16 = -1;
     if (d16 < 0) { const char *e = getenv("XCDE_D16_REF"); d16 = !(e && *e == '0'); }
     if (t->shadow && dref && d16 && (c->stage == STAGE_FRAGMENT || c->stage == STAGE_COMPUTE)) {
         c->uses_rscale = true;
@@ -914,7 +916,7 @@ static void emit_texs(Ctx *c, uint64_t w, bool fetch) {
 // grass in every depth-aware half-res effect (shadow mask, SSAO, the lighting's upsample), flicker when they move.
 // A plain gather at a scaled half-res pixel's own uv is exactly its 2x2 footprint. XCDE_RGATHER_DEPTH=1: as before.
 static bool scaled_gather(Ctx *c, int slot) {
-    static int on = -1;
+    static _Thread_local int on = -1;
     if (on < 0) { const char *e = getenv("XCDE_SCALED_GATHER"); on = !e || atoi(e) != 0; }
     if (!on || !c->glsl || c->stage != STAGE_FRAGMENT || c->info->tex[slot].is_uint || c->info->tex[slot].shadow)
         return false;
@@ -1704,7 +1706,7 @@ static void emit_insn(Ctx *c, uint64_t w, uint32_t pc) {
         bool sgn = bits(w, 48, 1);
         // [XCDE] .BREV (bit 40): the source's bits reversed before the extract (was a translation failure; seen in EoWRecomp)
         if (bits(w, 40, 1)) {
-            static int nl;
+            static _Thread_local int nl;
             if (nl++ < 4) rt_logf("[translate] BFE.BREV in a shader\n");
             sprintf(t, sgn ? "bfe_s(bitfieldReverse(%s), %s)" : "bfe_u(bitfieldReverse(%s), %s)", R(a), bv);
         } else
@@ -1807,7 +1809,7 @@ static void emit_insn(Ctx *c, uint64_t w, uint32_t pc) {
         snprintf(msb, sizeof msb, bits(w, 48, 1) ? "uint(findMSB(int%s))" : "uint(findMSB(uint%s))", src);
         if (bits(w, 41, 1)) snprintf(t, 2048, "(%s == 0xFFFFFFFFu ? 0xFFFFFFFFu : (31u - %s))", msb, msb);
         else snprintf(t, 2048, "%s", msb);
-        { static int nl; if ((bits(w, 40, 1) || bits(w, 41, 1)) && nl < 4) { nl++; rt_logf("[translate] FLO%s%s%s in a shader\n", bits(w, 48, 1) ? ".S32" : "", bits(w, 41, 1) ? ".SH" : "", bits(w, 40, 1) ? ".INV" : ""); } }
+        { static _Thread_local int nl; if ((bits(w, 40, 1) || bits(w, 41, 1)) && nl < 4) { nl++; rt_logf("[translate] FLO%s%s%s in a shader\n", bits(w, 48, 1) ? ".S32" : "", bits(w, 41, 1) ? ".SH" : "", bits(w, 40, 1) ? ".INV" : ""); } }
         set_reg(c, d, t);
     } else if (OPM(0x5c08000000000000ull, 0xfff8000000000000ull) || OPM(0x4c08000000000000ull, 0xfff8000000000000ull) ||
                OPM(0x3808000000000000ull, 0xfef8000000000000ull)) {  // POPC
@@ -2327,7 +2329,7 @@ static ShaderInfo *glsl_finish(Ctx *c, int flow_mode, bool dbg) {
         } else {
             sp(&s, "%s", glsl_prelude);
         }
-        static int hw_fp16 = -1;
+        static _Thread_local int hw_fp16 = -1;
         if (hw_fp16 < 0) { const char *e = getenv("XCDE_HW_FP16"); hw_fp16 = !(e && atoi(e) == 0); }
         bool use_hw_fp16 = hw_fp16 && (stage == STAGE_FRAGMENT || stage == STAGE_COMPUTE);
         sp(&s, "%s", use_hw_fp16 ? glsl_fp16_hw : glsl_fp16_sw);
@@ -2415,7 +2417,7 @@ static ShaderInfo *glsl_finish(Ctx *c, int flow_mode, bool dbg) {
         // default for a shader with side effects) every pixel a box covers got its bit even where the stencil then
         // dropped the colour, and later probes sharing the bit skipped those pixels: hard-edged black boxes (T177).
         // XCDE_EARLY_FS=0: late tests (the old behaviour).
-        static int early = -1;
+        static _Thread_local int early = -1;
         if (early < 0) early = !getenv("XCDE_EARLY_FS") || atoi(getenv("XCDE_EARLY_FS")) > 0;
         if (early && c->uses_sust && !c->omap_depth && !info->uses_discard && !(key && key->alpha_func && key->alpha_func != 8))
             sp(&s, "layout(early_fragment_tests) in;\n");
@@ -2539,7 +2541,7 @@ static size_t next_inst(size_t i) {
 }
 
 static bool structured_cfg_on(void) {
-    static int on = -1;
+    static _Thread_local int on = -1;
     if (on < 0) {
         const char *e = getenv("XCDE_STRUCTURED_CFG");
         on = !(e && atoi(e) == 0);

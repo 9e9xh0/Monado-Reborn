@@ -1814,8 +1814,9 @@ Detalle: `docs/PERFORMANCE_UI.md`. Evidencia: `docs/evidence/2026-11-04-performa
   cheap (0.2-1 ms/stage) but was serialized behind a global lock; the scan reads 8.1 GB, inflates 14.0 GB and left
   its 25 >64 MB files for a serial tail. Done: (1) the translator is re-entrant (thread-local scratch rings and
   guest-heap range) and precompile workers translate without the global lock; (2) the precompile uses cpus-1 workers,
-  ramping the build workers up after the scan (7 during the scan starved the inflate: 32.4 vs 21.8 s); (3) the scan
-  orders the biggest files first and opens up to 4 >64 MB files at once (by RAM); (4) progress covers the four passes
+  started after the scan (T282 later removed the scan/build overlap entirely: 7 build workers during the scan starved
+  the inflate, 32.4 vs 21.8 s); (3) the scan orders the biggest files first and opens up to N >64 MB files at once
+  (N by RAM: 4 at 16 GB, 6 at 24 GB+); (4) progress covers the four passes
   (scan/build/seed/pipelines), weighted by the previous run's measured times, with the pass, its count and the time
   left in the launcher and in RecompLauncher's builder. Also: the seed pass skips the jobs the program pass built
   (465/1,170 subset; 5,484/9,045 full game); skipped jobs count as "skipped", not failed; a user stop no longer
@@ -1849,9 +1850,7 @@ Detalle: `docs/PERFORMANCE_UI.md`. Evidencia: `docs/evidence/2026-11-04-performa
   `.nup` package: its size and mtime) and `data/variants_seed.bin`. `precompile.c` writes it as the stamp's `sig` line,
   gets a `--precompile-status <dump>` mode (0 current, 1 needs preparing, 2 unreadable game files; no scan, no Vulkan
   device) and exits at once when the cache is current (`XCDE_PRECOMPILE_FORCE=1` runs anyway). The launcher's
-  `pc_done()` asks that instead of comparing the executable (memoized; dropped when the builder makes the exe, a
-  precompile ends or the dump changes) and the explicit Precompile button removes the stamp so it really redoes the
-  passes; `gamebuild.py` asks the same before RecompLauncher's setup step. Measured: status 78-108 ms on the full dump
+ Measured: status 78-108 ms on the full dump
   (18,544-file walk), `--precompile` "nothing to do" 87/95 ms instead of a 55-393 s run, a touched executable
   (rebuilt, no shader source changed) stays current, `XCDE_FS_OPT=0` or a changed game-file mtime goes stale in
   ~50 ms. On the 312-file subset: cold 1,464 programs in 41.6 s (2,301 SPIR-V compiled), then status 57 ms, early
@@ -1859,7 +1858,14 @@ Detalle: `docs/PERFORMANCE_UI.md`. Evidencia: `docs/evidence/2026-11-04-performa
   with the new binary: title at 30 FPS, 619 frames, 0 compile failures. Tests:
   `tests/unit/test_precompile_incremental.py` (fingerprint, the runtime/launcher/builder/build contracts),
   `tests/unit/test_recomplauncher_support.py` (the builder asks the status; a current precompile is not started),
-  `tests/native/test_precompile_sig.c` (a folder and a `.nup`, changed/added/renamed/removed files, options, seed,
-  unreadable dump); the subset functional runs below. Not covered by the signature: the graphics driver (its shader
-  caches are its own; after a driver update press Precompile shaders) and `cache/variants.bin` (it grows while
-  playing and must not invalidate the cache).
+  `tests/native/test_precompile_sig.c` (a folder and a `.nup`, changed/added/renamed/removed files, a same-size mtime
+  edit, a plain-file root, set-empty vs unset options, translator/pass switches, seed, unreadable dump); the subset
+  functional runs below. Not covered by the signature: the graphics driver and the Vulkan route / selected adapter
+  (their caches are their own; after a driver update, GPU switch or route change press Precompile shaders) and
+  `cache/variants.bin` (it grows while playing and must not invalidate the cache).
+  Review follow-ups (same day): `nscanners` is clamped to the thread array (>128-logical-CPU Linux hosts), a current
+  cache needs `cache/spirv.idx` too, the done stamp is removed only after the root is validated, the >64 MB scan
+  budget is bounded by bytes as well as files, `job_built()` only records variants that built, the translator's
+  remaining function statics are thread-local and `g_wide_box_possible` is atomic, the translator folder is hashed
+  recursively, a selective `scripts/build_rt_gfx.sh` build always refreshes the fingerprint unit, and `validate_port.py`
+  builds `test_precompile_sig` once and warning-strict. Unit suite: 220 (10 skipped).

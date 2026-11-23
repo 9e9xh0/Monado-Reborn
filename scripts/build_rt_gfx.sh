@@ -3,6 +3,8 @@
 # Compile every runtime object build/xcde.exe links (build/rt/*.o, build/nvn/*.o), then link it (scripts/link_gfx.sh).
 #   scripts/build_rt_gfx.sh            # all objects
 #   scripts/build_rt_gfx.sh kernel hle/movie nvn/vulkan/exec   # only these (paths under runtime/, no .c)
+# A selective build still regenerates build/inc/shader_sig.h and rebuilds nvn/vulkan/precompile_sig: a new executable
+# must never carry a stale shader fingerprint (the precompile would consider the cache current after a translator edit).
 # The game objects (build/obj) come from scripts/build_boot.sh. The window build of main_boot gets -DXCDE_GFX.
 cd "$(dirname "$0")/.."
 Z=".venv/Scripts/python -m ziglang cc"
@@ -12,10 +14,14 @@ RT="loader dispatch kernel ipc fnprof log platform/windows services/fs services/
     hle/bindings hle/movie hle/framepace hle/foliage_distance hle/foliage_pool hle/graphics hle/cheats_options hle/cheats_combat hle/cheats_rewards hle/cheats_enemy_health hle/title_exit hle/system_exit hle/desktop_exit_caption hle/expanded_saves hle/expanded_save_scan hle/quickstep_native hle/quickstep_picker hle/quickstep_save hle/quickstep_slot hle/quickstep_stats hle/quickstep_stats_ui hle/quickstep_ui_memory hle/collision_bvh host/stubs host/settings_ini host/gamelib_static host/main_boot diag/diag diag/sampler diag/watchdog
     diag/crashdump"
 NVN="astc cmdbuf formats maxwell/translate objects output_scale smaa_data tegra vulkan/device vulkan/exec vulkan/post vulkan/vkq vulkan/precompile vulkan/precompile_sig vulkan/shaders vulkan/textures vulkan/temporal vulkan/fsr4"
-mkdir -p build/rt build/nvn
+mkdir -p build/rt build/nvn build/inc
 want="$*"
 pick() { [ -z "$want" ] || [[ " $want " == *" $1 "* ]]; }
 fail=0
+# [XCDE] T282 review: regenerate the shader-precompile fingerprint on every build, including the selective builds above
+# (`scripts/build_rt_gfx.sh nvn/maxwell/translate` + relink). A stale precompile_sig.o would claim the shader cache is
+# current after a translator edit; the old exe-size stamp caught that.
+.venv/Scripts/python tools/build/shader_sig.py --out build/inc/shader_sig.h || fail=1
 for f in $RT; do
   pick "$f" || continue
   o=build/rt/$(echo $f | tr / _).o; extra=""
@@ -24,7 +30,9 @@ for f in $RT; do
   $Z -c runtime/$f.c -o $o.$$.tmp $CF -DGAMELIB_ID='"dev"' $extra && mv -f $o.$$.tmp $o || { echo "FAIL $f"; fail=1; }  # (tmp + rename: a parallel link never reads half an object)
 done
 for f in $NVN; do
-  pick "nvn/$f" || continue
+  # [XCDE] T282 review: compile the fingerprint unit even when no shader source was selected, so a selective build always
+  # links a current XCDE_SHADER_SIG (see above).
+  [ "$f" = vulkan/precompile_sig ] || pick "nvn/$f" || continue
   extra=""
   case "$f" in vulkan/exec|vulkan/textures) extra="-O2" ;; esac
   if [ "$f" = smaa_data ]; then  # [XCDE] the SMAA reference shader (third_party/smaa, MIT) as a C string
@@ -32,9 +40,7 @@ for f in $NVN; do
     .venv/Scripts/python tools/build/gen_smaa_inc.py third_party/smaa/SMAA.hlsl build/inc/smaa_hlsl.inc || fail=1
     extra="-Ibuild/inc -Ithird_party/smaa/Textures"
   fi
-  if [ "$f" = vulkan/precompile_sig ]; then  # [XCDE] T282: the shader precompile fingerprint (tools/build/shader_sig.py)
-    mkdir -p build/inc
-    .venv/Scripts/python tools/build/shader_sig.py --out build/inc/shader_sig.h || fail=1
+  if [ "$f" = vulkan/precompile_sig ]; then  # [XCDE] T282: the shader precompile fingerprint (generated above)
     extra="-Ibuild/inc"
   fi
   o=build/nvn/nvn_$(echo $f | tr / _).o

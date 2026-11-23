@@ -261,20 +261,33 @@ def game_executable():
     return sibling if sibling.is_file() else None
 
 
-def precompile_is_current(data_root, exe, dump):
-    """Whether the runtime considers the precompiled shaders current for this build and these game files:
-    `<game> --precompile-status <dump>` (runtime/nvn/vulkan/precompile_sig.c) compares the translator/SPIR-V compiler
-    fingerprint, the SPIR-V options and the game files with cache/precompile_done.txt, without scanning or opening a
-    Vulkan device. Exit code 0 = current. ([XCDE] T282: before, this read an `exe <size> <mtime>` line, so every new
-    build precompiled everything again even when it could not change the shaders.)"""
+# Exit codes of the runtime's `--precompile-status <dump>` mode (runtime/nvn/vulkan/precompile.c).
+PC_STATUS_CURRENT, PC_STATUS_STALE, PC_STATUS_UNREADABLE = 0, 1, 2
+PC_STATUS_TIMEOUT_S = 60  # ([XCDE] T282 review: the walk measured 78-108 ms; this only bounds a hung/locked child)
+
+
+def precompile_status(data_root, exe, dump):
+    """The runtime's answer for cache/precompile_done.txt: 0 current, 1 needs preparing, 2 the game files cannot be read;
+    -1 when it cannot be asked (no runnable executable, timeout, unexpected exit). [XCDE] T282"""
     reset_dll_directory()
     flags = subprocess.CREATE_NO_WINDOW if sys.platform == 'win32' else 0
     try:
         done = subprocess.run([str(exe), '--precompile-status', str(dump)], cwd=data_root, env=child_environment(),
-                              stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, creationflags=flags)
-    except OSError:
-        return False
-    return done.returncode == 0
+                              stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, creationflags=flags,
+                              timeout=PC_STATUS_TIMEOUT_S)
+    except (OSError, subprocess.TimeoutExpired):
+        return -1
+    return done.returncode if done.returncode in (0, 1, 2) else -1
+
+
+def precompile_is_current(data_root, exe, dump):
+    """Whether the runtime considers the precompiled shaders current for this build and these game files:
+    `<game> --precompile-status <dump>` (runtime/nvn/vulkan/precompile_sig.c) compares the translator/SPIR-V compiler
+    fingerprint, the environment switches, the precompile's pass switches and the game files with
+    cache/precompile_done.txt, without scanning or opening a Vulkan device. Exit code 0 = current. ([XCDE] T282: before,
+    this read an `exe <size> <mtime>` line, so every new build precompiled everything again even when it could not change
+    the shaders.)"""
+    return precompile_status(data_root, exe, dump) == PC_STATUS_CURRENT
 
 
 # [XCDE] T281: the precompile writes "<phase> <overall done> <overall total> <this pass done> <this pass total>" over
@@ -332,8 +345,14 @@ def precompile_shaders(dump):
         print_progress(1, 'Shaders compile while you play')
         return
     data_root = default_data_root()
-    if precompile_is_current(data_root, exe, dump):
+    status = precompile_status(data_root, exe, dump)
+    if status == PC_STATUS_CURRENT:
         print_progress(1, 'Shaders already prepared')
+        return
+    if status == PC_STATUS_UNREADABLE:  # [XCDE] T282 review: the run would exit 2 at once and print only a generic error
+        print('gamebuild: the game files cannot be read (the shader precompile was skipped); check the input dump',
+              flush=True)
+        print_progress(1, 'Shaders compile while you play')
         return
     print_progress(share, 'Preparing the shaders')
     (data_root / 'cache').mkdir(parents=True, exist_ok=True)

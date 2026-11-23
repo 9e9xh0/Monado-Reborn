@@ -1,6 +1,7 @@
 // [XCDE] T282: vk_precompile_sig - the signature that decides whether the precompiled shader cache is current. The
-// inputs are the build's translator/SPIR-V compiler fingerprint (XCDE_SHADER_SIG), the options that change the SPIR-V
-// and the game files; the build generates shader_sig.h, this test passes the macro instead.
+// inputs are the build's translator/SPIR-V compiler fingerprint (XCDE_SHADER_SIG), the revision of exec.c's build path,
+// the environment switches that change the translation/SPIR-V/passes and the game files; the build generates
+// shader_sig.h, this test passes the macro instead.
 #ifndef XCDE_SHADER_SIG
 #error "test_precompile_sig needs -DXCDE_SHADER_SIG=... (precompile_sig.c takes it when the build header is absent)"
 #endif
@@ -10,26 +11,46 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
+#include <time.h>
 
 #ifdef _WIN32
 #include <direct.h>
 #include <process.h>
+#include <sys/utime.h>
+#include <windows.h>
 #define MKDIR(p) _mkdir(p)
 #define RMDIR(p) _rmdir(p)
 #define PID _getpid()
 static void set_env(const char *name, const char *value) {
-    char line[1200];
-    snprintf(line, sizeof line, "%s=%s", name, value ? value : "");
-    _putenv(line);
+    // (SetEnvironmentVariable, not _putenv, for empty/removal: _putenv("name=") deletes the variable, and a set-but-empty
+    // value is a real signature input here)
+    if (value && *value) {
+        char line[1200];
+        snprintf(line, sizeof line, "%s=%s", name, value);
+        _putenv(line);
+    } else {
+        SetEnvironmentVariableA(name, value ? "" : NULL);
+    }
+}
+static int set_mtime(const char *path, time_t t) {
+    struct _utimbuf b;
+    b.actime = b.modtime = t;
+    return _utime(path, &b);
 }
 #else
 #include <unistd.h>
+#include <utime.h>
 #define MKDIR(p) mkdir((p), 0755)
 #define RMDIR(p) rmdir(p)
 #define PID getpid()
 static void set_env(const char *name, const char *value) {
     if (value) setenv(name, value, 1);
     else unsetenv(name);
+}
+static int set_mtime(const char *path, time_t t) {
+    struct utimbuf b;
+    b.actime = b.modtime = t;
+    return utime(path, &b);
 }
 #endif
 
@@ -68,29 +89,37 @@ static bool hex16(const char *s) {
     for (int i = 0; i < 16; i++) if (!isxdigit((unsigned char)s[i]) || isupper((unsigned char)s[i])) return false;
     return true;
 }
+static void clear_env(void) {
+    set_env("XCDE_FS_OPT", NULL);
+    set_env("LARECOMP_VK_OPT", NULL);
+    set_env("XCDE_STATIC_STACKS", NULL);
+    set_env("XCDE_PRECOMPILE_PIPELINES", NULL);
+}
 
 int main(void) {
     char seed[1200];
+    // A unique root per run: a killed earlier run must never leave files that make MKDIR fail (PID reuse is possible).
 #ifdef _WIN32
     const char *tmp = getenv("TEMP");
-    snprintf(root, sizeof root, "%s/monado-precompile-sig-%ld", tmp && *tmp ? tmp : ".", (long)PID);
+    snprintf(root, sizeof root, "%s/monado-precompile-sig-%ld-%ld", tmp && *tmp ? tmp : ".", (long)PID, (long)time(NULL));
 #else
-    snprintf(root, sizeof root, "/tmp/monado-precompile-sig-%ld", (long)PID);
+    snprintf(root, sizeof root, "/tmp/monado-precompile-sig-%ld-%ld", (long)PID, (long)time(NULL));
 #endif
-    RMDIR(root);  // (a leftover from a killed run)
+    RMDIR(root);  // (best effort: only an empty leftover can be removed)
     CHECK(MKDIR(root) == 0);
     CHECK(make_dir("dump"));
     CHECK(make_dir("dump/romfs"));
     CHECK(make_dir("dump/romfs/sub"));
+    CHECK(make_dir("nodump"));
     write_file("dump/romfs/a.wimdo", "one", 3);
     write_file("dump/romfs/sub/b.wismt", "two", 3);
     write_file("dump/romfs/c.wishp", "three", 5);
     write_file("seed.bin", "seed", 4);
-    write_file("dump.nup", "package", 7);
+    write_file("dump.nup", "NUP\x01" "package", 11);  // (a package is told by its magic, not by its name)
+    write_file("plain.bin", "not a game root", 15);
     path_of(seed, sizeof seed, "seed.bin");
     set_env("XCDE_VARIANTS_SEED", seed);
-    set_env("XCDE_FS_OPT", NULL);
-    set_env("LARECOMP_VK_OPT", NULL);
+    clear_env();
 
     // Stable, 16 lowercase hex.
     char a[17], b[17];
@@ -104,35 +133,67 @@ int main(void) {
     CHECK(sig_of("dump", b));
     CHECK(strcmp(a, b) != 0);
 
-    // An added file, and a renamed one (the relative name is part of the signature: same bytes, other program set).
+    // A same-size edit with a new mtime (the usual "patched container" case: the size alone does not tell).
+    CHECK(sig_of("dump", a));
+    write_file("dump/romfs/c.wishp", "THREE", 5);
+    {
+        char p[1200];
+        path_of(p, sizeof p, "dump/romfs/c.wishp");
+        CHECK(set_mtime(p, time(NULL) + 5) == 0);
+    }
+    CHECK(sig_of("dump", b));
+    CHECK(strcmp(a, b) != 0);
+
+    // An added file, a removed one, and a renamed one (the relative name is part of the signature: same bytes, other
+    // program set). Removal is isolated so a regression there cannot hide behind another change.
     write_file("dump/romfs/sub/d.wiefb", "four", 4);
     CHECK(sig_of("dump", a));
     CHECK(strcmp(a, b) != 0);
     remove_file("dump/romfs/sub/d.wiefb");
+    CHECK(sig_of("dump", b));
+    CHECK(strcmp(a, b) != 0);
     char from[1200], to[1200];
     path_of(from, sizeof from, "dump/romfs/a.wimdo");
     path_of(to, sizeof to, "dump/romfs/e.wimdo");
     CHECK(rename(from, to) == 0);
-    CHECK(sig_of("dump", b));
+    CHECK(sig_of("dump", a));
     CHECK(strcmp(a, b) != 0);
 
     // A .nup package is one file: its size (and time) is the fingerprint.
     char p1[17], p2[17];
     CHECK(sig_of("dump.nup", p1));
-    write_file("dump.nup", "package with more", 17);
+    write_file("dump.nup", "NUP\x01" "package with more", 21);
     CHECK(sig_of("dump.nup", p2));
     CHECK(strcmp(p1, p2) != 0);
 
-    // The environment options that change the compiled SPIR-V.
+    // A root is a dump folder with a romfs/ or a .nup package file; a plain file must answer "unreadable", never
+    // "stale" (the callers then skip the doomed run).
+    CHECK(!sig_of("plain.bin", a));
+    CHECK(!sig_of("nodump", a));  // (a folder without romfs/)
+
+    // The environment switches: presence and value are both inputs. Unset, empty ("optimisation off" for stage_opt) and
+    // "0" must all give different signatures.
     CHECK(sig_of("dump", a));
+    set_env("XCDE_FS_OPT", "");
+    CHECK(sig_of("dump", b));
+    CHECK(strcmp(a, b) != 0);  // [review] empty is not unset
     set_env("XCDE_FS_OPT", "0");
     CHECK(sig_of("dump", b));
     CHECK(strcmp(a, b) != 0);
-    set_env("XCDE_FS_OPT", NULL);
     set_env("LARECOMP_VK_OPT", "0");
     CHECK(sig_of("dump", b));
     CHECK(strcmp(a, b) != 0);
-    set_env("LARECOMP_VK_OPT", NULL);
+    clear_env();
+    CHECK(sig_of("dump", b));
+    CHECK(!strcmp(a, b));  // (back to the baseline)
+    set_env("XCDE_STATIC_STACKS", "0");  // a translator switch that changes the emitted GLSL
+    CHECK(sig_of("dump", b));
+    CHECK(strcmp(a, b) != 0);
+    clear_env();
+    set_env("XCDE_PRECOMPILE_PIPELINES", "0");  // a pass switch: a run without pipelines warmed a different cache
+    CHECK(sig_of("dump", b));
+    CHECK(strcmp(a, b) != 0);
+    clear_env();
 
     // The shipped variant seed: new recorded variants mean new jobs to warm.
     CHECK(sig_of("dump", a));
@@ -146,17 +207,18 @@ int main(void) {
     CHECK(!vk_precompile_sig(missing, a));
 
     // Clean up (best effort: the test must not leave files behind).
-    remove_file("dump/romfs/a.wimdo");
     remove_file("dump/romfs/e.wimdo");
     remove_file("dump/romfs/c.wishp");
     remove_file("dump/romfs/sub/b.wismt");
     remove_file("dump.nup");
+    remove_file("plain.bin");
     remove_file("seed.bin");
     {
         char p[1200];
         path_of(p, sizeof p, "dump/romfs/sub"); RMDIR(p);
         path_of(p, sizeof p, "dump/romfs"); RMDIR(p);
         path_of(p, sizeof p, "dump"); RMDIR(p);
+        path_of(p, sizeof p, "nodump"); RMDIR(p);
     }
     RMDIR(root);
 

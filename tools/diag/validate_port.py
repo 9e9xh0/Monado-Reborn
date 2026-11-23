@@ -102,19 +102,19 @@ def main():
         'test_condvar': ['runtime/platform/windows.c', 'runtime/log.c', 'runtime/diag/diag.c', 'runtime/diag/sampler.c', '-lwinmm', '-ldbghelp'],
         'test_foliage_distance': ['runtime/hle/foliage_distance.c'],
         'test_graphics_options': ['runtime/hle/graphics.c'],
+        # [XCDE] T282: the precompile signature. Its own source unit compiles with the macro instead of the header.
         'test_precompile_sig': ['runtime/nvn/vulkan/precompile_sig.c', '-DXCDE_SHADER_SIG="native"'],
     }
     strict_tests = {
         'test_cliff_batch', 'test_display_options', 'test_foliage_distance', 'test_gpu_probe',
-        'test_graphics_options', 'test_port_core', 'test_render_policy',
+        'test_graphics_options', 'test_port_core', 'test_render_policy', 'test_precompile_sig',
         'test_settings_roundtrip', 'test_stick_click', 'test_tex_resize', 'test_ui_scale', 'test_window_size',
     }
     standalone_tests = [
         'test_cliff_batch', 'test_display_options', 'test_port_core', 'test_gpu_probe',
         'test_render_policy', 'test_settings_roundtrip', 'test_stick_click', 'test_tex_resize',
         'test_time_math', 'test_movie_buf', 'test_ui_scale', 'test_window_size', 'test_utf8_paths',
-        'test_precompile_sig',
-    ]
+    ]  # (test_precompile_sig is built from extra_sources above: it needs its own source unit + macro; do not list it twice)
     for test in [*standalone_tests, *[k for k in extra_sources if k != 'test_settings_roundtrip']]:
         if test in args.skip_test:
             skipped.append(test)

@@ -4155,6 +4155,9 @@ void vk_prewarm_hold(uint64_t frame_draws) {
 // SPIR-V cache, our pipeline cache (cache/vk_pipelines.bin) and the driver's own shader cache keep the results, so the
 // game's first draw with the program finds its pieces compiled: a fast link instead of native compiles. Synchronous
 // (the calling thread translates and compiles). Returns 0 if not built; *vs_attr = the vertex inputs it reads.
+// [XCDE] T282: a change here (or in vk_precompile_variant / the gpl_* key and state below) changes what the precompile
+// warms; shader_sig.py does not hash this file (it changes for gameplay too), so bump XCDE_PRECOMPILE_ARTIFACTS_REV in
+// precompile_rev.h for it instead.
 int vk_precompile_program(const NvnProgram *np, const ShaderKey *vkey, const ShaderKey *fkey, uint32_t *vs_attr) {
     Prog *p = calloc(1, sizeof *p);
     p->cliff_candidate = cliff_program_known(np);

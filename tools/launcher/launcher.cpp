@@ -960,7 +960,7 @@ static void launch() {
 // when it was never done (once, a few minutes; "Omitir" skips it).
 // [XCDE] T281: cache/precompile_progress.txt now covers the four passes ("<phase> <overall done> <overall total> <this
 // pass done> <this pass total>"), so the bar moves for the seed and whole-pipeline passes too and the text can show the
-// time left. The manual "Precompile shaders" button also clears the crash skip list (a cancel used to write its
+// time left. The manual "Precompile shaders" button also retries the crash skip list (a cancel used to write its
 // in-flight jobs there as if the driver had crashed; pc_stop now deletes that file instead).
 #ifdef _WIN32
 static HANDLE g_pc_proc;
@@ -975,15 +975,36 @@ static std::string g_pc_text;
 // [XCDE] T211: "already done for this build" was the done stamp's build/xcde.exe size and time, so a new build
 // precompiled again (the translator fixes that change SPIR-V made that safe).
 // [XCDE] T282: "this build" is now the runtime's answer, not the executable's file stamp. `xcde --precompile-status
-// targets` (runtime/nvn/vulkan/precompile_sig.c) compares the translator/SPIR-V compiler fingerprint, the SPIR-V options
-// and the game files with the stamp's `sig` line, without scanning or starting Vulkan: a rebuild that cannot change the
-// shaders (launcher, UI, gameplay code) keeps the precompiled cache, which used to be redone after every build. The
-// answer is memoized (pc_done is asked every frame); pc_forget drops it when the executable or the game files may have
-// changed (a precompile ended, the builder made the executable, the dump was switched).
+// targets` (runtime/nvn/vulkan/precompile_sig.c) compares the translator/SPIR-V compiler fingerprint, the environment
+// switches, the precompile's pass switches and the game files with the stamp's `sig` line, without scanning or starting
+// Vulkan: a rebuild that cannot change the shaders (launcher, UI, gameplay code) keeps the precompiled cache, which used
+// to be redone after every build. The answer is memoized (pc_done is asked every frame); pc_forget drops it when the
+// executable or the game files may have changed (a precompile ended, the builder made the executable, the dump was
+// switched, the settings or the environment rows were edited).
 static int g_pc_current = -1;  // -1: not asked yet, 0: needs preparing, 1: current
 static void pc_forget() { g_pc_current = -1; }
-static bool pc_status_now() {
-    if (!exists(GAME_EXE)) return true;  // (no executable yet: the builder makes it; do not start a precompile that cannot run)
+
+// [XCDE] T282 review: the memoized answer must not outlive a rebuilt executable (the base code stat'ed it on every call).
+// A changed exe only drops the memo: the next answer still comes from the runtime, so an unrelated rebuild (same
+// fingerprint) keeps the precompiled shaders.
+static Sint64 g_pc_exe_size = -1, g_pc_exe_mtime = -1;
+static void pc_check_exe() {
+    SDL_PathInfo pi;
+    Sint64 sz = -1, mt = -1;
+    if (SDL_GetPathInfo(path(GAME_EXE).c_str(), &pi)) {
+        sz = (Sint64)pi.size;
+        mt = (Sint64)(pi.modify_time / SDL_NS_PER_SECOND);
+    }
+    if (sz != g_pc_exe_size || mt != g_pc_exe_mtime) { g_pc_exe_size = sz; g_pc_exe_mtime = mt; pc_forget(); }
+}
+
+// [XCDE] T282: the runtime's answer. 0/1 are its "current" / "needs preparing"; 2 means "cannot tell" (the game files
+// cannot be read, the child did not start or did not answer). 2 does not start a precompile that would fail the same
+// way: the game then compiles the shaders as it reaches them.
+enum { PC_STATUS_CURRENT, PC_STATUS_STALE, PC_STATUS_UNKNOWN };
+static int pc_status_now() {
+    apply_env();  // [XCDE] T282 review: the signature covers xcde_env.ini options: ask with the same env pc_start uses
+    if (!exists(GAME_EXE)) return PC_STATUS_CURRENT;  // (no executable yet: the builder makes it; do not start a precompile that cannot run)
     std::string log = path("build/last_precompile_status.log");
 #ifdef _WIN32
     std::string exe = path(GAME_EXE);
@@ -1003,28 +1024,40 @@ static bool pc_status_now() {
     std::wstring wexe = WPath(exe), wcmd = W(cmd);
     BOOL ok = CreateProcessW(wexe.c_str(), wcmd.data(), NULL, NULL, TRUE, CREATE_NO_WINDOW, NULL, WPath(g_root).c_str(), &si, &pi);
     if (h != INVALID_HANDLE_VALUE) CloseHandle(h);
-    if (!ok) return true;  // (cannot ask it: do not start a precompile that would fail the same way)
+    if (!ok) return PC_STATUS_UNKNOWN;  // (cannot ask it: do not start a precompile that would fail the same way)
     DWORD code = 1;
-    if (WaitForSingleObject(pi.hProcess, 30000) == WAIT_OBJECT_0) GetExitCodeProcess(pi.hProcess, &code);
-    else TerminateProcess(pi.hProcess, 1);  // (a hung status check must not freeze the launcher)
+    bool answered = WaitForSingleObject(pi.hProcess, 30000) == WAIT_OBJECT_0;  // (a hung status check must not freeze the launcher)
+    if (answered) GetExitCodeProcess(pi.hProcess, &code);
+    else TerminateProcess(pi.hProcess, 1);
     CloseHandle(pi.hThread);
     CloseHandle(pi.hProcess);
-    return code == 0;
+    if (!answered) return PC_STATUS_UNKNOWN;
+    return code == 0 ? PC_STATUS_CURRENT : code == 1 ? PC_STATUS_STALE : PC_STATUS_UNKNOWN;
 #else
     pid_t pid = spawn_logged({path(GAME_EXE), "--precompile-status", "targets"}, log, false);
-    if (!pid) return true;  // (cannot ask it: do not start a precompile that would fail the same way)
+    if (!pid) return PC_STATUS_UNKNOWN;  // (cannot ask it: do not start a precompile that would fail the same way)
     int st = 0;
     for (int i = 0; i < 300; i++) {  // (up to 30 s: a game-files walk from a slow disk)
-        if (waitpid(pid, &st, WNOHANG) == pid) return WIFEXITED(st) && WEXITSTATUS(st) == 0;
+        if (waitpid(pid, &st, WNOHANG) == pid) {
+            if (!WIFEXITED(st)) return PC_STATUS_UNKNOWN;
+            int code = WEXITSTATUS(st);
+            return code == 0 ? PC_STATUS_CURRENT : code == 1 ? PC_STATUS_STALE : PC_STATUS_UNKNOWN;
+        }
         SDL_Delay(100);
     }
     kill(pid, SIGKILL);
     waitpid(pid, &st, 0);
-    return false;
+    return PC_STATUS_UNKNOWN;
 #endif
 }
+static bool pc_running();  // (defined below; pc_done must not probe while the run writes the cache)
 static bool pc_done() {
-    if (g_pc_current < 0) g_pc_current = pc_status_now() ? 1 : 0;
+    pc_check_exe();
+    if (g_pc_current < 0) {
+        if (pc_running()) return false;  // [review] (the answer is known to be stale; do not spawn a second probe)
+        int status = pc_status_now();
+        g_pc_current = status == PC_STATUS_CURRENT ? 1 : status == PC_STATUS_STALE ? 0 : 1;  // (unknown: do not redo the passes)
+    }
     return g_pc_current == 1;
 }
 static bool pc_running() {
@@ -1035,20 +1068,45 @@ static bool pc_running() {
 #endif
 }
 
+// [XCDE] T282 review: XCDE_PRECOMPILE_FORCE=1 for the explicit "Precompile shaders" child, restored as soon as it is
+// spawned. The runtime then redoes the passes even when the stamp matches and clears the crash / in-flight lists itself
+// (precompile.c); the launcher no longer deletes the done stamp before it knows the child even started, so a failed
+// spawn (antivirus lock, a missing DLL) cannot throw away a valid cache.
+struct PcForce {
+    bool on;
+#ifdef _WIN32
+    std::wstring old;
+    explicit PcForce(bool f) : on(f) {
+        if (!on) return;
+        old = env_w(L"XCDE_PRECOMPILE_FORCE");
+        SetEnvironmentVariableW(L"XCDE_PRECOMPILE_FORCE", L"1");
+    }
+    ~PcForce() {
+        if (on) SetEnvironmentVariableW(L"XCDE_PRECOMPILE_FORCE", old.empty() ? nullptr : old.c_str());
+    }
+#else
+    std::string old;
+    explicit PcForce(bool f) : on(f) {
+        if (!on) return;
+        old = env_u8("XCDE_PRECOMPILE_FORCE");  // (env_u8: the launcher never uses the CRT's getenv for settings)
+        setenv("XCDE_PRECOMPILE_FORCE", "1", 1);
+    }
+    ~PcForce() {
+        if (!on) return;
+        if (!old.empty()) setenv("XCDE_PRECOMPILE_FORCE", old.c_str(), 1);
+        else unsetenv("XCDE_PRECOMPILE_FORCE");
+    }
+#endif
+    PcForce(const PcForce &) = delete;
+    PcForce &operator=(const PcForce &) = delete;
+};
+
 static void pc_start(bool then_play, bool fresh = false) {
     apply_env();  // [XCDE] the Diagnostics tab variables also reach the shader precompiler
-    if (fresh) {  // [XCDE] T281: an explicit "Precompile shaders": retry the jobs that once crashed the driver, and drop a
-                  // stale in-flight record. The automatic run (JUGAR) keeps the skip list; a user stop is not a crash.
-                  // [XCDE] T282: and drop the done stamp: the run must redo the passes (retry list / refresh the driver's
-                  // caches), not answer "current" and exit (precompile.c checks the stamp against the same signature).
-        xcde_utf8_remove(path("cache/precompile_skip.txt").c_str());
-        xcde_utf8_remove(path("cache/precompile_inflight.bin").c_str());
-        xcde_utf8_remove(path("cache/precompile_done.txt").c_str());
-    }
+    if (g_pc_proc) return;
     pc_forget();
     g_pc_t0 = SDL_GetTicks();
 #ifdef _WIN32
-    if (g_pc_proc) return;
     std::string exe = path("build/xcde.exe");
     std::string cmd = "\"" + exe + "\" --precompile targets";
     std::wstring p = WPath(g_root) + L"\\build;C:\\msys64\\ucrt64\\bin;" + env_w(L"PATH");  // [portable] the folder's own DLLs first
@@ -1067,8 +1125,10 @@ static void pc_start(bool then_play, bool fresh = false) {
         si.hStdInput = GetStdHandle(STD_INPUT_HANDLE);
     }
     std::wstring wexe = WPath(exe), wcmd = W(cmd);
-    BOOL ok = CreateProcessW(wexe.c_str(), wcmd.data(), NULL, NULL, TRUE, CREATE_NO_WINDOW | BELOW_NORMAL_PRIORITY_CLASS, NULL,
-                             WPath(g_root).c_str(), &si, &pi);
+    BOOL ok;
+    { PcForce force(fresh);  // [review] the child gets XCDE_PRECOMPILE_FORCE=1; a failed spawn leaves the stamps alone
+      ok = CreateProcessW(wexe.c_str(), wcmd.data(), NULL, NULL, TRUE, CREATE_NO_WINDOW | BELOW_NORMAL_PRIORITY_CLASS, NULL,
+                          WPath(g_root).c_str(), &si, &pi); }
     if (h != INVALID_HANDLE_VALUE) CloseHandle(h);
     if (!ok) { g_status = std::string(T("No se pudo iniciar la precompilación (error ")) + std::to_string(GetLastError()) + ")"; return; }
     CloseHandle(pi.hThread);
@@ -1078,10 +1138,11 @@ static void pc_start(bool then_play, bool fresh = false) {
     g_pc_text = T("Buscando shaders en los archivos del juego...");
     g_status = then_play ? T("Preparando shaders antes de la primera partida (solo esta vez)") : T("Precompilando shaders");
 #else
-    if (g_pc_proc) return;
     SDL_CreateDirectory(path("cache").c_str());
     xcde_utf8_remove(path("cache/precompile_progress.txt").c_str());
-    pid_t pid = spawn_logged({path(GAME_EXE), "--precompile", "targets"}, path("build/last_precompile.log"), true);
+    pid_t pid;
+    { PcForce force(fresh);  // [review] the child gets XCDE_PRECOMPILE_FORCE=1; a failed spawn leaves the stamps alone
+      pid = spawn_logged({path(GAME_EXE), "--precompile", "targets"}, path("build/last_precompile.log"), true); }
     if (!pid) { g_status = std::string(T("No se pudo iniciar la precompilación (error ")) + strerror(errno) + ")"; return; }
     g_pc_proc = pid;
     g_pc_then_play = then_play;
@@ -1096,12 +1157,19 @@ static void pc_stop() {
     // precompile leaves cache/precompile_inflight.bin behind, and the next run used to move those ~4 jobs to the
     // crash skip list forever. Delete it: they are simply retried next run (a genuine crash leaves its own file and
     // the retry logic below still skips those jobs).
+    // [XCDE] T282 review: pc_forget afterwards (the stopped run left no stamp, so the cache is no longer current), and on
+    // Windows retry the delete for a moment: TerminateProcess is asynchronous and a still-open file would be moved to
+    // the crash skip list by the next run, the very thing this function exists to prevent.
 #ifdef _WIN32
     if (!g_pc_proc) return;
     TerminateProcess(g_pc_proc, 1);
     WaitForSingleObject(g_pc_proc, 2000);
     CloseHandle(g_pc_proc);
     g_pc_proc = NULL;
+    for (int i = 0; i < 20; i++) {
+        if (xcde_utf8_remove(path("cache/precompile_inflight.bin").c_str()) == 0 || !exists("cache/precompile_inflight.bin")) break;
+        SDL_Delay(100);
+    }
 #else
     if (!g_pc_proc) return;
     kill(-g_pc_proc, SIGTERM);  // (its process group: the driver's shader threads too)
@@ -1109,8 +1177,9 @@ static void pc_stop() {
     for (int i = 0; i < 20 && !ended; i++) { ended = waitpid(g_pc_proc, NULL, WNOHANG) == g_pc_proc; if (!ended) SDL_Delay(100); }
     if (!ended) { kill(-g_pc_proc, SIGKILL); waitpid(g_pc_proc, NULL, 0); }
     g_pc_proc = 0;
-#endif
     xcde_utf8_remove(path("cache/precompile_inflight.bin").c_str());
+#endif
+    pc_forget();
 }
 
 // (every frame while it runs) progress from the file; at the end, the result and JUGAR if it was waiting
@@ -2702,7 +2771,6 @@ int main(int argc, char **argv) {
     }
     if (shot && argc>5) { int h=std::clamp(atoi(argv[5]),540,2160); SDL_SetWindowSize(win,h*16/9,h); }
     SDL_SetWindowPosition(win, SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED);
-    if (!shot) SDL_ShowWindow(win);
     launcher_fonts(io, scale, density);
     monado_launcher_theme(scale);
     ImGui_ImplSDL3_InitForSDLRenderer(win, ren);
@@ -2722,7 +2790,11 @@ int main(int argc, char **argv) {
     static const int shot_section[] = {1, 2, 4, 5, 0, 6, 3};  // --shot tab: graphics, controls, audio, mods, home, diagnostics, cheats
     int section=shot ? (shot_tab >= 0 && shot_tab < 7 ? shot_section[shot_tab] : 0) : 0;
     uint64_t last_input=SDL_GetTicks(); bool got_event=false;
-    if (shot_pc) pc_start(false);
+    // [XCDE] T282 review: answer "shaders prepared?" once before the window appears. The status walk measured 71-72 ms on
+    // the full dump, but a cold / network drive can take seconds: do it before the first frame instead of freezing one,
+    // and only then show the window. --shot keeps its frames deterministic (and starts the forced run below).
+    if (!shot) { pc_done(); SDL_ShowWindow(win); }
+    if (shot_pc) pc_start(false, true);  // [review] the --shot precompile path must show a bar: force a run (the cache is current)
     while (run) {
         SDL_Event e;
         got_event=false;
@@ -2851,6 +2923,7 @@ int main(int argc, char **argv) {
         ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.90f, 0.20f, 0.30f, 1));
         ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.96f, 0.30f, 0.38f, 1));
         if (ImGui::Button(T("JUGAR"), ImVec2(200 * scale, 0))) {
+            if (g_mod_dirty || memcmp(&saved_cfg,&g,sizeof g)!=0) pc_forget();  // [review] (the env rows are a signature input)
             if (!gc_ready()) gc_start(true);
             else if (!pc_done()) pc_start(true);
             else { launch(); launched = g_launched_ok; if (launched) run = false; }
@@ -2870,7 +2943,7 @@ int main(int argc, char **argv) {
         ImGui::SameLine();
         bool pending=g_mod_dirty || memcmp(&saved_cfg,&g,sizeof g)!=0;
         if (ImGui::Button(g.ui_lang ? "Apply" : "Aplicar")) {
-            if (save()) { memcpy(&saved_cfg,&g,sizeof g); g_mod_dirty=false; g_status=T("Ajustes guardados en xcde.ini"); }
+            if (save()) { memcpy(&saved_cfg,&g,sizeof g); g_mod_dirty=false; g_status=T("Ajustes guardados en xcde.ini"); pc_forget(); }
             else g_status=T("No se pudieron guardar los ajustes");
         }
         ImGui::SameLine();

@@ -367,15 +367,23 @@ Triage of both symptoms, the minidump findings and the A/B table:
   low-end PC, full dump, warm cache: a full re-run took 367.8 s (scan 32.7, build 316.3, seed 1.0, pipelines 16.6) and
   393.3 s back to back - every time the game executable changed for any reason.
 - `tools/build/shader_sig.py` (new) fingerprints the sources that decide the precompiled artifacts: the Maxwell-to-GLSL
-  translator (`runtime/nvn/maxwell/`), the GLSL-to-SPIR-V compiler (`runtime/nvn/vulkan/shaders.c`, `shaders.h`, `vk.h`) and the
-  precompile's own program/key guesses (`runtime/nvn/vulkan/precompile.c`). CMake generates `build/inc/shader_sig.h`
-  from it with a custom command (only `precompile_sig.c` includes it, so a translator change recompiles that one unit),
-  and both shell build scripts and `tools/diag/validate_port.py` do the same.
+  translator (`runtime/nvn/maxwell/`, recursively), the GLSL-to-SPIR-V compiler (`runtime/nvn/vulkan/shaders.c`, `shaders.h`, `vk.h`),
+  the precompile's own program/key guesses (`runtime/nvn/vulkan/precompile.c`), the shader content hash it duplicates
+  (`runtime/nvn/objects.c`) and the runtime acceptance of the precompiled SPIR-V (`runtime/cache_validation.h`). CMake
+  generates `build/inc/shader_sig.h` from it with a custom command (only `precompile_sig.c` includes it, so a
+  translator change recompiles that one unit); both shell build scripts generate it, and `tools/diag/validate_port.py`
+  compiles the unit with `-DXCDE_SHADER_SIG="validation"` instead (it never generates the header). exec.c's build path
+  is covered by `runtime/nvn/vulkan/precompile_rev.h` (`XCDE_PRECOMPILE_ARTIFACTS_REV`), which is mixed into the
+  signature.
 - `runtime/nvn/vulkan/precompile_sig.c` (new; native test `tests/native/test_precompile_sig.c`) computes the run
-  signature: the fingerprint, the options that change the compiled SPIR-V (`LARECOMP_VK_OPT`, `XCDE_FS_OPT`, by value),
-  every file under `<dump>/romfs` by relative name, size and mtime (for a `.nup` package, its size and mtime) and the
-  shipped variant seed. Deliberately not covered: `cache/variants.bin` (it grows while playing and must not invalidate
-  the cache) and the graphics driver (its caches are its own; after a driver update press "Precompile shaders").
+  signature: the build fingerprint, the artifacts revision, the environment switches (presence and value: the SPIR-V
+  optimisation `LARECOMP_VK_OPT`/`XCDE_FS_OPT`, the translator switches that change the emitted GLSL and the
+  precompile's `XCDE_PRECOMPILE_LIBS`/`PIPELINES` pass policy), every file under `<dump>/romfs` by relative name, size
+  and mtime (for a `.nup` package: its 64-bit size and mtime - Windows' struct stat is 32-bit, the T280 trap) and the
+  shipped variant seed. A root must be a dump folder with a readable `romfs/` or a `.nup` package file; one unreadable
+  file inside romfs is skipped like the shader scan skips it. Deliberately not covered: `cache/variants.bin` (it grows
+  while playing and must not invalidate the cache) and the graphics driver, including the Vulkan route / selected
+  adapter from xcde.ini (after a driver update, a GPU switch or a route change press "Precompile shaders").
 - `runtime/nvn/vulkan/precompile.c`: the done stamp gained a `sig <hex>` line and lost the `exe <size> <mtime>` one;
   new `--precompile-status <dump>` mode (exit 0 current, 1 needs preparing, 2 game files unreadable) that touches no
   cache, no scan and no Vulkan device; `--precompile` exits at once when the stamp's signature matches the sources
@@ -383,10 +391,15 @@ Triage of both symptoms, the minidump findings and the A/B table:
   platform/GPU init.
 - `tools/launcher/launcher.cpp`: `pc_done()` runs `<game> --precompile-status targets` (and writes its one line to
   `build/last_precompile_status.log`) instead of parsing the stamp; the answer is memoized because the UI asks every
-  frame, and dropped when the builder creates the executable, a precompile ends or another dump is selected. The
-  explicit "Precompile shaders" button now also removes the done stamp, so an explicit retry still redoes the passes.
-  `tools/gamebuild/gamebuild.py`: `precompile_is_current` runs the same status command from the data root (no scan)
-  before RecompLauncher's setup step.
+  frame, and dropped when the builder creates the executable, a precompile ends, another dump is selected, the settings
+  or the environment rows are edited, or the executable itself changed (it asks again; the runtime then decides by
+  fingerprint, so an unrelated rebuild still keeps the cache). The status child gets the same `xcde_env.ini` environment
+  as the precompile (`apply_env()`), because those options are signature inputs, and it is asked before the window is
+  shown. The explicit "Precompile shaders" button passes `XCDE_PRECOMPILE_FORCE=1` to its child instead of deleting the
+  done stamp (a spawn that fails cannot lose a valid cache; the runtime clears the crash/in-flight lists itself), and
+  exit code 2 ("game files unreadable") does not start a doomed run. `tools/gamebuild/gamebuild.py`:
+  `precompile_status` runs the same command from the data root with a timeout and keeps 0/1/2 apart before
+  RecompLauncher's setup step.
 - The measurements also exposed an older reason slow reruns never got faster: the cache never converged (consecutive
   full runs compiled 19,878 / 7,685 / 6,959 SPIR-V stages). The found shaders' named-input masks
   (`found[].int_in`/`named`) were never initialized after the `realloc`: every container that does not name its inputs
@@ -409,3 +422,36 @@ Triage of both symptoms, the minidump findings and the A/B table:
   and a runtime-only CMake configure that builds the generated header and the new unit.
 - Not verified here: the Windows build (the new code uses the existing wide-API patterns; CMake, both shell scripts and
   `validate_port.py` were updated) and a real RecompLauncher setup run.
+
+## 2026-11-24 — PR review fixes (T281/T282)
+
+Review follow-ups on the two commits above (the Windows runtime is still not executed here):
+
+- Precompile: clamp `nscanners` to the 64-entry thread array (a >128-logical-CPU Linux host overflowed the stack; the
+  CPUs count is not bounded); bound the >64 MB scan budget by bytes (`RAM/8`) as well as by file count; require
+  `cache/spirv.idx` for "current" (a truncated pack alone must not claim the cache is there); remove the done stamp only
+  after `gf_init` validated the root; `XCDE_PRECOMPILE_FORCE=1` now also clears the crash skip list and the in-flight
+  record, so the launcher button can force a retry without deleting anything itself; `job_built()` is recorded only for
+  variants that actually built (the seed pass no longer skips a failed variant); an exact `sig ` line match; a
+  `--precompile` with a plain file as root exits 2 and leaves the stamp alone (the signature validates the root).
+- Signature: 64-bit root metadata on Windows through the wide API (the T280 `.nup` case: a 15 GB package through
+  `_wstat64i32`); environment switches are mixed by presence *and* value (a set-but-empty `XCDE_FS_OPT=` is not unset);
+  the translator's GLSL switches and the precompile's pass switches are covered; `runtime/nvn/objects.c` and
+  `runtime/cache_validation.h` join the build fingerprint, the translator folder is hashed recursively, and
+  `precompile_rev.h` covers exec.c's build path; an unreadable entry inside romfs is skipped like the scan skips it, a
+  directory recursion cap turns a symlink loop into "unreadable", and a folder without `romfs/` or a package without
+  the `NUP` magic is "unreadable", not "stale".
+- Translator re-entrancy: the remaining function-scope statics reachable from `maxwell_translate` (the lazy `getenv`
+  caches and the two diagnostic counters) are `_Thread_local`; `g_wide_box_possible` is `_Atomic` (the render thread
+  writes it on a resize while precompile workers read it).
+- Build/launcher: a selective `scripts/build_rt_gfx.sh <unit>` rebuild always regenerates the fingerprint header and
+  recompiles `precompile_sig` (a translator edit + relink could otherwise carry a stale fingerprint and skip the
+  re-precompile); `validate_port.py` builds `test_precompile_sig` once (it was listed twice) and warning-strict; the
+  status probe is skipped while a precompile runs, answered before the window is shown, and `--shot … precompile` forces
+  a run so the screenshot still shows the bar; the Windows `pc_stop` retries the in-flight delete (TerminateProcess is
+  asynchronous) and the memo is dropped when a stop happens.
+- Tests: native signature test now builds a unique temp root (a killed run + PID reuse cannot wedge it), checks the
+  isolated removal, a same-size mtime-only edit, a plain-file root, a folder without romfs, set-empty vs unset options,
+  a translator switch and a pass switch; unit tests updated for the force/memo/exit-code contracts and the new
+  fingerprint inputs. `scripts/ci.sh`: 220 unit tests (10 skipped); native suite and a runtime-only CMake build of the
+  changed units pass.

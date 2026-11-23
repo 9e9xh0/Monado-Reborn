@@ -33,8 +33,8 @@
 // run's pass durations: the next run weights the bar with them. Threads at below-normal priority.
 // XCDE_PRECOMPILE_THREADS=<n> (default: all logical CPUs but one); XCDE_PRECOMPILE_LIST=<file>: the shader hashes and
 // programs found (tests); XCDE_PRECOMPILE_LIBS=0: SPIR-V only (no Vulkan device, no pipeline libraries);
-// XCDE_PRECOMPILE_FORCE=1: run even when the done stamp says the cache is current (the manual launcher button also
-// removes the stamp).
+// XCDE_PRECOMPILE_FORCE=1: run even when the done stamp says the cache is current, and retry the jobs on the crash list
+// (cache/precompile_skip.txt) and the in-flight ones; the manual launcher button sets it for its child process.
 //
 // [XCDE] T281, other changes: the translator is re-entrant now (runtime/nvn/maxwell/translate.c; its scratch buffers
 // and the guest-heap range are thread-local), so the workers translate in parallel instead of queueing on one global
@@ -54,6 +54,12 @@
 // variants of those shaders - a different set every run - and, since T281, the build started during the scan while the
 // scanners were still merging the masks of the shaders they had not reached. Both are fixed: the fields are initialized
 // when a shader is added and the build workers start when the scan is done.
+//
+// [XCDE] T282 review follow-ups: the explicit button passes XCDE_PRECOMPILE_FORCE instead of deleting the done stamp (a
+// failed spawn can no longer throw away a valid cache); the scanner count is clamped to its thread array; the >64 MB
+// scan budget is bounded by bytes as well as files; a "current" cache also requires cache/spirv.idx (the pack is
+// unreadable without it); the done stamp is removed only once the game files were validated; and the signature covers
+// the translator's environment switches and the precompile's own pass switches (runtime/nvn/vulkan/precompile_sig.c).
 #include "../../platform/dir_utf8.h"
 #include <pthread.h>
 #include <stdatomic.h>
@@ -283,20 +289,27 @@ static void scan_buf(const uint8_t *d, size_t n) {
 static pthread_mutex_t big_mutex = PTHREAD_MUTEX_INITIALIZER;
 static pthread_cond_t big_cond = PTHREAD_COND_INITIALIZER;
 static int big_inflight, big_slots = -1;
-static void big_enter(void) {
+static uint64_t big_bytes, big_limit;  // [XCDE] T282 review: bound the bytes held too, not only the file count
+static void big_enter(uint64_t size) {
     pthread_mutex_lock(&big_mutex);
     if (big_slots < 0) {
         extern int SDL_GetSystemRAM(void);
         int ram = SDL_GetSystemRAM();
         big_slots = ram >= 24000 ? 6 : ram >= 12000 ? 4 : ram >= 8000 ? 2 : 1;
+        big_limit = ram > 0 ? (uint64_t)(unsigned)ram * 1024 * 1024 / 8 : 0;  // (an eighth of RAM: room for the inflate)
+        if (big_limit < (256ull << 20)) big_limit = 256ull << 20;
     }
-    while (big_inflight >= big_slots) pthread_cond_wait(&big_cond, &big_mutex);
+    // (one big file is always admitted: on a small-RAM PC it can be larger than the whole budget)
+    while (big_inflight >= big_slots || (big_inflight > 0 && big_bytes + size > big_limit))
+        pthread_cond_wait(&big_cond, &big_mutex);
     big_inflight++;
+    big_bytes += size;
     pthread_mutex_unlock(&big_mutex);
 }
-static void big_leave(void) {
+static void big_leave(uint64_t size) {
     pthread_mutex_lock(&big_mutex);
     big_inflight--;
+    big_bytes -= size;
     pthread_cond_broadcast(&big_cond);
     pthread_mutex_unlock(&big_mutex);
 }
@@ -304,10 +317,10 @@ static void scan_file(const char *path) {
     GfSource src;  // [XCDE] T280: from the romfs folder or the .nup package (runtime/services/game_files.c)
     if (!gf_source(path, &src) || !src.size) return;
     bool big = src.size > (64 << 20);
-    if (big) big_enter();
+    if (big) big_enter(src.size);
     size_t n = 0;
     uint8_t *d = gf_read(path, &n);
-    if (!d) { if (big) big_leave(); return; }
+    if (!d) { if (big) big_leave(src.size); return; }
     scan_buf(d, n);
     // xbc1 blocks: "xbc1", u32 version, u32 decompressed size, u32 compressed size, u32 hash, name; zlib data at +0x30
     for (size_t i = 0; i + 0x30 <= (size_t)n; i += 4) {
@@ -321,7 +334,7 @@ static void scan_file(const char *path) {
         i += 0x30 + (csz & ~3u) - 4;
     }
     free(d);
-    if (big) big_leave();
+    if (big) big_leave(src.size);
 }
 
 // files that hold shaders (measured over the whole RomFS); the monolib containers (title, menus, lighting, post
@@ -489,8 +502,7 @@ static void build_(const Found *vs, const Found *fs) {
     if (ok && (attr & 2)) {  // (vertex input 1 read: also as an unsigned integer)
         ShaderKey k = vkey_guess;
         k.attr_kind[1] = 2;
-        vk_precompile_program(&np, &k, &fkey_guess, NULL);
-        job_built(vs, fs, &k, &fkey_guess);
+        if (vk_precompile_program(&np, &k, &fkey_guess, NULL)) job_built(vs, fs, &k, &fkey_guess);  // [review] only if built
         atomic_fetch_add(&n_extra, 1);
     }
     // [XCDE] T211: in addition, the versions the container's names point to (they say what CAN be an integer: a
@@ -498,16 +510,15 @@ static void build_(const Found *vs, const Found *fs) {
     if (ok && vs->named && (vs->int_in & ~2u)) {  // integer inputs other than location 1 (nWgtIdx at 0: 356 programs)
         ShaderKey k = vkey_guess;
         for (int l = 0; l < 32; l++) if (vs->int_in >> l & 1) k.attr_kind[l] = 2;
-        vk_precompile_program(&np, &k, &fkey_guess, NULL);
-        job_built(vs, fs, &k, &fkey_guess);
+        if (vk_precompile_program(&np, &k, &fkey_guess, NULL)) job_built(vs, fs, &k, &fkey_guess);
         atomic_fetch_add(&n_named_int, 1);
     }
     if (ok && fs && fs->named && fs->int_in) {  // stencil textures: also read as integers
         ShaderKey f = fkey_guess;
         f.tex_uint = fs->int_in;
-        vk_precompile_program(&np, &vkey_guess, &f, NULL);
-        job_built(vs, fs, &vkey_guess, &f);
-        if (attr & 2) { ShaderKey k = vkey_guess; k.attr_kind[1] = 2; vk_precompile_program(&np, &k, &f, NULL); job_built(vs, fs, &k, &f); }
+        if (vk_precompile_program(&np, &vkey_guess, &f, NULL)) job_built(vs, fs, &vkey_guess, &f);
+        if (attr & 2) { ShaderKey k = vkey_guess; k.attr_kind[1] = 2;
+                        if (vk_precompile_program(&np, &k, &f, NULL)) job_built(vs, fs, &k, &f); }
         atomic_fetch_add(&n_named_int, 1);
     }
     atomic_fetch_add(ok ? &n_built : &n_failed, 1);
@@ -762,13 +773,14 @@ static bool stamp_sig(char out[64]) {  // the `sig <hex>` line of cache/precompi
     char line[256];
     bool found = false;
     while (fgets(line, sizeof line, f))
-        if (sscanf(line, "sig %63s", out) == 1) { found = true; break; }
+        if (!strncmp(line, "sig ", 4) && sscanf(line + 4, "%63s", out) == 1) { found = true; break; }
     fclose(f);
     return found;
 }
 static bool precompile_current(const char *sig) {
     struct stat sb;
     if (stat("cache/spirv.pack", &sb) || sb.st_size <= 0) return false;  // (the cache the stamp describes is gone)
+    if (stat("cache/spirv.idx", &sb) || sb.st_size <= 0) return false;  // [review] (without the index the pack can't be read)
     char old[64];
     return stamp_sig(old) && !strcmp(old, sig);
 }
@@ -788,8 +800,8 @@ int vk_precompile_status(const char *root) {
     bool have = stamp_sig(old);
     printf("[precompile] the precompiled shaders need preparing: %s%c",
            !have ? "they were never made for this build and these game files"
-                 : !strcmp(old, sig) ? "cache/spirv.pack is missing"
-                                     : "the shader translator, its SPIR-V options or the game files changed", 10);
+                 : !strcmp(old, sig) ? "cache/spirv.pack or cache/spirv.idx is missing"
+                                     : "the shader translator, its SPIR-V options, its environment switches or the game files changed", 10);
     return 1;
 }
 
@@ -801,7 +813,8 @@ int vk_precompile_main(const char *root) {
         return 2;
     }
     const char *force = getenv("XCDE_PRECOMPILE_FORCE");
-    if (!(force && atoi(force) != 0) && precompile_current(sig)) {
+    bool forced = force && atoi(force) != 0;  // ([XCDE] T282 review: the manual launcher button sets it for its child)
+    if (!forced && precompile_current(sig)) {
         printf("[precompile] the precompiled shaders are current (signature %s): nothing to do (XCDE_PRECOMPILE_FORCE=1 to run anyway)%c", sig, 10);
         return 0;
     }
@@ -809,7 +822,11 @@ int vk_precompile_main(const char *root) {
     snprintf(romfs, sizeof romfs, "%s/romfs", root);
     mkdir("cache", 0755);
     mkdir("cache/spirv", 0755);
-    remove("cache/precompile_done.txt");
+    if (forced) {  // [XCDE] T282 review: an explicit redo retries the jobs that once crashed the driver. The launcher no
+                   // longer deletes these files itself, so a spawn that never started cannot lose the skip list.
+        remove("cache/precompile_skip.txt");
+        remove("cache/precompile_inflight.bin");
+    }
     t_run = t0;
     pass_weights_load();  // [XCDE] T281: the bar's split between the passes (the previous run's measured times)
     vkey_guess.glsl = fkey_guess.glsl = 1;
@@ -820,6 +837,7 @@ int vk_precompile_main(const char *root) {
         printf("[precompile] cannot read the game files: %s\n", why);
         return 2;
     }
+    remove("cache/precompile_done.txt");  // [review] (only after the game files are known usable: a wrong root keeps the stamp)
     if (gf_is_package()) list_package(gf_pkg_node(romfs), romfs);
     else list_dir(romfs);
     files_total = npaths;
@@ -863,6 +881,7 @@ int vk_precompile_main(const char *root) {
     // build workers), but on a many-core PC half the cores feed it.
     int nscanners = nthreads > 4 ? (cpus >= 12 ? cpus / 2 : 4) : nthreads;
     if (nscanners < 1) nscanners = 1;
+    if (nscanners > 64) nscanners = 64;  // [review] (sc[] is 64: a 192-thread machine must not write past it)
     // [XCDE] T282: the build starts after the scan. T281 overlapped it (4 workers during the scan), but a build reads the
     // shaders' named-input masks (found[].int_in/named) and the scanners are still merging them (the same shader found
     // in a later container can add a name): which variants got built depended on the thread timing, so every run

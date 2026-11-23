@@ -188,6 +188,31 @@ class ShaderPrecompile(unittest.TestCase):
     def test_a_missing_game_executable_is_not_current(self):
         self.assertFalse(gb.precompile_is_current(self.root, self.root / 'no-such-game', self.root / 'dump'))
 
+    @unittest.skipUnless(os.name == 'posix', 'the stand-in game is a shell script')
+    def test_the_runtime_exit_codes_are_preserved(self):
+        # [XCDE] T282 review: 0 current, 1 stale, 2 unreadable; anything else / a timeout / an OSError is "cannot ask".
+        def status_with(code):
+            return self.game('#!/bin/sh\n[ "$1" = --precompile-status ] && exit ' + str(code) + '\nexit 9\n')
+        self.assertEqual(gb.precompile_status(self.root, status_with(0), self.root / 'dump'), gb.PC_STATUS_CURRENT)
+        self.assertEqual(gb.precompile_status(self.root, status_with(1), self.root / 'dump'), gb.PC_STATUS_STALE)
+        self.assertEqual(gb.precompile_status(self.root, status_with(2), self.root / 'dump'), gb.PC_STATUS_UNREADABLE)
+        self.assertEqual(gb.precompile_status(self.root, status_with(7), self.root / 'dump'), -1)
+        self.assertEqual(gb.precompile_status(self.root, self.root / 'no-such-game', self.root / 'dump'), -1)
+
+    def test_a_hung_status_probe_is_bounded(self):
+        # [XCDE] T282 review: subprocess.run has a timeout; a hung child answers "cannot ask", it must not hang setup.
+        with mock.patch('subprocess.run', side_effect=subprocess.TimeoutExpired(['monado'], gb.PC_STATUS_TIMEOUT_S)):
+            self.assertEqual(gb.precompile_status(self.root, self.root / 'monado', self.root / 'dump'), -1)
+
+    @unittest.skipUnless(os.name == 'posix', 'the stand-in game is a shell script')
+    def test_unreadable_game_files_do_not_start_a_doomed_run(self):
+        # [XCDE] T282 review: exit 2 means the game files cannot be read; starting --precompile would exit with the same
+        # code and report only a generic failure.
+        exe = self.game('#!/bin/sh\n[ "$1" = --precompile-status ] && exit 2\nexit 3\n')
+        lines = self.run_precompile(exe)
+        self.assertEqual(lines, ['progress 1.0000 Shaders compile while you play'])
+        self.assertFalse((self.root / 'cache/precompile_progress.txt').exists())
+
     def test_frozen_builders_library_path_is_given_back(self):
         env = {'LD_LIBRARY_PATH': '/frozen/_internal', 'LD_LIBRARY_PATH_ORIG': '/app/usr/lib'}
         with mock.patch.dict(os.environ, env, clear=False):
@@ -240,15 +265,21 @@ class SourceContracts(unittest.TestCase):
     def test_a_user_stop_does_not_poison_the_shader_skip_list(self):
         # T281: pc_stop is the user's Omitir/Detener, not a driver crash: it must delete the in-flight record that the
         # crash plumbing turns into the permanent skip list, and the explicit "Precompile shaders" button retries it.
+        # [XCDE] T282 review: the button passes XCDE_PRECOMPILE_FORCE instead of the launcher deleting the files, and the
+        # runtime clears the crash/in-flight lists itself when forced (a failed spawn cannot lose the done stamp).
         launcher = (ROOT / 'tools/launcher/launcher.cpp').read_text(encoding='utf-8')
         stop = launcher[launcher.index('static void pc_stop()'):launcher.index('static void pc_poll()')]
         self.assertIn('precompile_inflight.bin', stop)
         self.assertIn('xcde_utf8_remove', stop)
         start = launcher[launcher.index('static void pc_start(bool then_play, bool fresh = false)'):
                          launcher.index('static void pc_stop()')]
-        self.assertIn('precompile_skip.txt', start)
-        self.assertIn('precompile_inflight.bin', start)
+        self.assertIn('PcForce force(fresh)', start)
+        self.assertNotIn('precompile_done.txt', start)
         self.assertIn('pc_start(false, true)', launcher)
+        precompile = (ROOT / 'runtime/nvn/vulkan/precompile.c').read_text(encoding='utf-8')
+        forced = precompile[precompile.index('if (forced) {'):precompile.index('t_run = t0;')]
+        self.assertIn('precompile_skip.txt', forced)
+        self.assertIn('precompile_inflight.bin', forced)
 
     def test_the_shader_precompile_bar_covers_the_four_passes(self):
         # T281: the progress file is "<phase> <overall done> <overall total> <this pass done> <this pass total>" over
