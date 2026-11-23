@@ -14,6 +14,7 @@
 #include "../rt.h"
 #include "../cpu.h"
 #include "../diag/diag.h"
+#include "../host/utf8_path.h"  // [XCDE] T278: UTF-8 paths through the wide APIs
 #include "../platform.h"
 #include "../settings.h"
 #include "footstep_repeat.h"
@@ -950,8 +951,9 @@ static void debug_tour(Cpu *c, uint64_t frame) {
     static uint64_t spin_until;
     if (nline < 0) {
         nline = 0;
-        const char *path = getenv("XCDE_TOUR");
-        FILE *fp = path ? fopen(path, "r") : NULL;
+        char tour_env[1100];
+        const char *path = xcde_utf8_getenv("XCDE_TOUR", tour_env, sizeof tour_env) ? tour_env : NULL;
+        FILE *fp = path ? xcde_utf8_fopen(path, "r") : NULL;
         char buf[256];
         while (fp && fgets(buf, sizeof buf, fp)) {
             buf[strcspn(buf, "\r\n")] = 0;

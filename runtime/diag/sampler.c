@@ -10,6 +10,7 @@
 #include <string.h>
 
 #include "diag.h"
+#include "../host/utf8_path.h"  // [XCDE] T278: UTF-8 paths through the wide APIs
 #include "../rt.h"
 
 #ifdef _WIN32
@@ -189,8 +190,12 @@ static bool resolve(uint64_t pc, char *name, char *mname) {
     HMODULE hm = NULL;
     char mod[MAX_PATH] = "?";
     if (GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT, (LPCSTR)(uintptr_t)pc, &hm)) {
-        char path[MAX_PATH];
-        if (GetModuleFileNameA(hm, path, sizeof path)) { const char *b = strrchr(path, '\\'); snprintf(mod, sizeof mod, "%s", b ? b + 1 : path); }
+        wchar_t wpath[MAX_PATH];
+        char path[3 * MAX_PATH];
+        if (GetModuleFileNameW(hm, wpath, MAX_PATH) && xcde_utf8_from_wide(wpath, path, sizeof path) >= 0) {
+            const char *b = strrchr(path, '\\');
+            snprintf(mod, sizeof mod, "%s", b ? b + 1 : path);
+        }
     }
     bool exe = hm && hm == GetModuleHandleA(NULL);
     if (exe) {
@@ -212,9 +217,9 @@ static bool resolve(uint64_t pc, char *name, char *mname) {
 }
 
 static void report(void) {
-    const char *out = getenv("XCDE_SAMPLE_OUT");
-    if (!out) out = "build/samples.txt";
-    FILE *f = fopen(out, "w");
+    char out_env[1100];
+    const char *out = xcde_utf8_getenv("XCDE_SAMPLE_OUT", out_env, sizeof out_env) ? out_env : "build/samples.txt";
+    FILE *f = xcde_utf8_fopen(out, "w");
     if (!f) return;
     uint64_t total = 0;
     for (int i = 0; i < nth; i++) total += th[i].cyc_total;

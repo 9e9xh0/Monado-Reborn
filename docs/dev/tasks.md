@@ -1718,3 +1718,34 @@ Detalle: `docs/PERFORMANCE_UI.md`. Evidencia: `docs/evidence/2026-11-04-performa
   and starts the game from a non-ASCII folder, but the game is expected to stop at its data-root check ("can't write to
   its folder"). Wants the same UTF-8 → wide treatment (or a UTF-8 manifest with a Windows 10 1903 floor) and a
   Wine/Windows run of `build/xcde.exe` under `João-😀` to verify.
+
+## Windows paths in the game — 2026-11-23 (GitHub #218, second half)
+
+- [x] T278 **The game could not read its files when the working folder had non-ASCII characters.** The launcher half
+  (#220, T277) starts the game, but mingw's `opendir()` makes the path absolute with `GetFullPathNameA` and searches
+  "JoÃ£o": `[fs] no romfs folder at targets/romfs` → `FATAL`, while relative `fopen`/`read` kept working. Fix:
+  `runtime/platform/dir_utf8.h` (new; `FindFirstFileW` enumeration, UTF-8 names, `d_type` from the attributes, whole
+  folder read at open for `telldir`/`seekdir`) used by `services/fs.c`, `services/romfs_virtual.c`,
+  `nvn/vulkan/precompile.c`, `paths.c`; `runtime/host/utf8_path.h` grew `_wopen`, `wstat`, `_wmkdir`/`_wrmdir`,
+  `_wchdir`/`_wgetcwd`, `GetEnvironmentVariableW` and `LoadLibraryW` wrappers, used by the loader, the romfs
+  descriptor cache, gamelib, settings (`XCDE_INI`/`xcde.ini`), FSR 4, quickstep saves and the path-valued env vars;
+  `plat_argv_utf8` parses `GetCommandLineW`; the T135 relaunch and the crash minidump helper start with
+  `CreateProcessW`; `lasrecomp.log` is written next to the exe with `_wfreopen`. `XCDE_TEST_RESERVE_FAIL=1` forces the
+  relaunch so the route can be re-tested.
+  Verified on the Wine bed (see [evidence](../evidence/2026-11-23-issue-218/summary.md)): boots and renders from
+  `João-😀\Built` with a relative `targets/`; relaunch plays; a crash at frame 150 writes the report and a 296 KB
+  minidump; a detached launch writes `build/lasrecomp.log` in the João folder; `--game` with the absolute
+  `João-😀\…\targets` path loads and plays. Tests: `tests/native/test_utf8_paths.c` (relative listing in a non-ASCII
+  folder, UTF-16 environment) and `tests/unit/test_runtime_utf8_paths.py` (source contracts). Linux CI and
+  `scripts/native_tests_linux.sh` green; the Windows CI job compiles the runtime and runs the native test.
+  Review follow-ups: `xcde_opendir` maps `FindFirstFileW` errors to `errno` like the CRT (`ENOENT`/`EACCES`/`ENOTDIR`/
+  `ENOMEM`/`EIO`) and fails a listing that breaks mid-way; the precompiler's own `stat`/`fopen`, `XCDE_PRECOMPILE_LIST`
+  and `XCDE_VARIANTS_SEED` use the UTF-8 wrappers (so `--precompile <absolute non-ASCII path>` scans); `plat_argv_utf8`
+  falls back to the complete CRT argv if one argument cannot be converted; the save-tree `mkdir`/`rmdir`/`rename`/
+  `remove` calls and the path-valued diagnostic variables (`XCDE_DUMP_MEM*`, `XCDE_DUMP_HEAP`, `XCDE_FRAME_HASH`,
+  `XCDE_INPUT_*`, `XCDE_USAGE`, `XCDE_HLE_COVERAGE`, `XCDE_SAMPLE_OUT`, `XCDE_TOUR`) are wide too.
+- [ ] T278b **Leftovers off the play path:** `services/kbicons.c` opens its cache / mod icon files with the narrow
+  CRT (a mod folder whose *own name* has accents would miss its icons); `platform/win_compat.h`'s `realpath` shim
+  (`_fullpath`, ANSI) is unused by the game but any new caller must use the wide resolve in `runtime/paths.c` instead.
+  Developer-only debug switches that take a path (`XCDE_GLSL_DIR`, `XCDE_REC_OUT`) are still narrow; no normal run
+  reaches them.

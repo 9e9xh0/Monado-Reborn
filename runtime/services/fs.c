@@ -1,6 +1,6 @@
 // fsp-srv: RomFS as a raw storage image, save data and SD card backed by host directories.
 #include "../diag/diag.h"
-#include <dirent.h>
+#include "../platform/dir_utf8.h"
 #include <errno.h>
 #include <fcntl.h>
 #include <pthread.h>
@@ -14,6 +14,7 @@
 #include "../platform.h"
 #include "../rando.h"
 #include "../ipc.h"
+#include "../host/utf8_path.h"  // [XCDE] T278: UTF-8 paths through the wide APIs
 #include "romfs_virtual.h"  // [XCDE]
 #include "../hle/quickstep_save.h"  // [XCDE] Quick Step slot metadata (Monado II port)
 #ifndef O_BINARY
@@ -101,16 +102,16 @@ typedef struct { char rel[1024]; char host[1200]; uint64_t size; } NewFile;
 static void walk_new(const char *root, const char *rel, char **known, int nknown, NewFile **out, int *n, int *cap) {
     char dirp[1200];
     snprintf(dirp, sizeof dirp, "%s/%s", root, rel);
-    DIR *d = opendir(dirp);
+    XcdeDir *d = xcde_opendir(dirp);
     if (!d) return;
-    struct dirent *e;
-    while ((e = readdir(d))) {
+    XcdeDirent *e;
+    while ((e = xcde_readdir(d))) {
         if (e->d_name[0] == '.') continue;
         char r2[1024], h2[1200];
         snprintf(r2, sizeof r2, "%s%s%s", rel, rel[0] ? "/" : "", e->d_name);
         snprintf(h2, sizeof h2, "%s/%s", root, r2);
         struct stat sb;
-        if (stat(h2, &sb)) continue;
+        if (xcde_utf8_stat(h2, &sb)) continue;
         if (S_ISDIR(sb.st_mode)) { walk_new(root, r2, known, nknown, out, n, cap); continue; }
         const char *key = r2;
         if (bsearch(&key, known, nknown, sizeof *known, path_cmp)) continue;  // replaces an existing file
@@ -120,7 +121,7 @@ static void walk_new(const char *root, const char *rel, char **known, int nknown
         (*out)[*n].size = (uint64_t)sb.st_size;
         (*n)++;
     }
-    closedir(d);
+    xcde_closedir(d);
 }
 
 // directory entry offset for "a/b/c" (NULL-terminated walk from the root, offset 0), -1 if missing
@@ -264,7 +265,7 @@ static void rom_index(int fd) {
         char host[1200];
         if (!rando_romfs_override(rom_files[i].path, host, sizeof host)) continue;
         struct stat sb;
-        if (stat(host, &sb)) continue;
+        if (xcde_utf8_stat(host, &sb)) continue;
         if (!ov_meta) {
             ov_meta = malloc(fsz);
             memcpy(ov_meta, fmeta, fsz);
@@ -313,7 +314,7 @@ static ssize_t romfs_read(int fd, uint8_t *dst, uint64_t size, uint64_t off) {
                 r = in < ov[i].size ? (ssize_t)(n < ov[i].size - in ? n : ov[i].size - in) : 0;
                 memcpy(dst + done, ov[i].mem + in, (size_t)r);
             } else {
-                if (ov[i].fd < 0) ov[i].fd = open(ov[i].path, O_RDONLY);
+                if (ov[i].fd < 0) ov[i].fd = xcde_utf8_open(ov[i].path, O_RDONLY, 0);
                 r = in < ov[i].size ? pread(ov[i].fd, dst + done, n < ov[i].size - in ? n : ov[i].size - in, (off_t)in) : 0;
             }
             if (r < 0) r = 0;
@@ -389,7 +390,7 @@ static Service *open_romfs_storage(void) {
     if (virt_ready < 0) {
         char why[256];
         struct stat sb;
-        virt_ready = stat(g_romfs_dir, &sb) == 0 && S_ISDIR(sb.st_mode) && rvfs_init(g_romfs_dir, why, sizeof why);
+        virt_ready = xcde_utf8_stat(g_romfs_dir, &sb) == 0 && S_ISDIR(sb.st_mode) && rvfs_init(g_romfs_dir, why, sizeof why);
         if (virt_ready) LOG("[fs] virtual romfs over %s: image %llu bytes\n", g_romfs_dir, (unsigned long long)rvfs_size());
         else LOG("[fs] no romfs folder at %s\n", g_romfs_dir);
     }
@@ -402,7 +403,7 @@ static Service *open_romfs_storage(void) {
     if (romfs_fd < 0) {
         char path[1024];
         snprintf(path, sizeof path, "%s.bin", g_romfs_dir);  // extracted/romfs.bin
-        romfs_fd = open(path, O_RDONLY);
+        romfs_fd = xcde_utf8_open(path, O_RDONLY, 0);
         if (romfs_fd < 0) FATAL("cannot open %s (set up the game files on the start screen)\n", path);
         rom_index(romfs_fd);
     }
@@ -417,7 +418,7 @@ static Service *open_romfs_storage(void) {
 // ------------------------------------------------------------------ host-directory filesystem
 typedef struct { char root[1024]; bool save; int journal; } HostFs;  // (save: a save_N mount; journal: below, or -1)
 typedef struct { int fd; char path[1100]; char root[1024]; bool save; int journal; } HostFile;  // (root: its mount)
-typedef struct { DIR *d; char path[1024]; int mode; } HostDir;
+typedef struct { XcdeDir *d; char path[1024]; int mode; } HostDir;
 static void journal_touch(int j);  // (save commits, below)
 
 static const char *in_path(IpcReq *req, int i) {
@@ -508,7 +509,7 @@ static void file_close(Service *s) {
 }
 static void directory_close(Service *s) {
     HostDir *d = s->state;
-    if (d && d->d) { closedir(d->d); d->d = NULL; }
+    if (d && d->d) { xcde_closedir(d->d); d->d = NULL; }
 }
 
 static void directory(Service *s, IpcReq *req, IpcResp *resp) {
@@ -518,17 +519,10 @@ static void directory(Service *s, IpcReq *req, IpcResp *resp) {
         IpcBuf *b = out_buf(req, 0);
         uint8_t *out = (uint8_t *)(uintptr_t)b->addr;
         int64_t max = (int64_t)(b->size / 0x310), n = 0;
-        struct dirent *e;
-        while (n < max && (e = readdir(d->d))) {
+        XcdeDirent *e;
+        while (n < max && (e = xcde_readdir(d->d))) {
             if (!strcmp(e->d_name, ".") || !strcmp(e->d_name, "..")) continue;
-#ifdef _WIN32  // no d_type
-            char full[2048];
-            struct stat es;
-            snprintf(full, sizeof full, "%s/%s", d->path, e->d_name);
-            bool isdir = !stat(full, &es) && S_ISDIR(es.st_mode);
-#else
-            bool isdir = e->d_type == DT_DIR;
-#endif
+            bool isdir = e->d_type == DT_DIR;  // (dir_utf8.h fills it from the Windows attributes as well)
             if ((isdir && !(d->mode & 1)) || (!isdir && !(d->mode & 2))) continue;
             uint8_t *ent = out + n * 0x310;
             memset(ent, 0, 0x310);
@@ -538,7 +532,7 @@ static void directory(Service *s, IpcReq *req, IpcResp *resp) {
                 char p[2048];
                 struct stat sb;
                 snprintf(p, sizeof p, "%s/%s", d->path, e->d_name);
-                if (!stat(p, &sb)) *(int64_t *)(ent + 0x308) = sb.st_size;
+                if (!xcde_utf8_stat(p, &sb)) *(int64_t *)(ent + 0x308) = sb.st_size;
             }
             n++;
         }
@@ -547,13 +541,13 @@ static void directory(Service *s, IpcReq *req, IpcResp *resp) {
         break;
     }
     case 1: {  // GetEntryCount
-        long pos = telldir(d->d);
-        rewinddir(d->d);
+        long pos = xcde_telldir(d->d);
+        xcde_rewinddir(d->d);
         int64_t n = 0;
-        struct dirent *e;
-        while ((e = readdir(d->d)))
+        XcdeDirent *e;
+        while ((e = xcde_readdir(d->d)))
             if (strcmp(e->d_name, ".") && strcmp(e->d_name, "..")) n++;
-        seekdir(d->d, pos);
+        xcde_seekdir(d->d, pos);
         OUT(int64_t, 0) = n;
         resp_size(resp, 8);
         break;
@@ -562,17 +556,17 @@ static void directory(Service *s, IpcReq *req, IpcResp *resp) {
 }
 
 static int rm_rf(const char *p, bool keep_root) {
-    DIR *d = opendir(p);
-    if (!d) return unlink(p);
-    struct dirent *e;
-    while ((e = readdir(d))) {
+    XcdeDir *d = xcde_opendir(p);
+    if (!d) return xcde_utf8_remove(p);
+    XcdeDirent *e;
+    while ((e = xcde_readdir(d))) {
         if (!strcmp(e->d_name, ".") || !strcmp(e->d_name, "..")) continue;
         char c[2048];
         snprintf(c, sizeof c, "%s/%s", p, e->d_name);
         rm_rf(c, false);
     }
-    closedir(d);
-    return keep_root ? 0 : rmdir(p);
+    xcde_closedir(d);
+    return keep_root ? 0 : xcde_utf8_rmdir(p);
 }
 
 // [XCDE] Save commits (Horizon semantics: a save mount's changes become final on Commit). Before the first change since
@@ -585,20 +579,20 @@ static int g_njournals;
 static pthread_mutex_t g_journal_lock = PTHREAD_MUTEX_INITIALIZER;
 
 static int copy_tree(const char *from, const char *to) {
-    DIR *d = opendir(from);
+    XcdeDir *d = xcde_opendir(from);
     if (!d) return -1;
-    mkdir(to, 0755);
+    xcde_utf8_mkdir(to);
     int rc = 0;
-    struct dirent *e;
-    while (!rc && (e = readdir(d))) {
+    XcdeDirent *e;
+    while (!rc && (e = xcde_readdir(d))) {
         if (!strcmp(e->d_name, ".") || !strcmp(e->d_name, "..")) continue;
         char a[2048], b[2048];
         snprintf(a, sizeof a, "%s/%s", from, e->d_name);
         snprintf(b, sizeof b, "%s/%s", to, e->d_name);
         struct stat sb;
-        if (stat(a, &sb)) { rc = -1; break; }
+        if (xcde_utf8_stat(a, &sb)) { rc = -1; break; }
         if (S_ISDIR(sb.st_mode)) { rc = copy_tree(a, b); continue; }
-        int in = open(a, O_RDONLY | O_BINARY), out = open(b, O_CREAT | O_TRUNC | O_WRONLY | O_BINARY, 0644);
+        int in = xcde_utf8_open(a, O_RDONLY | O_BINARY, 0), out = xcde_utf8_open(b, O_CREAT | O_TRUNC | O_WRONLY | O_BINARY, 0644);
         char buf[65536];
         ssize_t n;
         if (in < 0 || out < 0) rc = -1;
@@ -608,25 +602,25 @@ static int copy_tree(const char *from, const char *to) {
         if (in >= 0) close(in);
         if (out >= 0) close(out);
     }
-    closedir(d);
+    xcde_closedir(d);
     return rc;
 }
 
 static void fsync_tree(const char *p) {
-    DIR *d = opendir(p);
+    XcdeDir *d = xcde_opendir(p);
     if (!d) return;
-    struct dirent *e;
-    while ((e = readdir(d))) {
+    XcdeDirent *e;
+    while ((e = xcde_readdir(d))) {
         if (!strcmp(e->d_name, ".") || !strcmp(e->d_name, "..")) continue;
         char c[2048];
         snprintf(c, sizeof c, "%s/%s", p, e->d_name);
         struct stat sb;
-        if (stat(c, &sb)) continue;
+        if (xcde_utf8_stat(c, &sb)) continue;
         if (S_ISDIR(sb.st_mode)) { fsync_tree(c); continue; }
-        int fd = open(c, O_RDWR | O_BINARY);
+        int fd = xcde_utf8_open(c, O_RDWR | O_BINARY, 0);
         if (fd >= 0) { fsync(fd); close(fd); }
     }
-    closedir(d);
+    xcde_closedir(d);
 }
 
 // [XCDE] a copy of the save as the session starts (after any restore): <save dir>/backup/<save_N>_<date>, the newest
@@ -635,19 +629,19 @@ static int name_cmp(const void *a, const void *b) { return strcmp(*(char *const 
 static void save_backup(const char *root) {
     const char *e = getenv("XCDE_SAVE_BACKUPS");
     if (e && atoi(e) == 0) return;
-    DIR *d = opendir(root);
+    XcdeDir *d = xcde_opendir(root);
     if (!d) return;
     bool any = false;
-    struct dirent *de;
-    while (!any && (de = readdir(d))) any = strcmp(de->d_name, ".") && strcmp(de->d_name, "..");
-    closedir(d);
+    XcdeDirent *de;
+    while (!any && (de = xcde_readdir(d))) any = strcmp(de->d_name, ".") && strcmp(de->d_name, "..");
+    xcde_closedir(d);
     if (!any) return;  // (a new game: nothing to keep)
     const char *sub = strrchr(root, '/');
     sub = sub ? sub + 1 : root;
     char dir[1100], to[1200], stamp[32];
     if (sub > root) snprintf(dir, sizeof dir, "%.*s/backup", (int)(sub - root - 1), root);
     else snprintf(dir, sizeof dir, "backup");
-    mkdir(dir, 0755);
+    xcde_utf8_mkdir(dir);
     time_t now = time(NULL);
     strftime(stamp, sizeof stamp, "%Y%m%d_%H%M%S", localtime(&now));
     snprintf(to, sizeof to, "%s/%s_%s", dir, sub, stamp);
@@ -655,10 +649,10 @@ static void save_backup(const char *root) {
     char *names[256];
     int n = 0;
     size_t sl = strlen(sub);
-    if ((d = opendir(dir))) {
-        while (n < 256 && (de = readdir(d)))
+    if ((d = xcde_opendir(dir))) {
+        while (n < 256 && (de = xcde_readdir(d)))
             if (!strncmp(de->d_name, sub, sl) && de->d_name[sl] == '_') names[n++] = strdup(de->d_name);
-        closedir(d);
+        xcde_closedir(d);
     }
     qsort(names, (size_t)n, sizeof *names, name_cmp);  // (oldest first: the names sort by date)
     for (int i = 0; i < n; i++) {
@@ -681,7 +675,7 @@ static int journal_mount(const char *root) {
         snprintf(tp, sizeof tp, "%s.journal.tmp", root);
         rm_rf(tp, false);  // (a copy cut short: the save itself was not touched yet)
         struct stat sb;
-        if (!stat(jp, &sb) && S_ISDIR(sb.st_mode)) {
+        if (!xcde_utf8_stat(jp, &sb) && S_ISDIR(sb.st_mode)) {
             LOG("[save] %s: a save was not committed (the game stopped mid-save) - the last committed one is put back\n", root);
             rm_rf(root, true);
             if (copy_tree(jp, root)) LOG("[save] restoring %s failed: %s kept\n", root, jp);
@@ -704,7 +698,7 @@ static void journal_touch(int j) {
         snprintf(tp, sizeof tp, "%s.journal.tmp", sj->root);
         rm_rf(tp, false);
         rm_rf(jp, false);
-        if (copy_tree(sj->root, tp) || rename(tp, jp)) {
+        if (copy_tree(sj->root, tp) || xcde_utf8_rename(tp, jp)) {
             LOG("[save] journal of %s could not be written (the save is not protected this time)\n", sj->root);
             rm_rf(tp, false);
         }
@@ -739,34 +733,34 @@ static void filesystem(Service *s, IpcReq *req, IpcResp *resp) {
     if (req->cmd <= 6 || req->cmd == 13) journal_touch(fs->journal);  // (the changes: create, delete, rename, clean)
     switch (req->cmd) {
     case 0: {  // CreateFile(option, size)
-        int fd = open(p, O_CREAT | O_EXCL | O_RDWR, 0644);
+        int fd = xcde_utf8_open(p, O_CREAT | O_EXCL | O_RDWR, 0644);
         if (fd < 0) { resp->result = errno_result(); break; }
         if (ftruncate(fd, IN(int64_t, 8))) resp->result = errno_result();
         close(fd);
         break;
     }
     case 1:
-        if (unlink(p)) resp->result = errno_result();
+        if (xcde_utf8_remove(p)) resp->result = errno_result();
         else if (fs->save && quickstep_save_changed(fs->root, p, NULL)) LOG("[save] Quick Step metadata not updated for %s\n", p);
         break;
-    case 2: if (mkdir(p, 0755)) resp->result = errno_result(); break;
-    case 3: if (rmdir(p)) resp->result = errno_result(); break;
+    case 2: if (xcde_utf8_mkdir(p)) resp->result = errno_result(); break;
+    case 3: if (xcde_utf8_rmdir(p)) resp->result = errno_result(); break;
     case 4: if (rm_rf(p, false)) resp->result = errno_result(); break;
     case 5: case 6:
         host_path(fs, in_path(req, 1), p2, sizeof p2);
-        if (rename(p, p2)) resp->result = errno_result();
+        if (xcde_utf8_rename(p, p2)) resp->result = errno_result();
         else if (fs->save && quickstep_save_changed(fs->root, p, p2)) LOG("[save] Quick Step metadata not moved for %s\n", p);
         break;
     case 7: {  // GetEntryType
         struct stat sb;
-        if (stat(p, &sb)) { resp->result = FS_PATH_NOT_FOUND; break; }
+        if (xcde_utf8_stat(p, &sb)) { resp->result = FS_PATH_NOT_FOUND; break; }
         OUT(uint32_t, 0) = S_ISDIR(sb.st_mode) ? 0 : 1;
         resp_size(resp, 4);
         break;
     }
     case 8: {  // OpenFile(mode)
         uint32_t mode = IN(uint32_t, 0);
-        int fd = open(p, (mode & 2) ? O_RDWR : O_RDONLY);
+        int fd = xcde_utf8_open(p, (mode & 2) ? O_RDWR : O_RDONLY, 0644);
         if (fd < 0) {
             int error = errno; resp->result = errno_result();
             static unsigned missing;
@@ -786,7 +780,7 @@ static void filesystem(Service *s, IpcReq *req, IpcResp *resp) {
         break;
     }
     case 9: {  // OpenDirectory(mode)
-        DIR *d = opendir(p);
+        XcdeDir *d = xcde_opendir(p);
         if (!d) { resp->result = errno_result(); break; }
         HostDir *hd = calloc(1, sizeof *hd);
         hd->d = d;
@@ -813,7 +807,9 @@ static void filesystem(Service *s, IpcReq *req, IpcResp *resp) {
 
 static Service *open_host_fs(const char *sub) {
     HostFs *fs = calloc(1, sizeof *fs);
-    if (getenv("LARECOMP_SAVE_DIR")) g_save_dir = getenv("LARECOMP_SAVE_DIR");  // test runs use a scratch copy
+    static char save_dir_env[1100];
+    if (xcde_utf8_getenv("LARECOMP_SAVE_DIR", save_dir_env, sizeof save_dir_env))  // test runs use a scratch copy
+        g_save_dir = save_dir_env;
     else if (rando_seed_dir()) {  // each randomizer seed has its own save slots
         static char seed_save[600];
         snprintf(seed_save, sizeof seed_save, "%s/save", rando_seed_dir());
@@ -825,8 +821,8 @@ static Service *open_host_fs(const char *sub) {
     char cmd[1200];
     snprintf(cmd, sizeof cmd, "%s", fs->root);
     for (char *q = cmd + 1; *q; q++)
-        if (*q == '/') { *q = 0; mkdir(cmd, 0755); *q = '/'; }
-    mkdir(cmd, 0755);
+        if (*q == '/') { *q = 0; xcde_utf8_mkdir(cmd); *q = '/'; }
+    xcde_utf8_mkdir(cmd);
     LOG("[fs] mounted host directory %s\n", fs->root);
     if (fs->save && !getenv("XCDE_SAVE_JOURNAL_OFF")) fs->journal = journal_mount(fs->root);
     return service_new("IFileSystem", filesystem, fs);

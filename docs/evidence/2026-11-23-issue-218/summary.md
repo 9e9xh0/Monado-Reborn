@@ -71,12 +71,80 @@ line, so the absolute `--root/--out/--resources` paths arrive correctly. The sta
 is why its recorded arguments show CP1252 loss (`Jo�o-??`): that is the stand-in's own decoding, not the launcher's
 command line (`curl`'s output path was made relative for exactly this reason).
 
+# Second half - the game itself (T278)
+
+## Test bed
+
+The launcher half (#220) made the packaged `monado-gamebuild.exe` start under `João-😀`, but the bundled Zig 0.17.1
+cannot create its cache under this Wine (`checking cache failed: manifest_create Unexpected`, also with an ASCII
+one-file test), so the game code was built **on Linux** instead, and the Windows runtime **cross-built** from this tree -
+the two routes below give a real Windows game that runs under Wine without waiting for a Windows machine.
+
+- Runtime: `cmake -B build/cmake/win -G Ninja -DCMAKE_TOOLCHAIN_FILE=$PWD/cmake/zig.cmake
+  -DZIG_EXECUTABLE=<zig> -DZIG_TARGET=x86_64-windows-gnu -DMONADO_RELEASE=ON -DMSYS2_PREFIX=$PWD/build/deps/ucrt64`;
+  the MSYS2 UCRT64 prefix holds SDL3, Vulkan, shaderc, zlib, winpthreads (`tools/diag/setup_validation.py`) plus the
+  `opus` and `ffmpeg 9.0-2` packages. The link writes `build/xcde.exe` (3.1 MB, 808 exports) and
+  `build/gamebuild/xcde_imports.a`.
+- Game code: `tools/gamebuild/gamebuild_stage.py --dest build/gamebuild --platform windows --zig <linux zig>
+  --link-file xcde_imports.a` stages the resources (its probe link works on Linux), then
+  `tools/gamebuild/gamebuild.py --root targets --out build/game-lib --resources build/gamebuild --jobs 8` builds
+  `lasgame.dll` (61 MB, 8m40s, same `GAMELIB_ID`). `build/xcde.exe`, the release package's DLLs, `gamebuild/lasgame.dll`
+  and a hard-linked copy of `targets/` make the install at `Z:\…\João-😀\Built`.
+
+## The failure found
+
+With the real layout (relative `targets/` in the João folder) the game stopped at
+`[fs] no romfs folder at targets/romfs` -> `FATAL: cannot open targets/romfs.bin`, although `loaded main`/`loaded sdk`
+and `gamebuild/lasgame.dll` worked. Root cause: mingw's `opendir()` makes the path absolute with
+`_tfullpath`/`GetFullPathNameA`; in a non-ASCII working folder the search runs in "JoÃ£o" and returns no entries.
+
+| call in `Z:\…\João-😀\Built` | result |
+|---|---|
+| `opendir("targets/romfs")` + `readdir` (CRT) | handle, **0 entries** (also for a 2-file dir) |
+| the same dir from an ASCII folder | 5 entries |
+| the same dir via an absolute ASCII path from the João folder | 5 entries |
+| `FindFirstFileW(L"targets\\romfs\\*")` in the João folder | works (bdat, chr, config, ...) |
+| `GetFullPathNameA("targets\\romfs")` | `…\JoM-co-??\Built\targets\romfs` |
+
+## Fix and verification
+
+The fix (T278): `runtime/platform/dir_utf8.h` enumerates with `FindFirstFileW`, and `runtime/host/utf8_path.h` gained
+`open`/`stat`/`mkdir`/`rmdir`/`chdir`/`getcwd`/`getenv`/`LoadLibraryW` wrappers used by the loader, romfs, gamelib,
+settings, FSR 4, quickstep saves and the path-valued env vars; the T135 relaunch and the minidump helper use
+`CreateProcessW`; `plat_argv_utf8` parses the wide command line; `lasrecomp.log` uses `_wfreopen`. Rebuilding only
+`xcde.exe` (the game library is untouched: no ABI/id change) and rerunning in the same folder:
+
+| route | result |
+|---|---|
+| `build\xcde.exe targets` (relative, João cwd) | `virtual romfs over targets/romfs: image 14609810396 bytes`, renders (first run 5,838 frames; after the last change 2,055 frames at 30 fps) |
+| `XCDE_TEST_RESERVE_FAIL=1` (forces the T135 collision once) | `[boot] ... is not free (try 1): starting again`, then the child loads the game and renders |
+| `XCDE_TEST_CRASH_AT=150` | `crash/crash_20261123_052824.txt` + `crash_20261123_052824.dmp` (296 KB), `minidump ... (written, helper exit 0)` |
+| detached launch, no standard handles (`STARTF_USESTDHANDLES` with NULL) | `build/lasrecomp.log` in the João folder (148 KB, timestamped) |
+| `--game Z:\…\João-😀\Built\targets` from `/tmp` | virtual romfs over the absolute path, renders (3,463 frames) |
+| `tests/native/test_utf8_paths.c` under Wine | `opendir/readdir in the non-ASCII folder: CRT 0 entries, wide found file.txt`; all checks pass |
+
+`--game`/the minidump/log routes above are the recorded route for `T-UTF8-RUNTIME`; the Wine bed is outside the
+repository (`build/` and `~/.cache/wine-utf8/…` are private).
+
+## Review follow-up (same PR)
+
+A review of the change found four small gaps, fixed in the same PR: `xcde_opendir` now sets `errno` like the CRT it
+replaces (and fails a listing that breaks mid-way); the precompiler's own `stat`/`fopen` and its `XCDE_PRECOMPILE_LIST`/
+`XCDE_VARIANTS_SEED` paths use the wrappers (an absolute non-ASCII `--precompile <root>` scans); `plat_argv_utf8` keeps
+the complete CRT argv if an argument cannot be converted; and the save-tree `mkdir`/`rmdir`/`rename`/`remove` calls plus
+the path-valued diagnostic variables use the wrappers. The Wine routes in the table above were recorded before this
+follow-up; its play-path change is limited to the save-tree calls (the same CRT operations through the wide wrappers).
+Re-run on Linux: `tests/native/test_utf8_paths.c` `all passed` (including the new missing-folder errno check) and the
+11 source-contract tests pass. CI re-runs the Windows build and the native test.
+
 ## Not covered here
 
-- **The game's own paths are still ANSI.** `runtime/platform/windows.c` (`plat_exe_path` → `GetModuleFileNameA`),
-  `runtime/paths.c` (`getcwd`, `stat`, `chdir`, `fopen`) and the runtime's other file calls would still read the install
-  folder in the system code page, so the game itself is expected to stop at its data-root check under a non-ASCII
-  folder. Tracked as `T-UTF8-RUNTIME` in [`tasks.md`](../../dev/tasks.md); this issue is the launcher half.
+- **Leftovers off the play path** (`T278b` in [`tasks.md`](../../dev/tasks.md)): `services/kbicons.c` opens its cache/
+  mod icon files with the narrow CRT, `platform/win_compat.h`'s `realpath` shim (`_fullpath`) is unused by the game, and
+  the developer-only `XCDE_GLSL_DIR`/`XCDE_REC_OUT` path switches are still narrow.
+- **Only Wine here, no Windows machine.** The fix compiles for the Windows target with the same SDK as CI; the
+  windows-latest job runs the native test. A run of the shipped package under `C:\Users\João\…` (launcher builds the
+  game code there and the game plays) is still worth doing with the reporter.
 - **Only CI on real Windows, not the reporter's machine.** The Windows CI job (`windows-components`, run 45093578036)
   built the launcher with the same zig + ucrt64 SDK and ran the new native test on windows-latest:
   `test_utf8_paths_build: PASS`, `test_utf8_paths: PASS` (the `CreateProcessA` 267 is printed there too, not asserted).

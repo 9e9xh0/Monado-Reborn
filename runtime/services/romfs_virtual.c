@@ -6,7 +6,7 @@
 // file hash table, file entries. Derived from LASRecomp runtime/romfs_build.c (MIT).
 #include "romfs_virtual.h"
 
-#include <dirent.h>
+#include "../platform/dir_utf8.h"
 #include <errno.h>
 #include <fcntl.h>
 #include <pthread.h>
@@ -16,6 +16,7 @@
 #include <sys/stat.h>
 #include <unistd.h>
 
+#include "../host/utf8_path.h"  // [XCDE] T278: UTF-8 paths through the wide APIs
 #include "../platform.h"
 #include "romfs_fd_cache.h"
 
@@ -48,7 +49,7 @@ static int by_name_file(const void *a, const void *b) { return strcmp((*(File *c
 #include "../settings.h"
 #include "../quality_policy.h"
 static void edit_ini(File *f, const char *edits) {
-    FILE *in = fopen(f->path, "rb");
+    FILE *in = xcde_utf8_fopen(f->path, "rb");
     if (!in) return;
     char *src = malloc(f->size + 1);
     size_t n = fread(src, 1, f->size, in);
@@ -135,19 +136,19 @@ static void maybe_edit(File *f) {
 
 static Dir *scan(const char *path, const char *name, Dir *parent, int depth) {
     if (depth > 32) return NULL;
-    DIR *d = opendir(path);
+    XcdeDir *d = xcde_opendir(path);
     if (!d) return NULL;
     Dir *dir = calloc(1, sizeof *dir);
     dir->name = strdup(name), dir->path = strdup(path), dir->parent = parent;
     int cd = 0, cf = 0;
-    struct dirent *e;
-    while ((e = readdir(d))) {
+    XcdeDirent *e;
+    while ((e = xcde_readdir(d))) {
         if (e->d_name[0] == '.') continue;
         size_t n = strlen(path) + strlen(e->d_name) + 2;
         char *p = malloc(n);
         snprintf(p, n, "%s/%s", path, e->d_name);
         struct stat st;
-        if (stat(p, &st) != 0) { free(p); continue; }
+        if (xcde_utf8_stat(p, &st) != 0) { free(p); continue; }
         if (S_ISDIR(st.st_mode)) {
             Dir *c = scan(p, e->d_name, dir, depth + 1);
             free(p);
@@ -164,7 +165,7 @@ static Dir *scan(const char *path, const char *name, Dir *parent, int depth) {
             free(p);
         }
     }
-    closedir(d);
+    xcde_closedir(d);
     if (dir->ndirs) qsort(dir->dirs, dir->ndirs, sizeof *dir->dirs, by_name_dir);
     if (dir->nfiles) qsort(dir->files, dir->nfiles, sizeof *dir->files, by_name_file);
     return dir;
@@ -184,16 +185,16 @@ static int ci_eq(const char *a, const char *b) {  // (case-insensitive: mod fold
 }
 static void overlay(Dir *dst, const char *path, int depth, int *replaced, int *added) {
     if (depth > 32) return;
-    DIR *d = opendir(path);
+    XcdeDir *d = xcde_opendir(path);
     if (!d) return;
-    struct dirent *e;
-    while ((e = readdir(d))) {
+    XcdeDirent *e;
+    while ((e = xcde_readdir(d))) {
         if (e->d_name[0] == '.') continue;
         size_t n = strlen(path) + strlen(e->d_name) + 2;
         char *p = malloc(n);
         snprintf(p, n, "%s/%s", path, e->d_name);
         struct stat st;
-        if (stat(p, &st) != 0) { free(p); continue; }
+        if (xcde_utf8_stat(p, &st) != 0) { free(p); continue; }
         if (S_ISDIR(st.st_mode)) {
             Dir *c = NULL;
             for (int i = 0; i < dst->ndirs && !c; i++) if (ci_eq(dst->dirs[i]->name, e->d_name)) c = dst->dirs[i];
@@ -227,28 +228,29 @@ static void overlay(Dir *dst, const char *path, int depth, int *replaced, int *a
             free(p);
         }
     }
-    closedir(d);
+    xcde_closedir(d);
     if (dst->ndirs) qsort(dst->dirs, dst->ndirs, sizeof *dst->dirs, by_name_dir);
     if (dst->nfiles) qsort(dst->files, dst->nfiles, sizeof *dst->files, by_name_file);
 }
 static int by_str(const void *a, const void *b) { return strcmp(*(char *const *)a, *(char *const *)b); }
 static void apply_mods(Dir *root) {
     if (getenv("XCDE_NO_MODS")) return;
-    const char *base = getenv("XCDE_MODS_DIR") ? getenv("XCDE_MODS_DIR") : "mods";
-    DIR *d = opendir(base);
+    char mods_env[1100];
+    const char *base = xcde_utf8_getenv("XCDE_MODS_DIR", mods_env, sizeof mods_env) ? mods_env : "mods";
+    XcdeDir *d = xcde_opendir(base);
     if (!d) return;
     char *names[256];
     int n = 0;
-    struct dirent *e;
-    while ((e = readdir(d)) && n < 256) if (e->d_name[0] != '.') names[n++] = strdup(e->d_name);
-    closedir(d);
+    XcdeDirent *e;
+    while ((e = xcde_readdir(d)) && n < 256) if (e->d_name[0] != '.') names[n++] = strdup(e->d_name);
+    xcde_closedir(d);
     qsort(names, n, sizeof *names, by_str);
     extern bool settings_mod_enabled(const char *name);
     for (int i = 0; i < n; i++) {
         char p[1024];
         snprintf(p, sizeof p, "%s/%s/romfs", base, names[i]);
         struct stat st;
-        if (stat(p, &st) != 0 || !S_ISDIR(st.st_mode)) { free(names[i]); continue; }
+        if (xcde_utf8_stat(p, &st) != 0 || !S_ISDIR(st.st_mode)) { free(names[i]); continue; }
         if (!settings_mod_enabled(names[i])) { rt_logf("[mods] %s: off (xcde.ini)\n", names[i]); free(names[i]); continue; }
         int rep_ = 0, add = 0;
         rt_logf("[mods] %s:\n", names[i]);

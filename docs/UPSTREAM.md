@@ -194,3 +194,28 @@ Details and the reporter's log evidence: [CHANGELOG](dev/CHANGELOG.md).
   listing converts to UTF-16 (`CreateProcessW`, `CreateFileW`, `MoveFileExW`, `SetEnvironmentVariableW`,
   `FindFirstFileW`, `ShellExecuteW`); `curl` writes to a relative `-o`; `stat` became `SDL_GetPathInfo`.
   The game's own path handling is not part of this change (T-UTF8-RUNTIME in `docs/dev/tasks.md`).
+
+## Game paths under a non-ASCII folder (GitHub #218, T278, 2026-11-23)
+
+- `runtime/platform/dir_utf8.h` (new): UTF-8 directory listing over `FindFirstFileW` (`opendir`/`readdir`/`telldir`/
+  `seekdir` equivalents, names as UTF-8, `d_type` from the file attributes); `dirent`-based enumeration in
+  `runtime/services/fs.c`, `runtime/services/romfs_virtual.c`, `runtime/nvn/vulkan/precompile.c` and `runtime/paths.c`
+  is replaced by it.
+- `runtime/host/utf8_path.h`: UTF-8 path wrappers for `open`, `stat`, `mkdir`, `rmdir`, `chdir`, `getcwd`,
+  `getenv` and `LoadLibraryW` (besides the existing `fopen`/`remove`/`rename`/`MoveFileExW`), used by
+  `runtime/loader.c`, `runtime/gamelib.c`, `runtime/host/settings_ini.c`, `runtime/hle/quickstep_save.c`,
+  `runtime/native_intervals.h`, `runtime/services/{fs,romfs_virtual,romfs_fd_cache}.c|h`,
+  `runtime/nvn/vulkan/fsr4.c`, `runtime/paths.c`.
+- `runtime/platform/windows.c`: `plat_exe_path` and `lasrecomp.log` use `GetModuleFileNameW`/`_wfreopen`;
+  `plat_argv_utf8` parses the wide command line; the PDB folder uses `SymInitializeW`.
+- `runtime/host/main_boot.c`: the T135 relaunch and `enter_install_dir` are wide; the `XCDE_TEST_RESERVE_FAIL` hook
+  exercises the relaunch. `runtime/diag/crashdump.c`: the minidump helper is started with `CreateProcessW` and writes
+  through `CreateFileW`.
+- `tests/native/test_utf8_paths.c`, `tests/unit/test_runtime_utf8_paths.py`: regression coverage. The game itself was
+  verified on a Linux-hosted Wine bed with a Windows runtime cross-built from this tree (see evidence).
+- Review follow-ups (same PR): `xcde_opendir` maps `FindFirstFileW` errors to `errno` like the CRT
+  (`ENOENT`/`EACCES`/`ENOTDIR`/`ENOMEM`/`EIO`) and fails a listing that breaks mid-way; `nvn/vulkan/precompile.c`
+  opens the shader files and its list/seed paths through the wrappers (an absolute non-ASCII `--precompile` root
+  works); `plat_argv_utf8` keeps the complete CRT argv if an argument cannot be converted; save-tree
+  `mkdir`/`rmdir`/`rename`/`remove` and the path-valued diagnostic variables use the wrappers. Left narrow:
+  `services/kbicons.c`, `win_compat.h`'s `realpath`, and the developer-only `XCDE_GLSL_DIR`/`XCDE_REC_OUT` switches.

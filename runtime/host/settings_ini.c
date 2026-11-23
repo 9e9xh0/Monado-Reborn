@@ -10,6 +10,7 @@
 #include "../settings.h"
 #include "../quality_policy.h"
 #include "ini_writer.h"
+#include "utf8_path.h"  // [XCDE] T278: UTF-8 paths through the wide APIs
 #include "../hle/foliage_distance.h"
 #include "../graphics_options.h"
 #include "../ui_scale.h"  // [XCDE] GitHub #121
@@ -42,8 +43,8 @@ bool settings_mod_enabled(const char *name) {
 static char g_button_icons[16] = "auto";  // [XCDE] the launcher's choice (button_icons), kept when the game saves
 
 static const char *ini_path(void) {
-    const char *e = getenv("XCDE_INI");
-    return e ? e : "xcde.ini";
+    static char path[1100];
+    return xcde_utf8_getenv("XCDE_INI", path, sizeof path) ? path : "xcde.ini";
 }
 
 static char *trim(char *s) {
@@ -67,7 +68,7 @@ void settings_load(void) {
         xcde_cheats_publish(&g_settings);  // (all off)
         return;
     }
-    FILE *f = fopen(ini_path(), "r");
+    FILE *f = xcde_utf8_fopen(ini_path(), "r");
     if (!f) { xcde_cheats_publish(&g_settings); return; }
     char line[512];
     while (fgets(line, sizeof line, f)) {

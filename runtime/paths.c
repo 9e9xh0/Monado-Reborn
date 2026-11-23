@@ -1,6 +1,6 @@
 // Data root and shipped resources (runtime/paths.h).
 #include <SDL3/SDL.h>
-#include <dirent.h>
+#include "platform/dir_utf8.h"
 #include <errno.h>
 #include <limits.h>
 #include <stdio.h>
@@ -12,6 +12,7 @@
 #include <windows.h>
 #endif
 
+#include "host/utf8_path.h"  // [XCDE] T278: UTF-8 paths through the wide APIs
 #include "gamelib.h"
 #include "paths.h"
 #include "platform.h"
@@ -21,10 +22,17 @@ static char g_root[1024], g_start[1024], g_exe_dir[1024];
 #ifdef _WIN32
 #define SEP "\\"
 static bool is_link(const char *p) {  // symlink or junction
-    DWORD a = GetFileAttributesA(p);
+    wchar_t wp[XCDE_PATH_W];
+    DWORD a;
+    if (xcde_utf8_to_wide(p, wp, XCDE_PATH_W) < 0) return false;
+    a = GetFileAttributesW(wp);
     return a != INVALID_FILE_ATTRIBUTES && (a & FILE_ATTRIBUTE_REPARSE_POINT);
 }
-static bool resolve(const char *p, char *out, size_t n) { return _fullpath(out, p, n) != NULL; }
+static bool resolve(const char *p, char *out, size_t n) {
+    wchar_t wp[XCDE_PATH_W], wo[XCDE_PATH_W];
+    if (xcde_utf8_to_wide(p, wp, XCDE_PATH_W) < 0 || !_wfullpath(wo, wp, XCDE_PATH_W)) return false;
+    return xcde_utf8_from_wide(wo, out, n) >= 0;
+}
 #define path_eq(a, b) (_stricmp(a, b) == 0)
 #else
 #define SEP "/"
@@ -45,29 +53,29 @@ static bool resolve(const char *p, char *out, size_t n) {
 
 static bool is_dir(const char *p) {
     struct stat st;
-    return stat(p, &st) == 0 && S_ISDIR(st.st_mode);
+    return xcde_utf8_stat(p, &st) == 0 && S_ISDIR(st.st_mode);
 }
 
 static bool exists(const char *p) {
     struct stat st;
-    return stat(p, &st) == 0;
+    return xcde_utf8_stat(p, &st) == 0;
 }
 
 static void mkdirs(const char *path) {
     char p[1024];
     snprintf(p, sizeof p, "%s", path);
     for (char *c = p + 1; *c; c++)
-        if (*c == '/' || *c == '\\') { char s = *c; *c = 0; mkdir(p, 0755); *c = s; }
-    mkdir(p, 0755);
+        if (*c == '/' || *c == '\\') { char s = *c; *c = 0; xcde_utf8_mkdir(p); *c = s; }
+    xcde_utf8_mkdir(p);
 }
 
 static bool writable(const char *dir) {
     char t[1100];
     snprintf(t, sizeof t, "%s" SEP ".write_test", dir);
-    FILE *f = fopen(t, "wb");
+    FILE *f = xcde_utf8_fopen(t, "wb");
     if (!f) return false;
     fclose(f);
-    remove(t);
+    xcde_utf8_remove(t);
     return true;
 }
 
@@ -81,15 +89,16 @@ static bool g_dev;  // the data root is the starting folder because it has extra
 bool rt_dev_mode(void) { return g_dev; }
 
 void rt_paths_init(void) {
-    if (!getcwd(g_start, sizeof g_start)) g_start[0] = 0;
+    if (!xcde_utf8_getcwd(g_start, sizeof g_start)) g_start[0] = 0;
     if (plat_exe_path(g_exe_dir, sizeof g_exe_dir)) {
         char *s = strrchr(g_exe_dir, '/'), *b = strrchr(g_exe_dir, '\\');
         if (b > s) s = b;
         if (s) *s = 0;
     }
     char root[1024];
-    const char *env = getenv("LARECOMP_DATA_ROOT");
-    if (env && *env) snprintf(root, sizeof root, "%s", env);
+    char root_env[1100];
+    const char *env = xcde_utf8_getenv("LARECOMP_DATA_ROOT", root_env, sizeof root_env) ? root_env : NULL;
+    if (env) snprintf(root, sizeof root, "%s", env);
     else if (is_dir("extracted")) snprintf(root, sizeof root, "%s", g_start), g_dev = true;  // dev / portable: as before
     else {
 #ifdef _WIN32
@@ -104,7 +113,7 @@ void rt_paths_init(void) {
     }
     mkdirs(root);
     char msg[1400];
-    if (!is_dir(root) || !writable(root) || chdir(root) != 0) {
+    if (!is_dir(root) || !writable(root) || xcde_utf8_chdir(root) != 0) {
 #ifdef _WIN32
         snprintf(msg, sizeof msg, "LAS Recomp can't write to its folder:\n%s\n\nIt keeps game files, saves and seeds "
                  "next to the program. Move the \"LAS Recomp\" folder somewhere you can write to (e.g. Documents or "
@@ -114,7 +123,7 @@ void rt_paths_init(void) {
 #endif
         fail(msg);
     }
-    if (!getcwd(g_root, sizeof g_root)) snprintf(g_root, sizeof g_root, "%s", root);
+    if (!xcde_utf8_getcwd(g_root, sizeof g_root)) snprintf(g_root, sizeof g_root, "%s", root);
     rt_logf("[paths] data: %s\n", g_root);
 }
 
@@ -168,7 +177,7 @@ bool rt_remove_game_file(const char *game_dir, const char *name) {
         rt_logf("[paths] refusing to delete %s (a link)\n", p);
         return false;
     }
-    return is_dir(p) ? plat_remove_tree(p) : remove(p) == 0;  // (plat_remove_tree doesn't follow links inside)
+    return is_dir(p) ? plat_remove_tree(p) : xcde_utf8_remove(p) == 0;  // (plat_remove_tree doesn't follow links inside)
 }
 
 bool rt_remove_game_files(const char *game_dir) {
@@ -178,25 +187,25 @@ bool rt_remove_game_files(const char *game_dir) {
     }
     bool ok = true;
     for (size_t i = 0; i < sizeof GAME_FILES / sizeof *GAME_FILES; i++) ok &= rt_remove_game_file(game_dir, GAME_FILES[i]);
-    rmdir(game_dir);  // only if empty: anything else in there stays
+    xcde_utf8_rmdir(game_dir);  // only if empty: anything else in there stays
     return ok;
 }
 
 static unsigned long long tree_size(const char *p) {
     struct stat st;
-    if (is_link(p) || stat(p, &st) != 0) return 0;
+    if (is_link(p) || xcde_utf8_stat(p, &st) != 0) return 0;
     if (!S_ISDIR(st.st_mode)) return (unsigned long long)st.st_size;
     unsigned long long n = 0;
-    DIR *d = opendir(p);
+    XcdeDir *d = xcde_opendir(p);
     if (d) {
-        struct dirent *e;
-        while ((e = readdir(d))) {
+        XcdeDirent *e;
+        while ((e = xcde_readdir(d))) {
             if (!strcmp(e->d_name, ".") || !strcmp(e->d_name, "..")) continue;
             char c[2048];
             snprintf(c, sizeof c, "%s" SEP "%s", p, e->d_name);
             n += tree_size(c);
         }
-        closedir(d);
+        xcde_closedir(d);
     }
     return n;
 }

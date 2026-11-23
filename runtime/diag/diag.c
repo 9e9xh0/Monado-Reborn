@@ -6,6 +6,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "../host/utf8_path.h"  // [XCDE] T278: UTF-8 paths through the wide APIs
 #include "../platform.h"
 #include "../kernel.h"
 #include "../rt.h"
@@ -69,11 +70,12 @@ void diag_frame_tick(uint64_t frame) {
     static char dm_path[200];
     if (!dm_init) {
         dm_init = 1;
-        const char *e = getenv("XCDE_DUMP_MEM");
+        char env[512];
+        const char *e = xcde_utf8_getenv("XCDE_DUMP_MEM", env, sizeof env) ? env : NULL;
         if (e) sscanf(e, "%llu:%llx:%llx:%199s", &dm_frame, &dm_addr, &dm_size, dm_path);
     }
     if (dm_frame && frame == dm_frame) {
-        FILE *f = fopen(dm_path, "wb");
+        FILE *f = xcde_utf8_fopen(dm_path, "wb");
         if (f) { fwrite((const void *)(uintptr_t)dm_addr, 1, dm_size, f); fclose(f); LOG("[diag] dumped %llx+%llx to %s\n", dm_addr, dm_size, dm_path); }
     }
     {   // [XCDE] T240 XCDE_DUMP_MEM_EACH="<from>:<to>:<hex addr>:<hex size>:<path base>": the range at every presented
@@ -83,13 +85,14 @@ void diag_frame_tick(uint64_t frame) {
         static char de_path[200];
         if (!de_init) {
             de_init = 1;
-            const char *e = getenv("XCDE_DUMP_MEM_EACH");
+            char env[512];
+            const char *e = xcde_utf8_getenv("XCDE_DUMP_MEM_EACH", env, sizeof env) ? env : NULL;
             if (e) sscanf(e, "%llu:%llu:%llx:%llx:%199s", &de_from, &de_to, &de_addr, &de_size, de_path);
         }
         if (de_size && frame >= de_from && frame <= de_to) {
             char p[256];
             snprintf(p, sizeof p, "%s_%llu.bin", de_path, (unsigned long long)frame);
-            FILE *f = fopen(p, "wb");
+            FILE *f = xcde_utf8_fopen(p, "wb");
             if (f) { fwrite((const void *)(uintptr_t)de_addr, 1, de_size, f); fclose(f); }
         }
     }
@@ -213,11 +216,12 @@ static int g_hash_init;
 static void hash_open(void) {
     if (g_hash_init) return;
     g_hash_init = 1;
-    const char *p = getenv("XCDE_FRAME_HASH");
+    char env[1100];
+    const char *p = xcde_utf8_getenv("XCDE_FRAME_HASH", env, sizeof env) ? env : NULL;
     // (only on request: it reads the window image back and waits for the GPU every frame - deterministic runs used to
     // write build/frame_hashes.txt implicitly; image hashes aren't reproducible anyway (T124), compare XCDE_DET_DIGEST)
     if (p && *p) {
-        g_hash_file = fopen(p, "w");
+        g_hash_file = xcde_utf8_fopen(p, "w");
         if (g_hash_file) { fputs("# xcde frame hashes v1: <frame> <fnv1a-64 of the RGBA window image>\n", g_hash_file); LOG("[diag] frame hashes -> %s\n", p); }
     }
 }
@@ -254,9 +258,11 @@ static void input_open(void) {
     if (g_in_init) return;
     g_in_init = 1;
     g_input_ms = env_flag("XCDE_INPUT_TIME");
-    const char *rp = getenv("XCDE_INPUT_REPLAY"), *wp = getenv("XCDE_INPUT_RECORD");
+    char rp_env[1100], wp_env[1100];
+    const char *rp = xcde_utf8_getenv("XCDE_INPUT_REPLAY", rp_env, sizeof rp_env) ? rp_env : NULL;
+    const char *wp = xcde_utf8_getenv("XCDE_INPUT_RECORD", wp_env, sizeof wp_env) ? wp_env : NULL;
     if (rp && *rp) {
-        FILE *f = fopen(rp, "r");
+        FILE *f = xcde_utf8_fopen(rp, "r");
         if (!f) { LOG("[diag] cannot open input replay %s\n", rp); }
         else {
             char line[256];
@@ -282,7 +288,7 @@ static void input_open(void) {
         }
     }
     if (wp && *wp) {
-        g_rec = fopen(wp, "w");
+        g_rec = xcde_utf8_fopen(wp, "w");
         if (g_rec) fputs(g_input_ms ? "# xcde input v2-ms: <milliseconds> <buttons hex> <lx> <ly> <rx> <ry>\n" :
             "# xcde input v1: <frame> <buttons hex> <lx> <ly> <rx> <ry>\n", g_rec);
     }
@@ -336,8 +342,9 @@ static pthread_mutex_t g_hit_lock = PTHREAD_MUTEX_INITIALIZER;
 static int g_cov_init;
 
 static void cov_dump(void) {
-    const char *p = getenv("XCDE_HLE_COVERAGE");
-    FILE *f = p ? fopen(p, "w") : NULL;
+    char env[1100];
+    const char *p = xcde_utf8_getenv("XCDE_HLE_COVERAGE", env, sizeof env) ? env : NULL;
+    FILE *f = p ? xcde_utf8_fopen(p, "w") : NULL;
     if (!f) return;
     for (int i = 0; i < g_nhits; i++) fprintf(f, "%s\t%s\t%llu\n", g_hits[i].kind, g_hits[i].name, (unsigned long long)g_hits[i].n);
     fclose(f);
@@ -376,15 +383,19 @@ static int g_nuse;
 static pthread_mutex_t g_use_lock = PTHREAD_MUTEX_INITIALIZER;
 static uint64_t g_svc_count[256];
 static int g_use_init;
+static char g_use_env[1100];
 static const char *g_use_path;
 
 bool diag_usage_on(void) {
-    if (!g_use_init) { g_use_path = getenv("XCDE_USAGE"); g_use_init = 1; }
+    if (!g_use_init) {
+        g_use_path = xcde_utf8_getenv("XCDE_USAGE", g_use_env, sizeof g_use_env) ? g_use_env : NULL;
+        g_use_init = 1;
+    }
     return g_use_path != NULL;
 }
 
 static void use_dump(void) {
-    FILE *f = fopen(g_use_path, "w");
+    FILE *f = g_use_path ? xcde_utf8_fopen(g_use_path, "w") : NULL;
     if (!f) return;
     for (unsigned i = 0; i < 256; i++) if (g_svc_count[i]) fprintf(f, "svc\t0x%02x\t%llu\n", i, (unsigned long long)g_svc_count[i]);
     for (int i = 0; i < g_nuse; i++) fprintf(f, "%s\t%s\t%llu\n", g_use[i].kind, g_use[i].name, (unsigned long long)g_use[i].n);

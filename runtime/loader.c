@@ -2,6 +2,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "host/utf8_path.h"  // [XCDE] T278: UTF-8 paths through the wide APIs
 #include "rt.h"
 
 Module g_modules[4];
@@ -38,7 +39,7 @@ static size_t lz4_decompress(const uint8_t *src, size_t srclen, uint8_t *dst, si
 }
 
 static uint8_t *read_file(const char *path, size_t *len) {
-    FILE *f = fopen(path, "rb");
+    FILE *f = xcde_utf8_fopen(path, "rb");
     if (!f) return NULL;
     fseek(f, 0, SEEK_END);
     *len = ftell(f);

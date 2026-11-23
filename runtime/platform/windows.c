@@ -14,6 +14,7 @@
 
 #include "../platform.h"
 #include "../pgo.h"
+#include "../host/utf8_path.h"  // [XCDE] T278: UTF-8 paths through the wide APIs
 
 // ---- guest address space
 // The window is reserved up front and committed per region (plat_commit from the loader / kernel). Anything
@@ -263,23 +264,24 @@ void plat_thread_realtime(uint64_t period_ns) {
 // Release builds are GUI-subsystem executables (no console window): stdout / stderr go to lasrecomp.log next to the
 // exe, and a fatal error shows a message box (plat_fatal_notice) instead of vanishing. Processes started by this one
 // (the start screen re-executing itself for the game) append to the same log.
-static char g_log_path[MAX_PATH];
+static char g_log_path[4096];  // (UTF-8: the exe folder may need 3 bytes per UTF-16 unit)
 
 static void log_to_file_without_console(void) {
     if (GetStdHandle(STD_ERROR_HANDLE) && GetStdHandle(STD_ERROR_HANDLE) != INVALID_HANDLE_VALUE) return;  // console / pipe
-    char exe[MAX_PATH];
-    DWORD n = GetModuleFileNameA(NULL, exe, sizeof exe);
-    if (!n || n >= sizeof exe) return;
-    char *slash = strrchr(exe, '\\');
-    if (slash) slash[1] = 0;
-    snprintf(g_log_path, sizeof g_log_path, "%slasrecomp.log", exe);
+    wchar_t exe[XCDE_PATH_W], log[XCDE_PATH_W], prev[XCDE_PATH_W];
+    DWORD n = GetModuleFileNameW(NULL, exe, XCDE_PATH_W);
+    size_t el;
     bool append = getenv("LASRECOMP_LOG_APPEND") != NULL;
-    if (!append) {  // [XCDE] the previous run's log is kept as lasrecomp.prev.log (a crash report needs the run that crashed)
-        char prev[MAX_PATH];
-        snprintf(prev, sizeof prev, "%slasrecomp.prev.log", exe);
-        MoveFileExA(g_log_path, prev, MOVEFILE_REPLACE_EXISTING);
-    }
-    if (!freopen(g_log_path, append ? "ab" : "wb", stderr)) { g_log_path[0] = 0; return; }
+    if (!n || n >= XCDE_PATH_W) return;
+    wchar_t *slash = wcsrchr(exe, L'\\');
+    if (slash) slash[1] = 0;
+    el = wcslen(exe);
+    if (el + wcslen(L"lasrecomp.prev.log") + 1 > XCDE_PATH_W) return;
+    wcscpy(log, exe), wcscat(log, L"lasrecomp.log");
+    wcscpy(prev, exe), wcscat(prev, L"lasrecomp.prev.log");
+    if (xcde_utf8_from_wide(log, g_log_path, sizeof g_log_path) < 0) { g_log_path[0] = 0; return; }
+    if (!append) MoveFileExW(log, prev, MOVEFILE_REPLACE_EXISTING);  // [XCDE] the previous run's log is kept (a crash report needs the run that crashed)
+    if (!_wfreopen(log, append ? L"ab" : L"wb", stderr)) { g_log_path[0] = 0; return; }
     setvbuf(stderr, NULL, _IONBF, 0);
     _dup2(_fileno(stderr), _fileno(stdout));
     _putenv("LASRECOMP_LOG_APPEND=1");
@@ -301,7 +303,7 @@ void plat_fatal_notice(void) {
     if (!g_log_path[0]) return;
     fflush(stderr);
     char text[1024] = "LAS Recomp stopped because of an error.";
-    FILE *f = fopen(g_log_path, "rb");
+    FILE *f = xcde_utf8_fopen(g_log_path, "rb");
     if (f) {
         static char tail[16384];
         fseek(f, 0, SEEK_END);
@@ -326,7 +328,9 @@ void plat_fatal_notice(void) {
     }
     size_t l = strlen(text);
     snprintf(text + l, sizeof text - l, "\n\nDetails: %s", g_log_path);
-    MessageBoxA(NULL, text, "LAS Recomp", MB_ICONERROR | MB_OK);
+    wchar_t wtext[2048];
+    if (xcde_utf8_to_wide(text, wtext, 2048) >= 0) MessageBoxW(NULL, wtext, L"LAS Recomp", MB_ICONERROR | MB_OK);
+    else MessageBoxA(NULL, text, "LAS Recomp", MB_ICONERROR | MB_OK);
 }
 
 // [XCDE] Intel hybrid CPUs (P-cores + E-cores, and the low-power E-cores of Core Ultra): the game's threads (game,
@@ -476,8 +480,42 @@ int plat_cpu_count(void) {
 }
 
 bool plat_exe_path(char *buf, size_t size) {
-    DWORD n = GetModuleFileNameA(NULL, buf, (DWORD)size);
-    return n > 0 && n < size;
+    wchar_t wpath[XCDE_PATH_W];
+    DWORD n = GetModuleFileNameW(NULL, wpath, XCDE_PATH_W);
+    if (!n || n >= XCDE_PATH_W) return false;
+    return xcde_utf8_from_wide(wpath, buf, size) > 0;
+}
+
+// [XCDE] T278: argv parsed from the wide command line. The CRT gives main() its argv in the ANSI code page, so a
+// non-ASCII --game / --minidump / --precompile path would arrive mangled (GitHub #218).
+int plat_argv_utf8(int argc, char **argv, char ***out) {
+    int n = 0, m = 0;
+    bool failed = false;
+    wchar_t **w = CommandLineToArgvW(GetCommandLineW(), &n);
+    char **v;
+    if (!w || n <= 0) {
+        if (w) LocalFree(w);
+        *out = argv;
+        return argc;
+    }
+    v = (char **)calloc((size_t)n + 1, sizeof *v);
+    if (!v) { LocalFree(w); *out = argv; return argc; }
+    for (int i = 0; i < n; i++) {
+        int len = xcde_utf8_from_wide(w[i], NULL, 0);
+        if (len < 0) { failed = true; break; }
+        v[m] = (char *)malloc((size_t)len + 1);
+        if (!v[m] || xcde_utf8_from_wide(w[i], v[m], (size_t)len + 1) < 0) { free(v[m]); failed = true; break; }
+        m++;
+    }
+    LocalFree(w);
+    if (failed) {  // (one argument dropped would shift every option after it: keep the CRT's complete, if mangled, argv)
+        for (int i = 0; i < m; i++) free(v[i]);
+        free(v);
+        *out = argv;
+        return argc;
+    }
+    *out = v;
+    return m;
 }
 
 // Quote one argument the way CommandLineToArgvW / the CRT parse it back.
@@ -538,12 +576,13 @@ const char *plat_symbol(uint64_t pc, uint64_t *offset) {
         if (!inited) {
             // the exe names its PDB without a directory ("xcde.pdb"): search next to the exe, not only the current one
             inited = 1;
-            char dir[MAX_PATH];
-            DWORD n = GetModuleFileNameA(NULL, dir, sizeof dir);
-            char *sl = n ? strrchr(dir, '\\') : NULL;
+            wchar_t dir[MAX_PATH];
+            DWORD n = GetModuleFileNameW(NULL, dir, MAX_PATH);
+            wchar_t *sl = n ? wcsrchr(dir, L'\\') : NULL;
             if (sl) *sl = 0;
             SymSetOptions(SYMOPT_UNDNAME | SYMOPT_DEFERRED_LOADS);
-            SymInitialize(GetCurrentProcess(), sl ? dir : NULL, TRUE);
+            if (!SymInitializeW(GetCurrentProcess(), sl ? dir : NULL, TRUE))
+                SymInitialize(GetCurrentProcess(), NULL, TRUE);
         }
         union { SYMBOL_INFO s; char buf[sizeof(SYMBOL_INFO) + 256]; } u = {0};
         u.s.SizeOfStruct = sizeof(SYMBOL_INFO);
@@ -557,8 +596,9 @@ const char *plat_symbol(uint64_t pc, uint64_t *offset) {
         ReleaseSRWLockExclusive(&lock);
         return ok ? name : NULL;
     }
-    char path[MAX_PATH];
-    if (!GetModuleFileNameA(m, path, sizeof path)) return NULL;
+    wchar_t wpath[MAX_PATH];
+    char path[3 * MAX_PATH];
+    if (!GetModuleFileNameW(m, wpath, MAX_PATH) || xcde_utf8_from_wide(wpath, path, sizeof path) < 0) return NULL;
     const char *b = strrchr(path, '\\');
     snprintf(name, sizeof name, "%s", b ? b + 1 : path);
     if (offset) *offset = pc - (uint64_t)(uintptr_t)m;
@@ -781,7 +821,7 @@ void plat_thread_name(const char *name) {
 
 // [XCDE] diag.c XCDE_DUMP_HEAP: the committed, readable guest heap pages to a file (u64 address, u64 size, bytes)
 uint64_t plat_guest_dump(const char *path) {
-    FILE *f = fopen(path, "wb");
+    FILE *f = xcde_utf8_fopen(path, "wb");
     if (!f) return 0;
     uint64_t total = 0;
     for (uint64_t a = 0x7240000000ull; a < 0x7240000000ull + 0xD0000000ull;) {
