@@ -79,6 +79,34 @@ class AppRunModes(unittest.TestCase):
         self.assertEqual((self.appdir / 'targets').resolve(), self.dump.resolve())
 
 
+class BuilderProgressLines(unittest.TestCase):
+    def report(self, env, *args):
+        printed = io.StringIO()
+        with tempfile.TemporaryDirectory() as out, mock.patch.dict(os.environ, env, clear=False), \
+                contextlib.redirect_stdout(printed):
+            gb.report(Path(out), *args)
+        return printed.getvalue().splitlines()
+
+    def test_recomplauncher_gets_a_progress_line(self):
+        gb.set_shares(8)
+        lines = self.report({'RECOMPLAUNCHER': '1'}, 'compile', 3, 10, 'Compiling main/x.c', 0.5)
+        expected = f'progress {gb.overall("compile", 0.5):.4f} Compiling the game code: 3 of 10 files'
+        self.assertEqual(lines, [expected])
+
+    def test_own_launcher_runs_stay_quiet(self):
+        lines = self.report({'RECOMPLAUNCHER': ''}, 'compile', 3, 10, 'Compiling main/x.c', 0.5)
+        self.assertEqual(lines, [])
+
+    def test_link_step_shows_its_own_text(self):
+        self.assertEqual(gb.launcher_step_text('link', 1, 1, 'Already built'), 'Already built')
+
+    def test_prepare_switch_is_accepted(self):
+        with tempfile.TemporaryDirectory() as d:
+            log = Path(d) / 'gamebuild.log'
+            log.write_text('[00:00:01 +1s] compile main/a.c: exit 0 after 2.5s\n', encoding='utf-8')
+            with contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(gb.main(['--prepare', '--write-costs', str(log), str(Path(d) / 'cost.json')]), 0)
+
 
 if __name__ == '__main__':
     unittest.main()

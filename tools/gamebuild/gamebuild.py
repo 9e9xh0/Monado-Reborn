@@ -21,7 +21,8 @@ Usage: monado-gamebuild --root <dump> [--out DIR] [--resources DIR] [--jobs N]
                         [--force] [--dry-run]
        gamebuild.py --write-costs <gamebuild.log> games/xcde/compile_cost.json   (after a release's lifter change)
 Exit codes: 0 ok, 1 usage, 2 bad game files, 3 generation failed, 4 compile failed,
-5 link failed. Progress is written for the launcher: `<out>/progress.txt`.
+5 link failed. Progress is written for the launcher: `<out>/progress.txt`, and also printed as
+`progress <0..1> <text>` lines when RecompLauncher runs it (RECOMPLAUNCHER=1, recomplauncher.json).
 """
 import argparse
 import faulthandler
@@ -212,12 +213,31 @@ def overall(phase, fraction):
     return 1 - LINK_SHARE + LINK_SHARE * fraction
 
 
+def launcher_step_text(phase, done, total, text):
+    """What RecompLauncher shows under its setup step (Monado's own launcher words it the same way)."""
+    if phase == 'generate':
+        return f'Reading the game code: {done} of {total}'
+    if phase == 'compile':
+        return f'Compiling the game code: {done} of {total} files'
+    return text
+
+
+def print_launcher_progress(phase, done, total, text, fraction):
+    """RecompLauncher (recomplauncher.json) runs this builder as its setup step, with RECOMPLAUNCHER=1, and reads
+    `progress <0..1> <text>` lines from stdout. Monado's own launcher reads progress.txt instead, so its runs stay
+    quiet."""
+    if os.environ.get('RECOMPLAUNCHER') != '1':
+        return
+    print(f'progress {overall(phase, fraction):.4f} {launcher_step_text(phase, done, total, text)}', flush=True)
+
+
 def report(out, phase, done, total, text='', fraction=None):
     """`<phase> <done> <total> <text>`, then `overall <0..1>`: the launcher's bar (time-weighted, so it moves at a
     steady pace and gives a time estimate). Older launchers read the first line only."""
     path = progress_file(out)
     if fraction is None:
         fraction = done / total if total else 1.0
+    print_launcher_progress(phase, done, total, text, fraction)
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
         temporary = path.with_suffix('.tmp')
@@ -477,6 +497,9 @@ def main(argv=None):
                              'with a warning by default)')
     parser.add_argument('--write-costs', nargs=2, metavar=('LOG', 'JSON'),
                         help='write the chunk compile times of a gamebuild.log to games/xcde/compile_cost.json')
+    # recomplauncher.json passes one argument list to this program on Windows and to the AppImage on Linux, whose
+    # AppRun needs --prepare to pick the builder; here it changes nothing.
+    parser.add_argument('--prepare', action='store_true', help='(ignored: the AppImage\'s setup-step switch)')
     args = parser.parse_args(argv)
     if args.write_costs:
         write_compile_costs(*args.write_costs)
@@ -497,7 +520,7 @@ def main(argv=None):
         try:
             if json.loads(stamp.read_text(encoding='utf-8')).get('fingerprint') == current:
                 print(f'gamebuild: up to date: {library}')
-                report(out, 'link', 1, 1, 'Ready')
+                report(out, 'link', 1, 1, 'Already built')
                 return 0
         except (OSError, ValueError):
             pass
@@ -524,7 +547,7 @@ def main(argv=None):
             note(log, f'generate: done; compile: start ({jobs} at a time)')
             units = compile_units(resources, out, link, jobs, log)
             note(log, 'compile: done; link: start')
-            report(out, 'link', 0, 1, 'Linking')
+            report(out, 'link', 0, 1, 'Linking the game code')
             link_library(resources, out, link, units, log)
             note(log, 'link: done')
         except SystemExit as error:
@@ -545,7 +568,7 @@ def main(argv=None):
         # The generated C is large and reproducible from the dump; the objects keep
         # rebuilds cheap, so only the sources are dropped.
         shutil.rmtree(out / 'generated', ignore_errors=True)
-    report(out, 'link', 1, 1, 'Ready')
+    report(out, 'link', 1, 1, 'Game code ready')
     print(f'gamebuild: {library} ({time.time() - started:.0f}s)')
     return 0
 
