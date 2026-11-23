@@ -15,7 +15,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 NAME = 'monado-gamebuild'
-HIDDEN = ('gen', 'analyze', 'flags', 'lifter', 'nso', 'patchfmt', 'regs', 'simd_c', 'sym', 'check_dump', 'manifest')
+HIDDEN = ('gen', 'analyze', 'flags', 'lifter', 'nso', 'patchfmt', 'regs', 'simd_c', 'sym', 'check_dump', 'manifest', 'nup')
 COLLECT = ('unicorn', 'capstone', 'lz4')
 IMAGE_DLLCHARACTERISTICS_GUARD_CF = 0x4000
 

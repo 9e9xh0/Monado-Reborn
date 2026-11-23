@@ -16,6 +16,7 @@
 #include "../ipc.h"
 #include "../host/utf8_path.h"  // [XCDE] T278: UTF-8 paths through the wide APIs
 #include "romfs_virtual.h"  // [XCDE]
+#include "game_files.h"  // [XCDE] T280
 #include "../hle/quickstep_save.h"  // [XCDE] Quick Step slot metadata (Monado II port)
 #ifndef O_BINARY
 #define O_BINARY 0
@@ -390,9 +391,11 @@ static Service *open_romfs_storage(void) {
     if (virt_ready < 0) {
         char why[256];
         struct stat sb;
-        virt_ready = xcde_utf8_stat(g_romfs_dir, &sb) == 0 && S_ISDIR(sb.st_mode) && rvfs_init(g_romfs_dir, why, sizeof why);
+        // [XCDE] T280: or the romfs inside a .nup package, read in place
+        bool have_romfs = gf_is_package() || (xcde_utf8_stat(g_romfs_dir, &sb) == 0 && S_ISDIR(sb.st_mode));
+        virt_ready = have_romfs && rvfs_init(g_romfs_dir, why, sizeof why);
         if (virt_ready) LOG("[fs] virtual romfs over %s: image %llu bytes\n", g_romfs_dir, (unsigned long long)rvfs_size());
-        else LOG("[fs] no romfs folder at %s\n", g_romfs_dir);
+        else LOG("[fs] no romfs folder at %s%s%s\n", g_romfs_dir, have_romfs ? ": " : "", have_romfs ? why : "");
     }
     if (virt_ready) {
         Storage *st = calloc(1, sizeof *st);

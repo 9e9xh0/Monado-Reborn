@@ -19,13 +19,15 @@
 #include "../host/utf8_path.h"  // [XCDE] T278: UTF-8 paths through the wide APIs
 #include "../platform.h"
 #include "romfs_fd_cache.h"
+#include "game_files.h"  // [XCDE] T280
 
 #define EMPTY 0xFFFFFFFFu
 #define DATA_START 0x200u
 #define FD_CACHE XCDE_FD_CACHE
 
 typedef struct Dir Dir;
-typedef struct { char *name, *path; uint64_t size, data_off; uint32_t off; Dir *parent; int index; uint8_t *mem; bool traced; } File;
+// [XCDE] T280: src/base: a file inside a .nup package is read from the package at base (src NULL: the file at path)
+typedef struct { char *name, *path; const char *src; uint64_t base, size, data_off; uint32_t off; Dir *parent; int index; uint8_t *mem; bool traced; } File;
 struct Dir { char *name, *path; Dir *parent; Dir **dirs; File **files; int ndirs, nfiles; uint32_t off; };
 typedef struct { Dir **dirs; File **files; int nd, nf, cd, cf; } Lists;
 
@@ -49,11 +51,11 @@ static int by_name_file(const void *a, const void *b) { return strcmp((*(File *c
 #include "../settings.h"
 #include "../quality_policy.h"
 static void edit_ini(File *f, const char *edits) {
-    FILE *in = xcde_utf8_fopen(f->path, "rb");
-    if (!in) return;
-    char *src = malloc(f->size + 1);
-    size_t n = fread(src, 1, f->size, in);
-    fclose(in);
+    size_t n = 0;
+    uint8_t *bytes = gf_read(f->path, &n);  // [XCDE] T280: the folder's file, a mod's, or the package's
+    if (!bytes) return;
+    char *src = realloc(bytes, n + 1);
+    if (!src) { free(bytes); return; }
     src[n] = 0;
     size_t cap = n + strlen(edits) + 64, len = 0;
     char *out = malloc(cap);
@@ -171,6 +173,43 @@ static Dir *scan(const char *path, const char *name, Dir *parent, int depth) {
     return dir;
 }
 
+// [XCDE] T280: the romfs inside a .nup package (runtime/services/game_files.c): the same tree as scan() makes from a
+// folder, with each file read in place from the package. path stays "<package>/romfs/...", so the edits and mods
+// below find their files by the same names.
+static Dir *scan_package(int node, const char *path, const char *name, Dir *parent, int depth) {
+    if (depth > 32 || !gf_pkg_is_dir(node)) return NULL;
+    Dir *dir = calloc(1, sizeof *dir);
+    dir->name = strdup(name), dir->path = strdup(path), dir->parent = parent;
+    int cd = 0, cf = 0;
+    const uint32_t *children;
+    int count = gf_pkg_children(node, &children);
+    for (int i = 0; i < count; i++) {
+        int child = (int)children[i];
+        const char *child_name = gf_pkg_name(child);
+        size_t n = strlen(path) + strlen(child_name) + 2;
+        char *p = malloc(n);
+        snprintf(p, n, "%s/%s", path, child_name);
+        if (gf_pkg_is_dir(child)) {
+            Dir *c = scan_package(child, p, child_name, dir, depth + 1);
+            free(p);
+            if (!c) continue;
+            if (dir->ndirs == cd) dir->dirs = realloc(dir->dirs, sizeof *dir->dirs * (cd = cd ? cd * 2 : 8));
+            dir->dirs[dir->ndirs++] = c;
+            continue;
+        }
+        GfSource src = gf_pkg_source(child);
+        File *f = calloc(1, sizeof *f);
+        f->name = strdup(child_name), f->path = p, f->src = src.path, f->base = src.base, f->size = src.size;
+        f->parent = dir;
+        maybe_edit(f);
+        if (dir->nfiles == cf) dir->files = realloc(dir->files, sizeof *dir->files * (cf = cf ? cf * 2 : 16));
+        dir->files[dir->nfiles++] = f;
+    }
+    if (dir->ndirs) qsort(dir->dirs, dir->ndirs, sizeof *dir->dirs, by_name_dir);
+    if (dir->nfiles) qsort(dir->files, dir->nfiles, sizeof *dir->files, by_name_file);
+    return dir;
+}
+
 // [XCDE] Mods: mods/<name>/romfs/... (the Ryujinx / yuzu layout) replaces or adds game files. Every folder in mods/
 // with a romfs/ inside is on unless xcde.ini says `mod_<name> = 0` (the launcher's Mods tab); they apply in
 // alphabetical order, so a later mod wins over an earlier one for the same file. Only data: code mods (exefs / NSO
@@ -211,6 +250,7 @@ static void overlay(Dir *dst, const char *path, int depth, int *replaced, int *a
             for (int i = 0; i < dst->nfiles && !f; i++) if (ci_eq(dst->files[i]->name, e->d_name)) f = dst->files[i];
             if (f) {
                 (*replaced)++;
+                f->src = NULL, f->base = 0;  // [XCDE] T280: the mod's own file now
                 free(f->path);
                 free(f->mem);
                 f->mem = NULL;
@@ -290,7 +330,8 @@ static void put32(uint8_t *p, uint32_t v) { memcpy(p, &v, 4); }
 static void put64(uint8_t *p, uint64_t v) { memcpy(p, &v, 8); }
 
 bool rvfs_init(const char *dir, char *why, size_t why_size) {
-    Dir *root = scan(dir, "", NULL, 0);
+    // [XCDE] T280: the romfs inside a .nup package, or the romfs/ folder
+    Dir *root = gf_is_package() ? scan_package(gf_pkg_node(dir), dir, "", NULL, 0) : scan(dir, "", NULL, 0);
     if (!root) { snprintf(why, why_size, "cannot read %s", dir); return false; }
     apply_mods(root);
     Lists l = {0};
@@ -367,7 +408,8 @@ uint64_t rvfs_size(void) { return g_image_size; }
 // mid-pread (-> read as zeros, or another file's bytes after the fd number was reused). A slot in use is never recycled:
 // the colliding reader gets a private descriptor instead. `*slot` is -1 for a private one.
 static int file_fd(int idx, int *slot) {
-    return xcde_fd_acquire(g_fds,&g_fd_lock,&g_stamp,idx,g_files[idx]->path,O_RDONLY|O_BINARY_FLAG,slot);
+    const File *f = g_files[idx];  // [XCDE] T280: a package's files are all read from the package
+    return xcde_fd_acquire(g_fds,&g_fd_lock,&g_stamp,idx,f->src ? f->src : f->path,O_RDONLY|O_BINARY_FLAG,slot);
 }
 static void file_fd_release(int fd, int slot) { xcde_fd_release(g_fds,&g_fd_lock,fd,slot); }
 
@@ -419,7 +461,8 @@ int64_t rvfs_read(uint8_t *dst, uint64_t size, uint64_t off) {
                 uint64_t in = rel - f->data_off, avail = f->size - in;
                 if (n > avail) n = avail;
                 int slot, fd = file_fd(hit, &slot);
-                ssize_t r = fd >= 0 ? pread(fd, dst + done, (size_t)n, (off_t)in) : -1;
+                // [XCDE] T280: a 64-bit offset (a file deep in a 15 GB package; off_t is 32-bit in the Windows build)
+                int64_t r = fd >= 0 ? gf_pread_at(fd, dst + done, n, f->base + in) : -1;
                 file_fd_release(fd, slot);
                 if (r < 0) rt_logf("[romfs] read error %s +%llx (%llu bytes): zero-filled\n", g_files[hit]->path, (unsigned long long)in, (unsigned long long)n);
                 if (r < 0) r = 0;

@@ -18,6 +18,7 @@
 #include "../kernel.h"
 #include "../paths.h"
 #include "../rt.h"
+#include "../services/game_files.h"  // [XCDE] T280
 #include "utf8_path.h"  // [XCDE] T278: UTF-8 paths through the wide APIs
 
 const char *g_romfs_dir;
@@ -218,14 +219,14 @@ int main(int argc, char **argv) {
     setvbuf(stderr, NULL, _IONBF, 0);
     bool game_opt = argc >= 2 && !strcmp(argv[1], "--game");  // [XCDE] the same dump folder by name, from a launcher
     int first = game_opt ? 2 : 1;
-    if (argc <= first) { rt_logf("usage: xcde_boot [--game] <dump dir with exefs/ and romfs/> [seconds]\n"); return 2; }
+    if (argc <= first) { rt_logf("usage: xcde_boot [--game] <dump: a folder with exefs/ and romfs/, or a .nup> [seconds]\n"); return 2; }
     const char *root = argv[first];
     int seconds = argc > first + 1 ? atoi(argv[first + 1]) : 20;
     char abs_root[1024];
     if (game_opt) {
         // Make the dump path independent of the launcher's working folder before changing ours.
         if (!rt_path_absolute(root, abs_root, sizeof abs_root)) {
-            rt_logf("xcde: --game folder not found: %s\n", root);
+            rt_logf("xcde: --game dump not found: %s\n", root);
             return 2;
         }
         root = abs_root;
@@ -239,6 +240,11 @@ int main(int argc, char **argv) {
     snprintf(romfs, sizeof romfs, "%s/romfs", root);
     snprintf(npdm_path, sizeof npdm_path, "%s/main.npdm", exefs);
     g_romfs_dir = strdup(romfs);
+    // [XCDE] T280: the dump is a folder with exefs/ and romfs/, or a .nup package read in place; every reader below
+    // goes through runtime/services/game_files.c with the same "<root>/exefs/..." and "<root>/romfs/..." paths.
+    char why[768];
+    if (!gf_init(root, why, sizeof why)) FATAL("Cannot read the game files: %s\n", why);
+    if (gf_is_package()) LOG("[boot] game files from the package %s\n", root);
 
     diag_watchdog_start();
 #ifdef _WIN32
@@ -260,15 +266,13 @@ int main(int argc, char **argv) {
 
     uint32_t stack_size = 0x100000;
     int prio = 44;
-    FILE *f = xcde_utf8_fopen(npdm_path, "rb");
-    if (f) {
-        uint8_t meta[0x80];
-        if (fread(meta, 1, sizeof meta, f) == sizeof meta && !memcmp(meta, "META", 4)) {
-            prio = meta[0xE];
-            stack_size = *(uint32_t *)(meta + 0x1C);
-        }
-        fclose(f);
+    size_t meta_len = 0;
+    uint8_t *meta = gf_read(npdm_path, &meta_len);  // [XCDE] T280: from the folder or the package
+    if (meta && meta_len >= 0x80 && !memcmp(meta, "META", 4)) {
+        prio = meta[0xE];
+        stack_size = *(uint32_t *)(meta + 0x1C);
     }
+    free(meta);
     LOG("main thread: prio %d, stack 0x%x\n", prio, stack_size);
 
     uint64_t start = loader_find_symbol("_ZN2nn4init5StartEmmPFvvES2_");

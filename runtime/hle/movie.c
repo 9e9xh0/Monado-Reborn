@@ -17,8 +17,11 @@
 #include <pthread.h>
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
 
 #include "../hle.h"
+#include "../platform.h"  // (pread on Windows)
+#include "../services/game_files.h"  // [XCDE] T280
 #include "../settings.h"
 #include "movie_buf.h"
 #include "../kernel.h"  // (kernel_det_mutex_lock: these locks are held across guest calls - dec_signal, dec_stop)
@@ -203,7 +206,66 @@ typedef struct {
     AVPacket *pkt;
     bool have_pkt, eof;
     bool skippable;  // the launch opening (forced on the first launch, no save yet): A / B / + ends it
+    struct PkgIo *pkg;  // [XCDE] T280: a movie read from inside a .nup package (NULL: FFmpeg opened the file)
 } Extractor;
+
+// [XCDE] T280: a movie inside a .nup package, read in place: FFmpeg reads it through these callbacks over the movie's
+// bytes in the package, as it would read the file itself.
+typedef struct PkgIo { GfSource src; int fd; uint64_t pos; AVIOContext *io; } PkgIo;
+
+static int pkg_read(void *opaque, uint8_t *buf, int size) {
+    PkgIo *p = opaque;
+    if (p->pos >= p->src.size) return AVERROR_EOF;
+    uint64_t left = p->src.size - p->pos, want = (uint64_t)size < left ? (uint64_t)size : left;
+    int64_t got = gf_pread_at(p->fd, buf, want, p->src.base + p->pos);  // (64-bit: deep in a 15 GB package)
+    if (got <= 0) return AVERROR_EOF;
+    p->pos += (uint64_t)got;
+    return (int)got;
+}
+
+static int64_t pkg_seek(void *opaque, int64_t offset, int whence) {
+    PkgIo *p = opaque;
+    if (whence & AVSEEK_SIZE) return (int64_t)p->src.size;
+    whence &= ~AVSEEK_FORCE;
+    int64_t from = whence == SEEK_CUR ? (int64_t)p->pos : whence == SEEK_END ? (int64_t)p->src.size : 0;
+    if (whence != SEEK_SET && whence != SEEK_CUR && whence != SEEK_END) return -1;
+    if (from + offset < 0) return -1;
+    p->pos = (uint64_t)(from + offset);
+    return (int64_t)p->pos;
+}
+
+// The movie at a game path inside the package, ready for avformat_open_input (false: not in a package, or missing).
+static bool pkg_open(Extractor *e, const char *host) {
+    GfSource src;
+    if (gf_pkg_node(host) < 0 || !gf_source(host, &src)) return false;
+    PkgIo *p = calloc(1, sizeof *p);
+    p->src = src;
+    p->fd = gf_open(&src);
+    uint8_t *buf = p->fd >= 0 ? av_malloc(1 << 16) : NULL;
+    p->io = buf ? avio_alloc_context(buf, 1 << 16, 0, p, pkg_read, NULL, pkg_seek) : NULL;
+    e->fmt = p->io ? avformat_alloc_context() : NULL;
+    if (!e->fmt) {
+        if (p->io) avio_context_free(&p->io); else av_free(buf);
+        if (p->fd >= 0) close(p->fd);
+        free(p);
+        return false;
+    }
+    e->fmt->pb = p->io;
+    e->fmt->flags |= AVFMT_FLAG_CUSTOM_IO;
+    e->pkg = p;
+    return true;
+}
+
+// Closes the movie, and the package reader when there is one (FFmpeg leaves custom I/O to its owner).
+static void ex_close(Extractor *e) {
+    if (e->fmt) avformat_close_input(&e->fmt);
+    if (!e->pkg) return;
+    av_freep(&e->pkg->io->buffer);
+    avio_context_free(&e->pkg->io);
+    if (e->pkg->fd >= 0) close(e->pkg->fd);
+    free(e->pkg);
+    e->pkg = NULL;
+}
 
 static bool g_skip_held;           // ex_fill: A / B held at the last look
 static double g_skip_pressed_at;    // when they were pressed (0 = not yet)
@@ -252,8 +314,13 @@ static void ex_set_data_source(Cpu *c) {
     char host[1024];
     snprintf(host, sizeof host, "%s/%s", g_romfs_dir, rel ? rel : "");
     LOG("[movie] open %s -> %s\n", path ? path : "(null)", host);
+    if (gf_is_package()) {  // [XCDE] T280: read in place from the .nup (a reader left from before is closed first)
+        ex_close(e);
+        pkg_open(e, host);
+    }
     if (avformat_open_input(&e->fmt, host, NULL, NULL) < 0 || avformat_find_stream_info(e->fmt, NULL) < 0) {
         LOG("[movie] cannot open %s\n", host);
+        ex_close(e);
         c->x[0] = 1;
         return;
     }
@@ -385,7 +452,7 @@ bool xcde_movie_playing(void) {
 
 static void ex_dtor(Cpu *c) {
     Extractor *e = self_state(c);
-    if (e && e->fmt) avformat_close_input(&e->fmt);
+    if (e) ex_close(e);  // [XCDE] T280: and its package reader
     if (e) movie_track(0, e, false);
     c->x[0] = 0;
 }
@@ -843,7 +910,7 @@ static void dec_dtor(Cpu *c) {
 RT_ON_RESET(movie_reset) {
     for (int i = 0; i < MAX_MOVIE_OBJS; i++) {
         Extractor *e = g_movie_objs[0][i];
-        if (e && e->fmt) avformat_close_input(&e->fmt);
+        if (e) ex_close(e);  // [XCDE] T280: and its package reader
         Decoder *d = g_movie_objs[1][i];
         if (d && d->ctx) avcodec_free_context(&d->ctx);
         g_movie_objs[0][i] = g_movie_objs[1][i] = NULL;

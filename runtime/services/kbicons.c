@@ -24,6 +24,7 @@
 
 #include "../input_bind.h"
 #include "../platform.h"  // [XCDE] T275: rt_logf, the timestamped diagnostics log
+#include "game_files.h"  // [XCDE] T280: the game's icon files may be inside a .nup package
 
 #define BCDEC_IMPLEMENTATION
 #define BCDEC_STATIC
@@ -543,7 +544,7 @@ static uint8_t *kbicons_draw(const char *path, uint64_t *len) {
     if (!font_load()) { LOGK("no system font\n"); return NULL; }
     size_t n;
     if (getenv("XCDE_KBICONS_DUMP")) LOGK("%s: draw\n", path);
-    uint8_t *d = read_all(path, &n);
+    uint8_t *d = gf_read(path, &n);  // [XCDE] T280: the folder's file or the package's
     if (!d) return NULL;
     if (n >= 0x30 && !memcmp(d, "xbc1", 4)) {  // (zlib-compressed)
         uint32_t dsz, csz;
@@ -654,8 +655,8 @@ uint8_t *kbicons_make(const char *path, uint64_t *len) {
     h = fnv(h, g_bind_key2, sizeof g_bind_key2);
     h = fnv(h, &g_mouse_look, sizeof g_mouse_look);
     h = fnv(h, base, strlen(base));
-    FILE *src = fopen(path, "rb");
-    if (src) { fseek(src, 0, SEEK_END); long sz = ftell(src); fclose(src); h = fnv(h, &sz, sizeof sz); }
+    GfSource src;  // [XCDE] T280: the size of the game's file, in the folder or the package
+    if (gf_source(path, &src)) { long sz = (long)src.size; h = fnv(h, &sz, sizeof sz); }
     char cp[512];
     snprintf(cp, sizeof cp, "cache/kbicons/%s_%016llx", base, (unsigned long long)h);
     size_t n;

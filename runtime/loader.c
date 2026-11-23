@@ -2,8 +2,8 @@
 #include <stdlib.h>
 #include <string.h>
 
-#include "host/utf8_path.h"  // [XCDE] T278: UTF-8 paths through the wide APIs
 #include "rt.h"
+#include "services/game_files.h"  // [XCDE] T280
 
 Module g_modules[4];
 int g_nmodules;
@@ -38,17 +38,8 @@ static size_t lz4_decompress(const uint8_t *src, size_t srclen, uint8_t *dst, si
     return d - dst;
 }
 
-static uint8_t *read_file(const char *path, size_t *len) {
-    FILE *f = xcde_utf8_fopen(path, "rb");
-    if (!f) return NULL;
-    fseek(f, 0, SEEK_END);
-    *len = ftell(f);
-    fseek(f, 0, SEEK_SET);
-    uint8_t *p = malloc(*len);
-    fread(p, 1, *len, f);
-    fclose(f);
-    return p;
-}
+// [XCDE] T280: from the dump folder or the .nup package (runtime/services/game_files.c)
+static uint8_t *read_file(const char *path, size_t *len) { return gf_read(path, len); }
 
 // (matching gen.py's stored form: the header's 64 hex chars minus the trailing zero bytes)
 static void id_of(const uint8_t *hdr, char got[65]) {

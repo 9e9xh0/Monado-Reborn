@@ -1776,3 +1776,30 @@ Detalle: `docs/PERFORMANCE_UI.md`. Evidencia: `docs/evidence/2026-11-04-performa
   Tests: `tests/unit/test_recomplauncher_support.py` (AppRun run against stand-in programs, the progress lines,
   source contracts) and `tests/unit/test_make_portable.py` (the manifest). The manifest validates against
   RecompLauncher's published schema. Pending: a full setup and Play from RecompLauncher on Windows and Linux.
+
+## .nup packages — 2026-11-23 (T280)
+
+- [x] T280 **The dump can be a .nup package, read in place.** A `.nup` holds a game's titles (base game, update) with
+  their exefs/ and romfs/ already decrypted; RecompLauncher already checks one by build ID. Monado now plays one
+  directly: `runtime/services/game_files.c` (new) parses the package (the layout RecompLauncher's `nup.rs` documents),
+  takes the newest title's exefs and romfs, and resolves every game path (`<root>/exefs/...`, `<root>/romfs/...`) to
+  a host file or a range of the package. The loader, `main.npdm`, the virtual romfs (`romfs_virtual.c`,
+  `scan_package`: each file read with `pread` at its offset in the package; mods still overlay it), the cutscenes
+  (`movie.c`: FFmpeg custom I/O over the movie's bytes), the Quick Step window, the keyboard icons and the shader
+  precompile all read through it. Nothing is unpacked or converted, and no keys are involved (Constitution art. II,
+  amended). Only packages stored without compression are accepted: a compressed file is one zstd frame, so a read
+  in its middle would have to decompress it from its start; such a package is refused with that reason. The builder
+  (`tools/extract/nup.py`, `check_dump.py`, `gamebuild.py`: the lifted modules are copied to `<out>/nup-exefs/`, the
+  fingerprint follows their size and build ID), AppRun `--game` and `recomplauncher.json` (folder or `.nup` file)
+  take a package too. Monado's own launcher still uses a `targets/` folder.
+  Checked on the player's real XCDE package (base game, 18,544 files): parsed, and refused by build ID as it is not
+  2.0.0. Tests: `tests/native/test_nup_package.c` (a package written in the test: newest title, in-place reads, the
+  romfs listing, compressed and incomplete packages refused, a folder dump), `tests/unit/test_nup_package.py`
+  (reader, `check_dump`, builder, AppRun, source contracts). The Linux runtime compiles.
+  Played from a real 2.0.0 package (base game and the v262144 update, 14.6 GB, uncompressed) on Windows with the
+  release runtime (`MONADO_RELEASE=ON`, RTX 5080): RecompLauncher's setup step built the game code from it in 126 s and
+  precompiled 9,823 programs from 8,124 shader files in the package (0 failed); `xcde.exe --game <package>` reached
+  the title screen at 30 FPS with no shader waits. The builder also made the Linux game code from it (209 s). That
+  run found a Windows-only bug, fixed here: the Windows build has a 32-bit `off_t` and stat size, so a 15 GB package
+  was not seen as one and reads past 2 GB would have been cut; `gf_pread_at` (ReadFile with a 64-bit offset) and
+  `GetFileSizeEx` read it now. Not covered: a cutscene from a package (the run reached the title without one).

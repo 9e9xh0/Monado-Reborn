@@ -51,6 +51,8 @@ run_test test_ui_scale -std=c11 -Wall -Wextra -Werror tests/native/test_ui_scale
 run_test test_window_size -std=c11 -Wall -Wextra -Werror tests/native/test_window_size.c
 # [XCDE] T277: GitHub #218 - a non-ASCII folder through the UTF-8 path wrappers (utf8_path.h).
 run_test test_utf8_paths -std=c11 -Wall -Wextra -Werror tests/native/test_utf8_paths.c
+# [XCDE] T280: the game files from a .nup package (runtime/services/game_files.c)
+run_test test_nup_package -std=gnu11 -Wall -Wextra -Werror -D_GNU_SOURCE tests/native/test_nup_package.c runtime/services/game_files.c
 
 if pkg-config --exists shaderc 2>/dev/null || echo '#include <shaderc/shaderc.h>' | "$CC" -x c -E - >/dev/null 2>&1; then
   SHADERC_LIBS="$(pkg-config --libs shaderc 2>/dev/null || echo -lshaderc_shared)"

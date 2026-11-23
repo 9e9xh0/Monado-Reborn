@@ -7,6 +7,7 @@
 #include "quickstep_slot.h"
 #include "quickstep_picker.h"
 #include "quickstep_ui_memory.h"
+#include "../services/game_files.h"  // [XCDE] T280
 #include <float.h>
 #include <stdatomic.h>
 
@@ -175,12 +176,11 @@ static bool load_window(NativeSlot *s) {
     char name[4096];
     if (!g_romfs_dir || snprintf(name, sizeof name, "%s/menu/image/common_window_white_c.wilay", g_romfs_dir)
             >= (int)sizeof name) return fail(s, "window-path", 0);
-    FILE *file = fopen(name, "rb");
-    if (!file) return fail(s, "window-open", 0);
-    unsigned char *bytes = malloc(49153);
-    if (!bytes) { fclose(file); return fail(s, "window-buffer", 0); }
-    size_t n = fread(bytes, 1, 49153, file);
-    bool read_ok = !ferror(file); fclose(file);
+    // [XCDE] T280: from the romfs folder or the .nup package (runtime/services/game_files.c)
+    size_t n = 0;
+    unsigned char *bytes = gf_read(name, &n);
+    if (!bytes) return fail(s, "window-open", 0);
+    bool read_ok = true;
     uint32_t crc = UINT32_MAX;
     for (size_t i=0;i<n;i++) {
         crc^=bytes[i];

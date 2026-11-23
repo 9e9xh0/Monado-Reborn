@@ -72,7 +72,7 @@ def main():
             print((output / f'{name}.log').read_text(encoding='utf-8', errors='replace')[-3000:])
         return code == 0
 
-    sources = ['host/settings_ini.c', 'hle/framepace.c', 'hle/party.c', 'hle/bindings.c', 'hle/collision_bvh.c', 'services/fs.c', 'diag/diag.c', 'log.c', 'nvn/objects.c', 'services/romfs_virtual.c', 'nvn/output_scale.c',
+    sources = ['host/settings_ini.c', 'hle/framepace.c', 'hle/party.c', 'hle/bindings.c', 'hle/collision_bvh.c', 'services/fs.c', 'diag/diag.c', 'log.c', 'nvn/objects.c', 'services/romfs_virtual.c', 'services/game_files.c', 'nvn/output_scale.c',
                'nvn/vulkan/device.c', 'nvn/vulkan/exec.c', 'nvn/vulkan/post.c', 'nvn/vulkan/shaders.c',
                'nvn/vulkan/textures.c', 'nvn/vulkan/precompile.c', 'nvn/vulkan/temporal.c', 'nvn/vulkan/vkq.c', 'nvn/vulkan/fsr4.c',
                'nvn/vulkan/imgui_glue.cpp', 'ui/menu_vk.cpp', 'nvn/vulkan/dlss.cpp']
