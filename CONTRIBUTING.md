@@ -13,7 +13,8 @@ entry with the reason.
 4. Allowed: public SDK API names, addresses, counts and version-check hashes.
 
 ### Article II — Your own dump, no keys
-1. Only `exefs/` and `romfs/` already extracted from the user's own copy are accepted.
+1. Only `exefs/` and `romfs/` already decrypted from the user's own copy are accepted: extracted to folders, or in a
+   `.nup` package that stores them uncompressed, read in place and never converted (T280; changelog 2026-11-23).
 2. The project neither ships nor downloads keys or title keys, and never prints them in logs.
 3. The version is checked by build-id; a different version is refused with a clear message.
 

@@ -288,3 +288,30 @@ Triage of both symptoms, the minidump findings and the A/B table:
 - Tests: `tests/unit/test_recomplauncher_support.py`, `tests/unit/test_make_portable.py`; the unit suite, the package
   guard and the documentation/path checks pass on Linux. Not done here: a full setup and Play from RecompLauncher
   (needs a dump), and a Windows build of the two C/C++ edits (CI compiles them).
+
+## .nup packages as the dump (T280, 2026-11-23)
+
+- **Constitution art. II.1 changed** (needs a changelog entry with the reason): from "only exefs/ and romfs/ already
+  extracted" to "already decrypted: extracted to folders, or in a `.nup` package that stores them uncompressed, read
+  in place and never converted". Reason: a `.nup` is a plain, already-decrypted container of the same exefs and
+  romfs (RecompLauncher reads it by build ID without keys), so accepting it keeps the article's intent (the player's
+  own dump, no keys, nothing decrypted by Monado) while sparing players an extraction step and 15 GB of loose files.
+  Encrypted containers (`.nsp`, `.xci`, `.nca`) are still refused.
+- `runtime/services/game_files.c` and its header (new): the dump as a folder or a package; `gf_init`, `gf_source`/`gf_read`/
+  `gf_pread`/`gf_open` for a game path, and the package tree (`gf_pkg_*`) for listings. A compressed or incomplete
+  package is refused with the reason.
+- Readers moved onto it: `runtime/loader.c` (NSOs), `runtime/host/main_boot.c` (`gf_init`, `main.npdm`),
+  `runtime/services/romfs_virtual.c` (`scan_package`, files read at their offset in the package),
+  `runtime/services/fs.c`, `runtime/hle/movie.c` (FFmpeg custom I/O), `runtime/hle/quickstep_native.c`,
+  `runtime/services/kbicons.c`, `runtime/nvn/vulkan/precompile.c` (`list_package`). A folder dump reads exactly as
+  before.
+- Builds: `services/game_files` added to CMake, `scripts/build_{boot,linux,rt_gfx}.sh`, `scripts/link_{boot,gfx}.sh`
+  and `tools/diag/validate_port.py`.
+- Tools: `tools/extract/nup.py` (new), `check_dump.py` (a package's exefs and romfs manifest), `manifest.py`
+  (`manifest_of`), `gamebuild.py` (`exefs_folder`, a fingerprint by module size and build ID, exit code 2 for a
+  package that can't be used), the frozen builder bundles `nup`.
+- AppRun `--game` takes a `.nup`; `recomplauncher.json` offers a folder or a `.nup` file.
+- Tests: `tests/native/test_nup_package.c` (in `scripts/native_tests_linux.sh`), `tests/unit/test_nup_package.py`;
+  `test_runtime_utf8_paths.py` follows the reads into `game_files.c`. Checked on a real XCDE package (base game):
+  parsed, 18,544 files, refused by build ID. Not done: a full run from a 2.0.0 package, and the Windows native test
+  (the Windows `pread` lives in `runtime/platform/windows.c`).

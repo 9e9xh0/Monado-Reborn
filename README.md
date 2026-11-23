@@ -10,9 +10,10 @@ your PC, while the console's operating system and graphics API (NVN) are reimple
 Vulkan. Windows x86-64 is the primary target; Linux builds are supported too.
 
 > **Requirements.** You need your own legally obtained copy of the game, version 2.0.0 (the base game with the
-> 2.0.0 update applied), extracted into plain `exefs/` and `romfs/` folders. No game files, updates, keys or
-> packaged formats (`.nsp`, `.xci`, `.nca`) are included or downloaded by this project — see
-> [`CONTRIBUTING.md`](CONTRIBUTING.md) (article I).
+> 2.0.0 update applied), extracted into plain `exefs/` and `romfs/` folders, or a `.nup` package of it (with the
+> update, made without compression; read in place, nothing is unpacked). Encrypted formats (`.nsp`, `.xci`, `.nca`)
+> are not read. No game files, updates or keys are included or downloaded by this project — see
+> [`CONTRIBUTING.md`](CONTRIBUTING.md) (articles I and II).
 
 ## Quick start
 
@@ -23,11 +24,11 @@ Vulkan. Windows x86-64 is the primary target; Linux builds are supported too.
    [`docs/guides/LINUX.md`](docs/guides/LINUX.md).
 3. Start the game with `Play Monado.bat`: it opens the launcher (graphics, scaling, controls, language) and then
    the game. The first start precompiles shaders and can take a while; later starts use the cache.
-4. From another launcher or a shortcut: `build/xcde.exe --game <folder with exefs/ and romfs/>`. The older
-   `build/xcde.exe <folder>` form still works. On Linux: `Monado-x86_64.AppImage --game <folder>`.
+4. From another launcher or a shortcut: `build/xcde.exe --game <folder with exefs/ and romfs/, or a .nup>`. The
+   older `build/xcde.exe <folder>` form still works. On Linux: `Monado-x86_64.AppImage --game <folder or .nup>`.
 
 **With [RecompLauncher](https://recomplauncher.com/game/monado-fix-portable)** (Windows and Linux): install Monado
-there, pick the folder that holds your `exefs` and `romfs`, and press Play. It builds the game code once from your
+there, pick the folder that holds your `exefs` and `romfs` (or your `.nup`), and press Play. It builds the game code once from your
 copy, prepares the shaders (a tick on its setup screen) and shows the video, upscaling, frame-rate and language settings on the game's page (`recomplauncher.json`).
 
 Extra launchers: `Play Monado (performance metrics).bat` and `Play Monado (stutter diagnostics).bat` are

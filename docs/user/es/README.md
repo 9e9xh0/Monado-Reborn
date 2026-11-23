@@ -11,8 +11,9 @@ convertida en una aplicación nativa con renderizador Vulkan.
   compila directamente para tu PC. El sistema operativo de la consola y la API gráfica (NVN) se reimplementan
   sobre el sistema anfitrión y Vulkan.
 - **Requisitos:** necesitas una copia propia y legal del juego (versión 2.0.0, juego base con la actualización
-  aplicada) extraída en carpetas `exefs` y `romfs`. No se incluyen archivos del juego ni formatos empaquetados
-  (`.nsp`, `.xci`, `.nca`).
+  aplicada) extraída en carpetas `exefs` y `romfs`, o un paquete `.nup` con la actualización (hecho sin
+  compresión; se lee tal cual, sin descomprimir nada). No se leen formatos cifrados (`.nsp`, `.xci`, `.nca`) ni se
+  incluyen archivos del juego.
 
 ## Qué aporta esta versión
 

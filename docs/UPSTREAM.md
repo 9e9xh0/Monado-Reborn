@@ -225,3 +225,14 @@ Details and the reporter's log evidence: [CHANGELOG](dev/CHANGELOG.md).
 - `runtime/nvn/vulkan/device.c`: `RECOMPLAUNCHER_MODE=bigpicture` (set by RecompLauncher when Play is pressed in its
   controller view) opens the window fullscreen like the gamescope rule beside it, without changing `g_settings`, so
   the saved Fullscreen setting the desktop uses is kept. Source contract in `tests/unit/test_recomplauncher_support.py`.
+
+## .nup packages (T280, 2026-11-23)
+
+- `runtime/loader.c`: `read_file` reads through `runtime/services/game_files.c` (a folder or a `.nup` package).
+- `runtime/services/fs.c`: the virtual romfs is opened for a package too.
+- `runtime/services/romfs_virtual.c`: `File.src`/`File.base` and `scan_package`: a package's files are read with
+  `pread` at their offset in the package; `edit_ini` reads through `gf_read`.
+- `runtime/host/main_boot.c`: `gf_init` on the dump before anything reads it; `main.npdm` through `gf_read`.
+- `runtime/hle/movie.c`: a package's movies through FFmpeg custom I/O (`pkg_open`, `ex_close`).
+- `runtime/nvn/vulkan/precompile.c`: `list_package`, and shader files read through `gf_read`.
+- `runtime/services/kbicons.c`, `runtime/hle/quickstep_native.c`: their romfs files through `gf_read`/`gf_source`.
