@@ -23,7 +23,6 @@ Only the standard library is used.
 """
 import argparse
 import glob
-import json
 import os
 import shutil
 import struct
@@ -263,17 +262,12 @@ PLAY_BAT = ('@echo off\r\n'
 CLEAN_BAT = '@echo off\r\nrem Monado: borra lo que es de ESTA PC (cache de shaders/pipelines, reportes de crash, logs).\r\nrem Corre esto antes de mover o copiar la carpeta a otra PC. NO toca save\\, xcde.ini / xcde_env.ini ni el juego.\r\ncd /d "%~dp0"\r\necho.\r\necho  Se borrara: cache\\  crash\\  y los .log de build\\\r\necho  (Las partidas en save\\ y los ajustes NO se tocan. En esta PC tendras que volver a pulsar "Precompile shaders".)\r\nchoice /m " Continuar"\r\nif errorlevel 2 exit /b 0\r\nif exist "cache" rmdir /s /q "cache"\r\nif exist "crash" rmdir /s /q "crash"\r\ndel /q "build\\*.log" 2>nul\r\necho.\r\necho  Listo.\r\npause\r\n'
 
 
-def copy_launcher_manifest(out, gamelib_id=None):
-    """recomplauncher.json goes at the top of a published package (next to build/ and data/). Its prepare.version is
-    the game-code id, so a release that changes the library asks RecompLauncher to run the prepare step again. The
-    builder itself is a fast no-op when that id and the dump have not changed."""
-    with open(os.path.join(REPO, 'recomplauncher.json'), encoding='utf-8') as f:
-        manifest = json.load(f)
-    if gamelib_id:
-        manifest['prepare']['version'] = gamelib_id
-    with open(os.path.join(out, 'recomplauncher.json'), 'w', encoding='utf-8', newline='\n') as f:
-        json.dump(manifest, f, indent=2, ensure_ascii=False)
-        f.write('\n')
+def copy_launcher_manifest(out):
+    """recomplauncher.json goes at the top of a published package (next to build/ and data/), as it is in the
+    repository. It carries no version: RecompLauncher runs the prepare step again after every new release by itself,
+    and the builder is a fast no-op when the game-code id and the dump have not changed (tools/gamebuild/gamebuild.py).
+    (An unknown prepare.version made the file fail RecompLauncher's schema.)"""
+    shutil.copyfile(os.path.join(REPO, 'recomplauncher.json'), os.path.join(out, 'recomplauncher.json'))
 
 
 def main():
@@ -375,9 +369,7 @@ def main():
         copy_game(out)
     if a.release:
         copy_tree(os.path.join('build', 'gamebuild'), os.path.join(out, 'build', 'gamebuild'), 'first-start game code builder/')
-        with open(os.path.join('build', 'gamebuild', 'gamelib-id.txt'), encoding='utf-8') as f:
-            gamelib_id = f.read().strip()
-        copy_launcher_manifest(out, gamelib_id)  # published packages only: its prepare step runs the builder above
+        copy_launcher_manifest(out)  # published packages only: its prepare step runs the builder above
         for leftover in ('obj', 'generated'):
             shutil.rmtree(os.path.join(out, 'build', 'gamebuild', leftover), ignore_errors=True)
         # (no targets/ folder in the package itself: tools/package/package_guard.py refuses one in anything published)

@@ -6,6 +6,10 @@
 #   <data>/build/linux/monado -> the game executable inside this mount
 #   ./Monado-x86_64.AppImage [dump directory]       launcher
 #   ./Monado-x86_64.AppImage --play [dump directory] the game directly
+#   ./Monado-x86_64.AppImage --game <dump directory> the game directly, without the targets link (RecompLauncher)
+#   ./Monado-x86_64.AppImage --prepare <builder args> the first-start game code builder (RecompLauncher's setup step)
+# RecompLauncher (recomplauncher.json) unpacks the AppImage into the game's install folder and passes that folder as
+# MONADO_DATA_ROOT, so Linux keeps the Windows package's layout (xcde.ini, save/ and gamebuild/ in the install folder).
 # The dump: the argument, else MONADO_GAME_ROOT, else targets/ next to the AppImage, else the one linked last time.
 # The data folder (GitHub #88): MONADO_DATA_ROOT, else a monado-data folder next to the AppImage when there is one
 # (portable: everything stays beside it), else $XDG_DATA_HOME/monado (~/.local/share/monado, as runtime/platform/linux.c).
@@ -40,13 +44,25 @@ fi
 if [ -f "$appdir/usr/share/monado/gamebuild/link.json" ]; then
   export XCDE_GAMEBUILD_DIR="${XCDE_GAMEBUILD_DIR:-$appdir/usr/share/monado/gamebuild}"
 fi
+if [ "${1:-}" = --prepare ]; then
+  # The builder takes its own arguments (--root, --out) and finds its resources beside itself; with --precompile it
+  # then precompiles the shaders with the game, named here.
+  shift
+  export MONADO_GAME_EXE="$appdir/usr/bin/monado"
+  exec "$appdir/usr/share/monado/gamebuild/monado-gamebuild" "$@"
+fi
 direct=
-if [ "${1:-}" = --play ]; then direct=1; shift; fi
+game_opt=
 case "${1:-}" in
-  -h|--help) echo "usage: ${APPIMAGE:-AppRun} [--play] [dump directory]"; exit 0;;
+  --play) direct=1; shift;;
+  --game) direct=1; game_opt=1; shift;;
+esac
+case "${1:-}" in
+  -h|--help) echo "usage: ${APPIMAGE:-AppRun} [--play | --game <dump directory> | --prepare <builder args>] [dump directory]"; exit 0;;
 esac
 root=${1:-${MONADO_GAME_ROOT:-}}
 if [ "$#" -gt 0 ]; then shift; fi
+if [ -n "$game_opt" ] && [ -z "$root" ]; then echo "--game needs the dump directory (exefs/ + romfs/)" >&2; exit 2; fi
 if [ -z "$root" ] && [ -n "${APPIMAGE:-}" ] && [ -d "$(dirname -- "$APPIMAGE")/targets" ]; then root="$(dirname -- "$APPIMAGE")/targets"; fi
 case "$root" in ""|/*) ;; *) root="$PWD/$root";; esac
 data=${MONADO_DATA_ROOT:-}
@@ -68,12 +84,15 @@ if [ -n "$root" ]; then
   # vanished at the next start, launched from Game Mode). pwd -P resolves the real folder; a link that already
   # points there is left alone.
   dump=$(CDPATH= cd -- "$root" && pwd -P)
-  if [ "$(CDPATH= cd -- "$data/targets" 2>/dev/null && pwd -P)" != "$dump" ]; then
+  # --game: no targets link. RecompLauncher moves, backs up and removes the install folder (the data folder there) as
+  # a whole, and a link inside it would lead those to the player's own dump.
+  if [ -z "$game_opt" ] && [ "$(CDPATH= cd -- "$data/targets" 2>/dev/null && pwd -P)" != "$dump" ]; then
     ln -sfn -- "$dump" "$data/targets"
   fi
 fi
 ln -sfn -- "$appdir/usr/bin/monado" "$data/build/linux/monado"
 cd -- "$data"
 if [ -z "$direct" ]; then exec "$appdir/usr/bin/monado-launcher" "$@"; fi
+if [ -n "$game_opt" ]; then exec "$appdir/usr/bin/monado" --game "$dump" "$@"; fi
 [ -f targets/exefs/main ] || { echo "No game dump: pass its directory once (it is remembered)" >&2; exit 2; }
 exec "$appdir/usr/bin/monado" targets "$@"

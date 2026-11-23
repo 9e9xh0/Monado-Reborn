@@ -114,35 +114,62 @@ class PeImports(unittest.TestCase):
 
 
 class LauncherManifest(unittest.TestCase):
+    """recomplauncher.json (T279): one file for the Windows zip and the Linux AppImage, in RecompLauncher's current
+    format (the schema at https://recomplauncher.com/schema/recomplauncher.json)."""
+
     @staticmethod
     def manifest():
         with open(os.path.join(mp.REPO, 'recomplauncher.json'), encoding='utf-8') as f:
             return json.load(f)
 
-    def test_manifest_is_copied_to_the_top_of_the_folder(self):
+    def test_manifest_is_copied_unchanged_to_the_top_of_the_folder(self):
         with tempfile.TemporaryDirectory() as out:
-            mp.copy_launcher_manifest(out, 'test-gamelib-id')
-            copied = os.path.join(out, 'recomplauncher.json')
-            self.assertTrue(os.path.isfile(copied))
-            with open(copied, encoding='utf-8') as f:
-                self.assertEqual(json.load(f)['prepare']['version'], 'test-gamelib-id')
+            mp.copy_launcher_manifest(out)
+            with open(os.path.join(out, 'recomplauncher.json'), 'rb') as f:
+                copied = f.read()
+        with open(os.path.join(mp.REPO, 'recomplauncher.json'), 'rb') as f:
+            self.assertEqual(copied, f.read())
 
-    def test_manifest_starts_the_exe_the_packager_puts_in_build(self):
+    def test_manifest_asks_for_the_copy_as_the_named_input_game(self):
         manifest = self.manifest()
-        self.assertEqual(manifest['format'], 1)
-        self.assertEqual(manifest['start']['program'], ['build/xcde.exe'])
-        self.assertEqual(manifest['start']['args'], ['--game', '{game}'])
+        self.assertNotIn('game', manifest)  # (the deprecated top-level field, dropped by RecompLauncher 1.0)
+        game = manifest['inputs'][0]
+        self.assertEqual(game['id'], 'game')
+        self.assertEqual(game['formats'], [{'type': 'folder'}])
+
+    def test_manifest_rejects_an_unexpected_game_version(self):
+        check = self.manifest()['inputs'][0]['check']
+        self.assertEqual(check['file'], 'exefs/main')
+        self.assertEqual(check['nup_build_id'], '7e1df8e08d60544bbdca1e333c153c97')
+
+    def test_manifest_starts_the_windows_exe_or_the_appimage(self):
+        start = self.manifest()['start']
+        self.assertEqual(start['program'], ['build/xcde.exe', 'Monado-x86_64.AppImage'])
+        self.assertEqual(start['args'], ['--game', '{input:game}'])
+
+    def test_manifest_keeps_the_linux_data_in_the_install_folder(self):
+        manifest = self.manifest()
+        self.assertEqual(manifest['start']['env'], {'MONADO_DATA_ROOT': '{install}'})
+        self.assertEqual(manifest['prepare']['env'], {'MONADO_DATA_ROOT': '{install}'})
 
     def test_manifest_prepares_the_game_code_from_the_players_copy(self):
         prep = self.manifest()['prepare']
-        self.assertEqual(prep['program'], ['build/gamebuild/monado-gamebuild.exe'])
-        self.assertEqual(prep['args'][:2], ['--root', '{game}'])
-        self.assertIn('{install}/gamebuild/lasgame.dll', prep['done'])
+        self.assertEqual(prep['program'], ['build/gamebuild/monado-gamebuild.exe', 'Monado-x86_64.AppImage'])
+        self.assertEqual(prep['args'], ['--prepare', '--root', '{input:game}', '--out', '{install}/gamebuild'])
 
-    def test_manifest_rejects_an_unexpected_game_version(self):
-        check = self.manifest()['game']['check']
-        self.assertEqual(check['file'], 'exefs/main')
-        self.assertEqual(check['nup_build_id'], '7e1df8e08d60544bbdca1e333c153c97')
+    def test_manifest_counts_a_finished_build_on_both_systems(self):
+        # build.json is written last, on Windows (lasgame.dll) and Linux (lasgame.so) alike
+        self.assertEqual(self.manifest()['prepare']['done'], ['{install}/gamebuild/build.json'])
+
+    def test_manifest_offers_the_shader_precompile_as_a_tick(self):
+        option = self.manifest()['prepare']['options'][0]
+        self.assertEqual(option['id'], 'shaders')
+        self.assertEqual(option['args'], ['--precompile'])
+        self.assertNotIn('license', option)  # (no license: the tick starts on)
+
+    def test_manifest_has_only_prepare_fields_the_launcher_knows(self):
+        known = {'program', 'args', 'label', 'done', 'env', 'keeps_copy', 'options'}
+        self.assertLessEqual(set(self.manifest()['prepare']), known)
 
     def test_manifest_creates_the_settings_file_a_release_does_not_ship(self):
         cfg = self.manifest()['config'][0]

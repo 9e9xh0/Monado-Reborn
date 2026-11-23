@@ -219,3 +219,9 @@ Details and the reporter's log evidence: [CHANGELOG](dev/CHANGELOG.md).
   works); `plat_argv_utf8` keeps the complete CRT argv if an argument cannot be converted; save-tree
   `mkdir`/`rmdir`/`rename`/`remove` and the path-valued diagnostic variables use the wrappers. Left narrow:
   `services/kbicons.c`, `win_compat.h`'s `realpath`, and the developer-only `XCDE_GLSL_DIR`/`XCDE_REC_OUT` switches.
+
+## RecompLauncher Big Picture mode (T279, 2026-11-23)
+
+- `runtime/nvn/vulkan/device.c`: `RECOMPLAUNCHER_MODE=bigpicture` (set by RecompLauncher when Play is pressed in its
+  controller view) opens the window fullscreen like the gamescope rule beside it, without changing `g_settings`, so
+  the saved Fullscreen setting the desktop uses is kept. Source contract in `tests/unit/test_recomplauncher_support.py`.

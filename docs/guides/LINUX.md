@@ -68,6 +68,8 @@ component paths.
 scripts/build_appimage_linux.sh       # build_linux.sh + tools/package/make_appimage.py -> build/Monado-x86_64.AppImage
 ./Monado-x86_64.AppImage /path/to/dump    # launcher; the dump is remembered
 ./Monado-x86_64.AppImage --play           # the game directly
+./Monado-x86_64.AppImage --game /path/to/dump  # the game directly, without the targets link (RecompLauncher)
+./Monado-x86_64.AppImage --prepare --root /path/to/dump --out DIR  # the release builder (RecompLauncher's setup step)
 ```
 
 The AppImage contains the game code recompiled from **your** dump, so it is for your own use: do not share it

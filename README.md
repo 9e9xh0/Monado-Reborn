@@ -24,7 +24,11 @@ Vulkan. Windows x86-64 is the primary target; Linux builds are supported too.
 3. Start the game with `Play Monado.bat`: it opens the launcher (graphics, scaling, controls, language) and then
    the game. The first start precompiles shaders and can take a while; later starts use the cache.
 4. From another launcher or a shortcut: `build/xcde.exe --game <folder with exefs/ and romfs/>`. The older
-   `build/xcde.exe <folder>` form still works.
+   `build/xcde.exe <folder>` form still works. On Linux: `Monado-x86_64.AppImage --game <folder>`.
+
+**With [RecompLauncher](https://recomplauncher.com/game/monado-fix-portable)** (Windows and Linux): install Monado
+there, pick the folder that holds your `exefs` and `romfs`, and press Play. It builds the game code once from your
+copy, prepares the shaders (a tick on its setup screen) and shows the video, upscaling, frame-rate and language settings on the game's page (`recomplauncher.json`).
 
 Extra launchers: `Play Monado (performance metrics).bat` and `Play Monado (stutter diagnostics).bat` are
 diagnostic variants; `Crear Monado Portable.bat` builds a movable folder for another PC / USB disk (for your own

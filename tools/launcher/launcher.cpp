@@ -2628,7 +2628,10 @@ int main(int argc, char **argv) {
     load();
     check_game_version();  // [XCDE] GitHub #18: refuse launching on another game version's files
     upd_load();
-    if (!shot && g_upd_auto && upd_is_release_build()) upd_start(false);  // GitHub #119 (in the background)
+    // GitHub #119 (in the background). Not when RecompLauncher started us (RECOMPLAUNCHER=1): it installs every new
+    // release itself, so a banner sending the player to download one by hand would only confuse them.
+    bool from_recomplauncher = !env_u8("RECOMPLAUNCHER").empty();
+    if (!shot && g_upd_auto && upd_is_release_build() && !from_recomplauncher) upd_start(false);
     if (shot && argc>4 && !strcmp(argv[4],"es")) g.ui_lang=0;
     bool have_game = exists("targets/exefs/main") || exists("targets/exefs");
     bool have_exe = exists(GAME_EXE);
