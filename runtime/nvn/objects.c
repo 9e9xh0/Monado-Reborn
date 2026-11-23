@@ -184,11 +184,7 @@ NVN(nvnSyncWait) {  // NVN_SYNC_WAIT_RESULT_ALREADY_SIGNALED
             const char *e = getenv("XCDE_FRAME_LAG");
             int vc = vk_vcache_state();
             if (e) able = atoi(e) != 0 && backend_async() ? 2 : 0;  // (2: forced, whatever the FPS)
-#ifdef __linux__
-            else if (vc >= 0) able = 0;  // Linux RADV: frame lag drops dynamic point lights while moving
-#else
-            else if (vc >= 0) able = vc == 1 && backend_async();
-#endif
+            else if (vc >= 0) able = 0;  // [XCDE] off by default (XCDE_FRAME_LAG=1 opts in)
         }
         if (able >= 0) {
             bool high = g_settings.fps == 0 || g_settings.fps > 60 || getenv("XCDE_FPS_PERIOD_SCALE");
