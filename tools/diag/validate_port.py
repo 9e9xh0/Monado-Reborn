@@ -74,12 +74,15 @@ def main():
 
     sources = ['host/settings_ini.c', 'hle/framepace.c', 'hle/party.c', 'hle/bindings.c', 'hle/collision_bvh.c', 'services/fs.c', 'diag/diag.c', 'log.c', 'nvn/objects.c', 'services/romfs_virtual.c', 'services/game_files.c', 'nvn/output_scale.c',
                'nvn/vulkan/device.c', 'nvn/vulkan/exec.c', 'nvn/vulkan/post.c', 'nvn/vulkan/shaders.c',
-               'nvn/vulkan/textures.c', 'nvn/vulkan/precompile.c', 'nvn/vulkan/temporal.c', 'nvn/vulkan/vkq.c', 'nvn/vulkan/fsr4.c',
+               'nvn/vulkan/textures.c', 'nvn/vulkan/precompile.c', 'nvn/vulkan/precompile_sig.c', 'nvn/vulkan/temporal.c', 'nvn/vulkan/vkq.c', 'nvn/vulkan/fsr4.c',
                'nvn/vulkan/imgui_glue.cpp', 'ui/menu_vk.cpp', 'nvn/vulkan/dlss.cpp']
     for source in sources:
         cpp = source.endswith('.cpp')
+        # [XCDE] T282: the build generates <build>/inc/shader_sig.h for the precompile fingerprint; a validation compile
+        # does not need it, so the unit gets the macro instead.
+        extra = ['-DXCDE_SHADER_SIG="validation"'] if source.endswith('precompile_sig.c') else []
         run(source.replace('/', '_'), [*compiler(cpp), '-c', '-w',
-            '-std=c++17' if cpp else '-std=gnu11', *includes(cpp), ROOT / 'runtime' / source,
+            '-std=c++17' if cpp else '-std=gnu11', *includes(cpp), *extra, ROOT / 'runtime' / source,
             '-o', output / (source.replace('/', '_') + '.o')])
     extra_sources = {
         'test_settings_roundtrip': ['runtime/host/settings_ini.c', 'runtime/hle/cheats_options.c', 'runtime/hle/graphics.c', 'runtime/hle/foliage_distance.c',
@@ -93,23 +96,27 @@ def main():
         'test_translate_ldc': ['runtime/nvn/maxwell/translate.c'],
         'test_translate_xfb': ['runtime/nvn/maxwell/translate.c'],
         'test_translate_cfg': ['runtime/nvn/maxwell/translate.c', str(sdk / 'lib/libshaderc_shared.dll.a')],
+        # [XCDE] T282 review: parallel translations must match the serial one (the precompile is multi-threaded).
+        'test_translate_threads': ['runtime/nvn/maxwell/translate.c', str(sdk / 'lib/libwinpthread.dll.a')],
         'test_tegra_copy': ['runtime/nvn/tegra.c', 'runtime/nvn/formats.c'],
         'test_tegra_block_height': ['runtime/nvn/tegra.c', 'runtime/nvn/formats.c'],
         'test_fibers': ['runtime/hle/fibers.c'],
         'test_condvar': ['runtime/platform/windows.c', 'runtime/log.c', 'runtime/diag/diag.c', 'runtime/diag/sampler.c', '-lwinmm', '-ldbghelp'],
         'test_foliage_distance': ['runtime/hle/foliage_distance.c'],
         'test_graphics_options': ['runtime/hle/graphics.c'],
+        # [XCDE] T282: the precompile signature. Its own source unit compiles with the macro instead of the header.
+        'test_precompile_sig': ['runtime/nvn/vulkan/precompile_sig.c', '-DXCDE_SHADER_SIG="native"'],
     }
     strict_tests = {
         'test_cliff_batch', 'test_display_options', 'test_foliage_distance', 'test_gpu_probe',
-        'test_graphics_options', 'test_port_core', 'test_render_policy',
+        'test_graphics_options', 'test_port_core', 'test_render_policy', 'test_precompile_sig',
         'test_settings_roundtrip', 'test_stick_click', 'test_tex_resize', 'test_ui_scale', 'test_window_size',
     }
     standalone_tests = [
         'test_cliff_batch', 'test_display_options', 'test_port_core', 'test_gpu_probe',
         'test_render_policy', 'test_settings_roundtrip', 'test_stick_click', 'test_tex_resize',
         'test_time_math', 'test_movie_buf', 'test_ui_scale', 'test_window_size', 'test_utf8_paths',
-    ]
+    ]  # (test_precompile_sig is built from extra_sources above: it needs its own source unit + macro; do not list it twice)
     for test in [*standalone_tests, *[k for k in extra_sources if k != 'test_settings_roundtrip']]:
         if test in args.skip_test:
             skipped.append(test)

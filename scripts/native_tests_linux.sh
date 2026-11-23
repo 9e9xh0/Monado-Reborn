@@ -46,11 +46,17 @@ run_test test_tex_resize -std=c11 -Wall -Wextra -Werror tests/native/test_tex_re
 run_test test_time_math -std=gnu11 -Wall -Wextra -Werror tests/native/test_time_math.c
 run_test test_translate_ldc -std=gnu11 -w tests/native/test_translate_ldc.c runtime/nvn/maxwell/translate.c -lm
 run_test test_translate_tex -std=gnu11 -w tests/native/test_translate_tex.c runtime/nvn/maxwell/translate.c -lm
+# [XCDE] T282 review: the translator is re-entrant (precompile workers translate concurrently): parallel GLSL == serial.
+run_test test_translate_threads -std=gnu11 -w tests/native/test_translate_threads.c runtime/nvn/maxwell/translate.c -lpthread -lm
 run_test test_translate_xfb -std=gnu11 -w tests/native/test_translate_xfb.c runtime/nvn/maxwell/translate.c -lm
 run_test test_ui_scale -std=c11 -Wall -Wextra -Werror tests/native/test_ui_scale.c -lm
 run_test test_window_size -std=c11 -Wall -Wextra -Werror tests/native/test_window_size.c
 # [XCDE] T277: GitHub #218 - a non-ASCII folder through the UTF-8 path wrappers (utf8_path.h).
 run_test test_utf8_paths -std=c11 -Wall -Wextra -Werror tests/native/test_utf8_paths.c
+# [XCDE] T282: the shader precompile signature (runtime/nvn/vulkan/precompile_sig.c). The build generates shader_sig.h;
+# this compile passes the fingerprint macro instead.
+run_test test_precompile_sig -std=gnu11 -Wall -Wextra -Werror -DXCDE_SHADER_SIG='"native"' \
+  tests/native/test_precompile_sig.c runtime/nvn/vulkan/precompile_sig.c
 # [XCDE] T280: the game files from a .nup package (runtime/services/game_files.c)
 run_test test_nup_package -std=gnu11 -Wall -Wextra -Werror -D_GNU_SOURCE tests/native/test_nup_package.c runtime/services/game_files.c
 

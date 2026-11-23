@@ -246,8 +246,8 @@ def print_launcher_progress(phase, done, total, text, fraction):
 # ---- the shader precompile (--precompile, RecompLauncher's setup step)
 # Monado's own launcher runs `<game> --precompile <dump>` before the first start (tools/launcher/launcher.cpp,
 # pc_start): runtime/nvn/vulkan/precompile.c translates every shader in the romfs into cache/, rewriting
-# cache/precompile_progress.txt as it goes and writing cache/precompile_done.txt, stamped with the game executable, at
-# the end. RecompLauncher starts the game directly, so its setup step runs the same precompile here, from the data root.
+# cache/precompile_progress.txt as it goes and writing cache/precompile_done.txt at the end. RecompLauncher starts the
+# game directly, so its setup step runs the same precompile here, from the data root.
 
 def game_executable():
     """The game program that precompiles: MONADO_GAME_EXE (AppRun sets it), else build/xcde.exe beside this builder in
@@ -261,42 +261,57 @@ def game_executable():
     return sibling if sibling.is_file() else None
 
 
-def precompile_is_current(data_root, exe):
-    """Whether cache/precompile_done.txt was made with this executable (its `exe <size> <mtime>` line), as the
-    launcher's pc_done checks it: a new build translates shaders differently, so it precompiles again."""
+# Exit codes of the runtime's `--precompile-status <dump>` mode (runtime/nvn/vulkan/precompile.c).
+PC_STATUS_CURRENT, PC_STATUS_STALE, PC_STATUS_UNREADABLE = 0, 1, 2
+PC_STATUS_TIMEOUT_S = 60  # ([XCDE] T282 review: the walk measured 78-108 ms; this only bounds a hung/locked child)
+
+
+def precompile_status(data_root, exe, dump):
+    """The runtime's answer for cache/precompile_done.txt: 0 current, 1 needs preparing, 2 the game files cannot be read;
+    -1 when it cannot be asked (no runnable executable, timeout, unexpected exit). [XCDE] T282"""
+    reset_dll_directory()
+    flags = subprocess.CREATE_NO_WINDOW if sys.platform == 'win32' else 0
     try:
-        lines = (data_root / 'cache' / 'precompile_done.txt').read_text(encoding='utf-8', errors='replace').splitlines()
-        stat = exe.stat()
-    except OSError:
-        return False
-    return f'exe {stat.st_size} {int(stat.st_mtime)}' in (line.strip() for line in lines)
+        done = subprocess.run([str(exe), '--precompile-status', str(dump)], cwd=data_root, env=child_environment(),
+                              stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, creationflags=flags,
+                              timeout=PC_STATUS_TIMEOUT_S)
+    except (OSError, subprocess.TimeoutExpired):
+        return -1
+    return done.returncode if done.returncode in (0, 1, 2) else -1
 
 
-# Of the shaders' part of the bar: the scan and the programs it finds first, the last pass (whole pipelines) after.
-PRECOMPILE_SCAN_SHARE = 0.8
+def precompile_is_current(data_root, exe, dump):
+    """Whether the runtime considers the precompiled shaders current for this build and these game files:
+    `<game> --precompile-status <dump>` (runtime/nvn/vulkan/precompile_sig.c) compares the translator/SPIR-V compiler
+    fingerprint, the environment switches, the precompile's pass switches and the game files with
+    cache/precompile_done.txt, without scanning or opening a Vulkan device. Exit code 0 = current. ([XCDE] T282: before,
+    this read an `exe <size> <mtime>` line, so every new build precompiled everything again even when it could not change
+    the shaders.)"""
+    return precompile_status(data_root, exe, dump) == PC_STATUS_CURRENT
+
+
+# [XCDE] T281: the precompile writes "<phase> <overall done> <overall total> <this pass done> <this pass total>" over
+# its four passes (scan, programs, seed variants, whole pipelines); the overall fraction is already weighted by the
+# measured cost of each pass (runtime/nvn/vulkan/precompile.c), so the bar here is the runtime's own, not a model.
+PRECOMPILE_PASSES = {'scan': 'scanning the game files', 'build': 'building the shader programs',
+                     'seed': 'known variants (seed)', 'pipelines': 'whole optimized pipelines'}
 
 
 def precompile_step(line):
-    """(share of the precompile done, text) from a cache/precompile_progress.txt line, `<phase> <files done> <files>
-    <programs found> <programs built>`, weighted as the launcher's bar (pc_poll): reading the files is a fifth of the
-    scan, building the programs found the rest. The `pipelines` pass counts its own files. None when unreadable, and
-    for the closing `done` line (scan totals again: the bar would go back; "Shaders ready" follows it)."""
+    """(share of the precompile done, text) from a cache/precompile_progress.txt line. None when unreadable, and for
+    the closing `done` line ("Shaders ready" follows it)."""
     parts = line.split()
     if len(parts) != 5 or parts[0] == 'done':
         return None
     try:
-        files_done, files, found, built = (int(x) for x in parts[1:])
+        overall_done, overall_total, pass_done, pass_total = (int(x) for x in parts[1:])
     except ValueError:
         return None
-    if not files:
+    if overall_total <= 0:
         return None
-    read = files_done / files
-    if parts[0] == 'pipelines':
-        share = PRECOMPILE_SCAN_SHARE + (1 - PRECOMPILE_SCAN_SHARE) * read
-        return share, f'Preparing the shaders: final pass, {files_done} of {files}'
-    built_share = built / found if found else 0.0
-    share = PRECOMPILE_SCAN_SHARE * (0.15 * read + 0.85 * read * built_share)
-    return share, f'Preparing the shaders: {files_done} of {files} files'
+    share = min(1.0, max(0.0, overall_done / overall_total))
+    name = PRECOMPILE_PASSES.get(parts[0], parts[0])
+    return share, f'Preparing the shaders: {name}, {pass_done} of {pass_total}'
 
 
 def child_environment():
@@ -330,8 +345,14 @@ def precompile_shaders(dump):
         print_progress(1, 'Shaders compile while you play')
         return
     data_root = default_data_root()
-    if precompile_is_current(data_root, exe):
+    status = precompile_status(data_root, exe, dump)
+    if status == PC_STATUS_CURRENT:
         print_progress(1, 'Shaders already prepared')
+        return
+    if status == PC_STATUS_UNREADABLE:  # [XCDE] T282 review: the run would exit 2 at once and print only a generic error
+        print('gamebuild: the game files cannot be read (the shader precompile was skipped); check the input dump',
+              flush=True)
+        print_progress(1, 'Shaders compile while you play')
         return
     print_progress(share, 'Preparing the shaders')
     (data_root / 'cache').mkdir(parents=True, exist_ok=True)

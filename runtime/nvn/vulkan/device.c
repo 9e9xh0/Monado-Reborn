@@ -850,7 +850,7 @@ static void create_swapchain(void) {
     g_vk.sc_extent = ext;
     // [XCDE] v12: the wide-box UV remap (uvb, translate.c) can only matter when the window is not 16:9.
     // Set here, right after the swapchain is (re)created; shaders compiled earlier keep true by default.
-    extern bool g_wide_box_possible;
+    extern _Atomic bool g_wide_box_possible;  // [XCDE] T282 review: written here, read by translating threads
     g_wide_box_possible = fabs((double)ext.width / (double)ext.height - 16.0 / 9.0) > 0.02;
     LOG("[vk] wide box remap: %s (window %ux%u)\n", g_wide_box_possible ? "on" : "off", ext.width, ext.height);
     g_vk.sc_count = 0;  // (count first: AMD's frame-generation swapchain fills exactly what it reports)

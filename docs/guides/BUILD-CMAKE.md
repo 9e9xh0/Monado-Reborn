@@ -8,6 +8,7 @@ It uses the same compilers and flags. The scripts still work. This is an alterna
 
 What it adds:
 - **Header tracking:** Ninja reads the compiler's dependency files. A change to `runtime/cpu.h`, `simd.h` or `simd_fp.h` recompiles every game chunk that includes it, which the scripts' timestamp check misses.
+- **Generated fingerprint header:** `build/inc/shader_sig.h` ([XCDE] T282) comes from a custom command whose `OBJECT_DEPENDS` orders it before `precompile_sig.c`; Ninja and Makefile generators implement that, Visual Studio/Xcode do not (the presets and CI use Ninja).
 - **Faster rebuilds:** everything compiles in parallel, and only what changed is rebuilt.
 - **Fails early:** the build stops at the first compiler error and shows it.
 - **One list per platform:** each runtime unit is listed once, in `RT_UNITS` / `NVN_UNITS`.

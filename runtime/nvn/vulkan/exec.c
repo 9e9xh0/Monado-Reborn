@@ -1016,8 +1016,10 @@ static bool sync_shaders(void) {
     return v;
 }
 
-// Shader translation: one dedicated thread (the translator isn't re-entrant - translate.c's RSC2 string ring - and
-// translating on the game thread cost up to ~90 ms per frame on entering an area). Compiles go on to the workers.
+// Shader translation: one dedicated thread (translating on the game thread cost up to ~90 ms per frame on entering an
+// area) and compiles on the workers. The precompile (T187) is the exception: its workers translate their own programs
+// in place, because [XCDE] T281 made the translator re-entrant (translate.c's scratch rings are thread-local, and so
+// is the guest-heap range): they skip translate_lock through tl_inline_jobs.
 static pthread_mutex_t translate_lock = PTHREAD_MUTEX_INITIALIZER;  // (compute shaders translate on the game thread)
 // [XCDE] A thread that needs a translation now (a draw waiting for its program, a compute dispatch) goes before the
 // translator thread's queue. The lock isn't fair: on entering an area the game registers hundreds of programs, the
@@ -1026,11 +1028,17 @@ static pthread_mutex_t translate_lock = PTHREAD_MUTEX_INITIALIZER;  // (compute 
 // (frame drops to ~50 fps when entering a new part of Colony 9). The translator now lets urgent callers in first.
 static _Atomic int xlat_urgent;
 static _Thread_local bool tl_translator;
+static __thread bool tl_inline_jobs;  // [XCDE] T187: this thread runs its jobs itself (precompilation threads)
 static void xlat_lock(void) {
+    if (tl_inline_jobs) return;  // [XCDE] T281: a precompile worker: its own translation, no shared scratch state
     if (tl_translator) { while (atomic_load(&xlat_urgent)) sched_yield(); pthread_mutex_lock(&translate_lock); return; }
     atomic_fetch_add(&xlat_urgent, 1);
     pthread_mutex_lock(&translate_lock);
     atomic_fetch_sub(&xlat_urgent, 1);
+}
+static void xlat_unlock(void) {
+    if (tl_inline_jobs) return;
+    pthread_mutex_unlock(&translate_lock);
 }
 static Job *tjobs_head, *tjobs_tail;
 static pthread_mutex_t tjobs_lock = PTHREAD_MUTEX_INITIALIZER;
@@ -1067,7 +1075,6 @@ static void run_translate(void (*fn)(void *), void *arg) {
     pthread_mutex_unlock(&tjobs_lock);
 }
 
-static __thread bool tl_inline_jobs;  // [XCDE] T187: this thread runs its jobs itself (precompilation threads)
 static void run_job(void (*fn)(void *), void *arg) {
     if (sync_shaders() || tl_inline_jobs) { fn(arg); return; }
     static bool started;
@@ -2571,7 +2578,7 @@ static void translate_program(void *arg) {
         p->fi = maxwell_translate((const uint8_t *)(uintptr_t)p->src[1], p->cmax[1], STAGE_FRAGMENT, &p->fkey);
     }
     if (trace_tr) LOG("[xlat] end   vs=%llx fs=%llx""%c", (unsigned long long)p->code[0], (unsigned long long)p->code[1], 10);
-    pthread_mutex_unlock(&translate_lock);
+    xlat_unlock();
     p->t_x1 = SDL_GetTicksNS();
     if (!p->vi->msl) {
         LOG("[shader] VS translate failed: %s (code %llx)\n", p->vi->error, (unsigned long long)p->code[0]);
@@ -4152,6 +4159,9 @@ void vk_prewarm_hold(uint64_t frame_draws) {
 // SPIR-V cache, our pipeline cache (cache/vk_pipelines.bin) and the driver's own shader cache keep the results, so the
 // game's first draw with the program finds its pieces compiled: a fast link instead of native compiles. Synchronous
 // (the calling thread translates and compiles). Returns 0 if not built; *vs_attr = the vertex inputs it reads.
+// [XCDE] T282: a change here (or in vk_precompile_variant / the gpl_* key and state below) changes what the precompile
+// warms; shader_sig.py does not hash this file (it changes for gameplay too), so bump XCDE_PRECOMPILE_ARTIFACTS_REV in
+// precompile_rev.h for it instead.
 int vk_precompile_program(const NvnProgram *np, const ShaderKey *vkey, const ShaderKey *fkey, uint32_t *vs_attr) {
     Prog *p = calloc(1, sizeof *p);
     p->cliff_candidate = cliff_program_known(np);
@@ -6388,7 +6398,7 @@ static CsProg *compute_program(NvnProgram *np) {
     k.glsl = 1;
     xlat_lock();
     cp->si = maxwell_translate((const uint8_t *)(uintptr_t)nvn_stage_code(ss), ss->const_offset ? ss->const_offset : 0x10000, STAGE_COMPUTE, &k);
-    pthread_mutex_unlock(&translate_lock);
+    xlat_unlock();
     cp->p.vi = cp->si;
     if (!cp->si->msl) {
         LOG("[compute] translate failed: %s (code %llx)\n", cp->si->error, (unsigned long long)ss->code_addr);

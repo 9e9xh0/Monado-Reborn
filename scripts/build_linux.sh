@@ -42,6 +42,7 @@ if [[ ${XCDE_NATIVE_FSR:-1} != 0 ]]; then
 fi
 mkdir -p "$rtdir" build/linux/game build/inc
 python3 tools/build/gen_smaa_inc.py third_party/smaa/SMAA.hlsl build/inc/smaa_hlsl.inc
+python3 tools/build/shader_sig.py --out build/inc/shader_sig.h  # [XCDE] T282: the precompiled shaders' fingerprint
 objects=()
 # The units of scripts/build_rt_gfx.sh, with the Linux platform layer.
 rt=(loader dispatch kernel ipc fnprof log platform/linux services/fs services/romfs_virtual services/game_files services/am services/acc services/time
@@ -50,7 +51,7 @@ rt=(loader dispatch kernel ipc fnprof log platform/linux services/fs services/ro
     host/stubs host/settings_ini
     host/gamelib_static host/main_boot diag/diag diag/sampler diag/watchdog diag/crashdump paths)
 nvn=(astc cmdbuf formats maxwell/translate objects output_scale smaa_data tegra vulkan/device vulkan/exec vulkan/post
-     vulkan/precompile vulkan/shaders vulkan/textures vulkan/temporal vulkan/fsr4 vulkan/vkq)
+     vulkan/precompile vulkan/precompile_sig vulkan/shaders vulkan/textures vulkan/temporal vulkan/fsr4 vulkan/vkq)
 for f in "${nvn[@]}"; do rt+=("nvn/$f"); done
 for f in "${rt[@]}"; do
   obj="$rtdir/${f//\//_}.o"

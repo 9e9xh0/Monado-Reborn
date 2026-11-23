@@ -114,9 +114,10 @@ class BuilderProgressLines(unittest.TestCase):
 
 
 # A stand-in game for `--precompile <dump>`: writes the progress file twice and the done stamp, as precompile.c does.
+# T281 format: <phase> <overall done> <overall total> <this pass done> <this pass total>.
 GAME_PRECOMPILES = ('#!/bin/sh\n[ "$1" = --precompile ] || exit 9\n'
-                    'echo "scan 5 10 4 2" > cache/precompile_progress.txt\nsleep 1\n'
-                    'echo "pipelines 3 3 3 3" > cache/precompile_progress.txt\nsleep 1\n'
+                    'echo "scan 300 1000 5 10" > cache/precompile_progress.txt\nsleep 1\n'
+                    'echo "pipelines 900 1000 3 3" > cache/precompile_progress.txt\nsleep 1\n'
                     'echo "programs 3 built 3" > cache/precompile_done.txt\n')
 GAME_FAILS = '#!/bin/sh\nexit 3\n'
 
@@ -137,6 +138,12 @@ class ShaderPrecompile(unittest.TestCase):
         exe.chmod(0o755)
         return exe
 
+    def status_current(self):
+        """[XCDE] T282: a stand-in whose `--precompile-status <dump>` says the cache is current (exit 0), as the runtime
+        does when its signature matches cache/precompile_done.txt; anything else fails the check."""
+        return ('#!/bin/sh\n[ "$1" = --precompile-status ] && [ "$2" = "' + str(self.root / 'dump') + '" ] && exit 0\n'
+                'exit 1\n')
+
     def run_precompile(self, exe):
         env = {'RECOMPLAUNCHER': '1', 'MONADO_DATA_ROOT': str(self.root), 'MONADO_GAME_EXE': str(exe or '')}
         printed = io.StringIO()
@@ -145,35 +152,66 @@ class ShaderPrecompile(unittest.TestCase):
         return [line for line in printed.getvalue().splitlines() if line.startswith('progress ')]
 
     def test_scan_line_is_the_first_part_of_the_shaders(self):
-        share, text = gb.precompile_step('scan 5 10 4 2')
-        self.assertAlmostEqual(share, gb.PRECOMPILE_SCAN_SHARE * (0.15 * 0.5 + 0.85 * 0.5 * 0.5))
-        self.assertEqual(text, 'Preparing the shaders: 5 of 10 files')
+        share, text = gb.precompile_step('scan 300 1000 5 10')
+        self.assertAlmostEqual(share, 0.3)
+        self.assertEqual(text, 'Preparing the shaders: scanning the game files, 5 of 10')
 
-    def test_pipelines_pass_follows_the_scan(self):
-        share, text = gb.precompile_step('pipelines 1 4 4 1')
-        self.assertAlmostEqual(share, gb.PRECOMPILE_SCAN_SHARE + (1 - gb.PRECOMPILE_SCAN_SHARE) * 0.25)
-        self.assertEqual(text, 'Preparing the shaders: final pass, 1 of 4')
+    def test_pipelines_pass_counts_towards_the_same_bar(self):
+        share, text = gb.precompile_step('pipelines 900 1000 3 3')
+        self.assertAlmostEqual(share, 0.9)
+        self.assertEqual(text, 'Preparing the shaders: whole optimized pipelines, 3 of 3')
+
+    def test_seed_pass_has_its_own_count(self):
+        share, text = gb.precompile_step('seed 600 1000 400 900')
+        self.assertAlmostEqual(share, 0.6)
+        self.assertEqual(text, 'Preparing the shaders: known variants (seed), 400 of 900')
 
     def test_the_closing_done_line_never_moves_the_bar_back(self):
-        # precompile.c writes "done" with the scan's totals after the pipelines pass (seen on a real run: 0.999 -> 0.94)
-        self.assertIsNone(gb.precompile_step('done 8124 8124 9823 9823'))
+        self.assertIsNone(gb.precompile_step('done 1000 1000 0 0'))
 
     def test_unreadable_progress_is_skipped(self):
         self.assertIsNone(gb.precompile_step('scan 1 0 0 0'))
         self.assertIsNone(gb.precompile_step('half a line'))
 
-    def test_precompile_for_this_executable_is_current(self):
-        exe = self.game(GAME_FAILS)
-        stat = exe.stat()
-        (self.root / 'cache').mkdir()
-        (self.root / 'cache/precompile_done.txt').write_text(f'programs 1\nexe {stat.st_size} {int(stat.st_mtime)}\n')
-        self.assertTrue(gb.precompile_is_current(self.root, exe))
+    @unittest.skipUnless(os.name == 'posix', 'the stand-in game is a shell script')
+    def test_precompile_status_decides_whether_a_run_happens(self):
+        # T282: the builder asks the runtime (`--precompile-status <dump>`), not the old `exe <size> <mtime>` stamp.
+        self.assertTrue(gb.precompile_is_current(self.root, self.game(self.status_current()), self.root / 'dump'))
+        self.assertFalse(gb.precompile_is_current(self.root, self.game(GAME_FAILS), self.root / 'dump'))
 
-    def test_precompile_for_another_build_is_not_current(self):
-        exe = self.game(GAME_FAILS)
-        (self.root / 'cache').mkdir()
-        (self.root / 'cache/precompile_done.txt').write_text('programs 1\nexe 1 2\n')
-        self.assertFalse(gb.precompile_is_current(self.root, exe))
+    @unittest.skipUnless(os.name == 'posix', 'the stand-in game is a shell script')
+    def test_a_current_precompile_is_not_started(self):
+        lines = self.run_precompile(self.game(self.status_current()))
+        self.assertEqual(lines, ['progress 1.0000 Shaders already prepared'])
+        self.assertFalse((self.root / 'cache/precompile_progress.txt').exists())
+
+    def test_a_missing_game_executable_is_not_current(self):
+        self.assertFalse(gb.precompile_is_current(self.root, self.root / 'no-such-game', self.root / 'dump'))
+
+    @unittest.skipUnless(os.name == 'posix', 'the stand-in game is a shell script')
+    def test_the_runtime_exit_codes_are_preserved(self):
+        # [XCDE] T282 review: 0 current, 1 stale, 2 unreadable; anything else / a timeout / an OSError is "cannot ask".
+        def status_with(code):
+            return self.game('#!/bin/sh\n[ "$1" = --precompile-status ] && exit ' + str(code) + '\nexit 9\n')
+        self.assertEqual(gb.precompile_status(self.root, status_with(0), self.root / 'dump'), gb.PC_STATUS_CURRENT)
+        self.assertEqual(gb.precompile_status(self.root, status_with(1), self.root / 'dump'), gb.PC_STATUS_STALE)
+        self.assertEqual(gb.precompile_status(self.root, status_with(2), self.root / 'dump'), gb.PC_STATUS_UNREADABLE)
+        self.assertEqual(gb.precompile_status(self.root, status_with(7), self.root / 'dump'), -1)
+        self.assertEqual(gb.precompile_status(self.root, self.root / 'no-such-game', self.root / 'dump'), -1)
+
+    def test_a_hung_status_probe_is_bounded(self):
+        # [XCDE] T282 review: subprocess.run has a timeout; a hung child answers "cannot ask", it must not hang setup.
+        with mock.patch('subprocess.run', side_effect=subprocess.TimeoutExpired(['monado'], gb.PC_STATUS_TIMEOUT_S)):
+            self.assertEqual(gb.precompile_status(self.root, self.root / 'monado', self.root / 'dump'), -1)
+
+    @unittest.skipUnless(os.name == 'posix', 'the stand-in game is a shell script')
+    def test_unreadable_game_files_do_not_start_a_doomed_run(self):
+        # [XCDE] T282 review: exit 2 means the game files cannot be read; starting --precompile would exit with the same
+        # code and report only a generic failure.
+        exe = self.game('#!/bin/sh\n[ "$1" = --precompile-status ] && exit 2\nexit 3\n')
+        lines = self.run_precompile(exe)
+        self.assertEqual(lines, ['progress 1.0000 Shaders compile while you play'])
+        self.assertFalse((self.root / 'cache/precompile_progress.txt').exists())
 
     def test_frozen_builders_library_path_is_given_back(self):
         env = {'LD_LIBRARY_PATH': '/frozen/_internal', 'LD_LIBRARY_PATH_ORIG': '/app/usr/lib'}
@@ -191,7 +229,7 @@ class ShaderPrecompile(unittest.TestCase):
         self.assertEqual(values, sorted(values))
         self.assertEqual(values[0], gb.PRECOMPILE_BUILD_SHARE)
         self.assertEqual(lines[-1], 'progress 1.0000 Shaders ready')
-        self.assertIn('final pass', ' '.join(lines))
+        self.assertIn('whole optimized pipelines', ' '.join(lines))
 
     @unittest.skipUnless(os.name == 'posix', 'the stand-in game is a shell script')
     def test_a_failed_precompile_still_finishes_the_setup(self):
@@ -223,6 +261,39 @@ class SourceContracts(unittest.TestCase):
     def test_appimage_carries_the_manifest(self):
         packager = (ROOT / 'tools/package/make_appimage.py').read_text(encoding='utf-8')
         self.assertIn("shutil.copy2(ROOT / 'recomplauncher.json', appdir / 'recomplauncher.json')", packager)
+
+    def test_a_user_stop_does_not_poison_the_shader_skip_list(self):
+        # T281: pc_stop is the user's Omitir/Detener, not a driver crash: it must delete the in-flight record that the
+        # crash plumbing turns into the permanent skip list, and the explicit "Precompile shaders" button retries it.
+        # [XCDE] T282 review: the button passes XCDE_PRECOMPILE_FORCE instead of the launcher deleting the files, and the
+        # runtime clears the crash/in-flight lists itself when forced (a failed spawn cannot lose the done stamp).
+        launcher = (ROOT / 'tools/launcher/launcher.cpp').read_text(encoding='utf-8')
+        stop = launcher[launcher.index('static void pc_stop()'):launcher.index('static void pc_poll()')]
+        self.assertIn('precompile_inflight.bin', stop)
+        self.assertIn('xcde_utf8_remove', stop)
+        start = launcher[launcher.index('static void pc_start(bool then_play, bool fresh = false)'):
+                         launcher.index('static void pc_stop()')]
+        self.assertIn('PcForce force(fresh)', start)
+        self.assertNotIn('precompile_done.txt', start)
+        self.assertIn('pc_start(false, true)', launcher)
+        precompile = (ROOT / 'runtime/nvn/vulkan/precompile.c').read_text(encoding='utf-8')
+        forced = precompile[precompile.index('if (forced) {'):precompile.index('t_run = t0;')]
+        self.assertIn('precompile_skip.txt', forced)
+        self.assertIn('precompile_inflight.bin', forced)
+
+    def test_the_shader_precompile_bar_covers_the_four_passes(self):
+        # T281: the progress file is "<phase> <overall done> <overall total> <this pass done> <this pass total>" over
+        # scan/build/seed/pipelines, weighted by the previous run's measured pass times; the launcher shows the pass,
+        # its count and the time left, and the builder reads the same fraction.
+        launcher = (ROOT / 'tools/launcher/launcher.cpp').read_text(encoding='utf-8')
+        self.assertIn('Fase %d de 4', launcher)
+        self.assertIn('quedan ~%d min', launcher)
+        precompile = (ROOT / 'runtime/nvn/vulkan/precompile.c').read_text(encoding='utf-8')
+        for phase in ('"scan"', '"build"', '"seed"', '"pipelines"'):
+            self.assertIn(phase, precompile)
+        self.assertIn('precompile_times.txt', precompile)
+        builder = (ROOT / 'tools/gamebuild/gamebuild.py').read_text(encoding='utf-8')
+        self.assertIn('overall_done, overall_total, pass_done, pass_total', builder)
 
 
 if __name__ == '__main__':

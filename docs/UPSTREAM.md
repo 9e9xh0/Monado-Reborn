@@ -236,3 +236,46 @@ Details and the reporter's log evidence: [CHANGELOG](dev/CHANGELOG.md).
 - `runtime/hle/movie.c`: a package's movies through FFmpeg custom I/O (`pkg_open`, `ex_close`).
 - `runtime/nvn/vulkan/precompile.c`: `list_package`, and shader files read through `gf_read`.
 - `runtime/services/kbicons.c`, `runtime/hle/quickstep_native.c`: their romfs files through `gf_read`/`gf_source`.
+
+## Shader precompile speed and progress (T281, 2026-11-23)
+
+- `runtime/nvn/maxwell/translate.c`, `runtime/nvn/maxwell/shader.h`: the `RSC2`/`img_coord` scratch rings and
+  `maxwell_gmem_base/size` are thread-local; the translator can run on several precompile workers at once.
+- `runtime/nvn/vulkan/exec.c`: new `xlat_unlock`; `xlat_lock`/`xlat_unlock` skip the global translation lock for
+  threads running their own precompile jobs (`tl_inline_jobs`). The game's translator thread still serializes.
+- `runtime/nvn/vulkan/precompile.c`: cpus-1 worker threads (the build workers start after the scan), >64 MB files
+  first and up to N at once within a byte budget, four-pass weighted progress (`cache/precompile_times.txt`), seed jobs
+  deduped against the build pass, skipped jobs reported separately.
+- `tools/launcher/launcher.cpp`: new progress format + time left; `pc_stop` deletes `cache/precompile_inflight.bin`
+  (a user stop is not a driver crash); the manual Precompile button clears the skip list; `pc_start(..., fresh)`.
+- `tools/gamebuild/gamebuild.py`: reads the four-pass progress format.
+- `tests/unit/test_recomplauncher_support.py`: the parser tests and the launcher source contracts.
+
+## Incremental shader precompile (T282, 2026-11-24)
+
+- `tools/build/shader_sig.py` (new), `CMakeLists.txt`, `scripts/build_linux.sh`, `scripts/build_rt_gfx.sh`,
+  `tools/diag/validate_port.py`: fingerprint of the translator / SPIR-V compiler / precompile-guess / shader-hash /
+  SPIR-V-validation sources as `build/inc/shader_sig.h` (`XCDE_SHADER_SIG`), generated when one of them changes (a
+  selective `build_rt_gfx.sh` build always refreshes it; `validate_port.py` compiles the unit with the macro instead of
+  generating the header). `runtime/nvn/vulkan/precompile_rev.h` (`XCDE_PRECOMPILE_ARTIFACTS_REV`) covers exec.c's
+  build path, which changes too often to hash.
+- `runtime/nvn/vulkan/precompile_sig.c`, `precompile_sig.h`, `precompile_rev.h` (new): the run signature (build
+  fingerprint and artifacts revision, the environment switches by presence and value - the SPIR-V options, the
+  translator's GLSL switches and the precompile's pass switches -, the game-file set by relative name/size/mtime or the
+  `.nup`'s 64-bit size/mtime, the shipped variant seed). A root must be a dump folder with a readable `romfs/` or a
+  `.nup` package file; an unreadable entry inside romfs is skipped like the scan skips it.
+- `runtime/nvn/vulkan/precompile.c`: `sig` line in `cache/precompile_done.txt` (the `exe` line is gone), early exit
+  for a current cache, `XCDE_PRECOMPILE_FORCE`, the `--precompile-status` answer and the build workers start after the
+  scan (the named-input masks are final then: a deterministic, converging SPIR-V cache).
+- `runtime/host/main_boot.c`: `--precompile-status <dump>` dispatch (exit 0 current / 1 stale / 2 unreadable).
+- `tools/launcher/launcher.cpp`: `pc_done()` asks the runtime with the Diagnostics-tab environment (memoized,
+  invalidated when the inputs can change, including a rebuilt executable, the settings and the environment rows; asked
+  before the window is shown and never while a run is in flight) instead of comparing the executable; the explicit
+  Precompile button passes `XCDE_PRECOMPILE_FORCE=1` (the runtime clears the crash/in-flight lists and redoes the
+  passes; a failed spawn cannot lose the stamp) and exit code 2 does not start a doomed run.
+- `tools/gamebuild/gamebuild.py`: `precompile_status` runs the same status command (timeout; 0/1/2 kept apart) and
+  `precompile_is_current` is its `== 0`.
+- `tests/native/test_precompile_sig.c` (new), `scripts/native_tests_linux.sh`, `tests/unit/test_precompile_incremental.py`
+  (new), `tests/unit/test_recomplauncher_support.py`, `tests/unit/test_launcher_utf8_paths.py`. The native test builds a
+  unique temp root, and covers isolated removal, a same-size mtime-only edit, a plain-file root, a folder without
+  `romfs/`, set-empty vs unset options and one translator/pass switch.

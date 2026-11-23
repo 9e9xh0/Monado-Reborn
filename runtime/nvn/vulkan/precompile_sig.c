@@ -1,0 +1,185 @@
+// [XCDE] T282: the "are the precompiled shaders current?" signature.
+//
+// What the precompile writes (cache/spirv, the driver's shader and pipeline caches warmed by the program/seed/pipeline
+// passes) is decided by the translator, the SPIR-V compiler options and the game files - not by the size and time of
+// the executable. The done stamp used to name the executable, so every rebuild precompiled the shaders again; an edit
+// to the launcher, the UI or gameplay code has no effect on the shaders, but cost a full warm run (the scan, every
+// translation and driver pipeline creation).
+//
+// The signature (FNV-1a 64) covers:
+//  - XCDE_SHADER_SIG: the build's fingerprint of the translator and SPIR-V compiler sources (tools/build/shader_sig.py;
+//    <build>/inc/shader_sig.h, or -DXCDE_SHADER_SIG for a native test).
+//  - XCDE_PRECOMPILE_ARTIFACTS_REV (precompile_rev.h): revision of exec.c's build path, which shader_sig.py cannot hash
+//    without invalidating on gameplay changes; bump it when the pipeline state/libraries that pass builds change.
+//  - the environment options, by PRESENCE and value (a set-but-empty variable is not the same as an unset one, because
+//    stage_opt()/getenv() see "" as set): the SPIR-V optimisation (LARECOMP_VK_OPT, XCDE_FS_OPT), the translator
+//    switches that change the emitted GLSL (XCDE_STATIC_STACKS, XCDE_RSC_PIXEL, XCDE_D16_REF, XCDE_SCALED_GATHER,
+//    LARECOMP_NO_DISCARD, XCDE_HW_FP16, XCDE_EARLY_FS, XCDE_STRUCTURED_CFG) and the precompile's own pass switches
+//    (XCDE_PRECOMPILE_LIBS, XCDE_PRECOMPILE_PIPELINES).
+//  - the game files: every file under <root>/romfs by relative name, size and mtime (for a .nup package: its 64-bit
+//    size and mtime). A new, changed or removed shader container can add or change programs.
+//  - the shipped variant seed (XCDE_VARIANTS_SEED or data/variants_seed.bin): size and mtime. New recorded variants
+//    mean new jobs to warm.
+// A root is a dump folder with a readable romfs/ or a .nup package file; anything else is "unreadable" (2), not "stale".
+// One unreadable file inside romfs is skipped, exactly as the shader scan skips it: a dangling link cannot stop the
+// whole precompile.
+//
+// Not covered: cache/variants.bin (the player's own recordings: it grows while playing, so it must not invalidate the
+// cache) and the graphics driver, including the Vulkan route / selected adapter from xcde.ini (the driver's shader
+// caches are its own: after a driver update, a GPU switch or a Vulkan API route change press "Precompile shaders").
+#include <stdbool.h>
+#include <stdint.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <sys/stat.h>
+
+#include "../../host/utf8_path.h"
+#include "../../platform/dir_utf8.h"
+#include "precompile_rev.h"
+#include "precompile_sig.h"
+
+#ifndef XCDE_SHADER_SIG
+#include "shader_sig.h"  // <build>/inc: tools/build/shader_sig.py --out
+#endif
+
+static uint64_t mix(uint64_t h, const void *data, size_t n) {
+    const uint8_t *b = data;
+    for (size_t i = 0; i < n; i++) { h ^= b[i]; h *= 0x100000001B3ull; }
+    return h;
+}
+static uint64_t mix_stat(uint64_t h, uint64_t size, int64_t mtime) {
+    uint64_t v[2] = {size, (uint64_t)mtime};
+    return mix(h, v, sizeof v);
+}
+
+// Whether an environment variable exists at all: getenv()-style helpers (xcde_utf8_getenv included) also report false
+// for a set-but-empty value, and "" is a meaningful setting here (stage_opt("") turns the optimisation off).
+static bool env_present(const char *name) {
+#ifdef _WIN32
+    wchar_t wname[256];
+    if (xcde_utf8_to_wide(name, wname, 256) < 0) return false;
+    return GetEnvironmentVariableW(wname, NULL, 0) != 0;
+#else
+    return getenv(name) != NULL;
+#endif
+}
+
+// The root's metadata with a 64-bit size: a .nup package is ~15 GB, and Windows' struct stat is 32-bit (T280: the
+// package "wasn't seen as one"). On Windows the path is opened through the wide API, which also follows a symlinked
+// root (the launcher's targets/) to its target; on POSIX stat() already gives 64-bit sizes.
+typedef struct { bool isdir; uint64_t size; int64_t mtime; } RootInfo;
+#ifdef _WIN32
+static bool root_info(const char *path, RootInfo *out) {
+    wchar_t wpath[XCDE_PATH_W];
+    if (xcde_utf8_to_wide(path, wpath, XCDE_PATH_W) < 0) return false;
+    HANDLE h = CreateFileW(wpath, FILE_READ_ATTRIBUTES, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, NULL,
+                           OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS, NULL);
+    if (h == INVALID_HANDLE_VALUE) return false;
+    BY_HANDLE_FILE_INFORMATION fi;
+    bool ok = GetFileInformationByHandle(h, &fi) != 0;
+    CloseHandle(h);
+    if (!ok) return false;
+    out->isdir = (fi.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0;
+    out->size = ((uint64_t)fi.nFileSizeHigh << 32) | fi.nFileSizeLow;
+    ULARGE_INTEGER t;
+    t.LowPart = fi.ftLastWriteTime.dwLowDateTime;
+    t.HighPart = fi.ftLastWriteTime.dwHighDateTime;
+    out->mtime = (int64_t)(t.QuadPart / 10000000ull) - 11644473600ll;  // FILETIME (1601) -> Unix seconds
+    return true;
+}
+#else
+static bool root_info(const char *path, RootInfo *out) {
+    struct stat sb;
+    if (stat(path, &sb)) return false;
+    out->isdir = S_ISDIR(sb.st_mode);
+    out->size = (uint64_t)sb.st_size;
+    out->mtime = (int64_t)sb.st_mtime;
+    return true;
+}
+#endif
+
+// A package file is told by its first bytes (runtime/services/game_files.c), never by its name.
+static bool is_package_file(const char *path) {
+    FILE *f = xcde_utf8_fopen(path, "rb");
+    if (!f) return false;
+    uint8_t magic[4];
+    bool yes = fread(magic, 1, sizeof magic, f) == sizeof magic && !memcmp(magic, "NUP\x01", 4);
+    fclose(f);
+    return yes;
+}
+
+// Every file under dir, by relative name (rel): added to *sum, so the folder enumeration order does not matter. Entries
+// whose stat fails are skipped, like the shader scan skips them (precompile.c list_dir); the depth cap turns a symlink
+// loop into "unreadable" instead of a stack exhaustion.
+#define MIX_DIR_MAX_DEPTH 64
+static bool mix_dir(const char *dir, const char *rel, int depth, uint64_t *sum, uint64_t *files) {
+    if (depth > MIX_DIR_MAX_DEPTH) return false;
+    XcdeDir *dd = xcde_opendir(dir);
+    if (!dd) return false;
+    bool ok = true;
+    XcdeDirent *e;
+    while ((e = xcde_readdir(dd))) {
+        if (e->d_name[0] == '.') continue;
+        char p[2048], r[2048];
+        int np = snprintf(p, sizeof p, "%s/%s", dir, e->d_name), nr = snprintf(r, sizeof r, "%s/%s", rel, e->d_name);
+        if (np < 0 || (size_t)np >= sizeof p || nr < 0 || (size_t)nr >= sizeof r) continue;
+        struct stat sb;
+        if (xcde_utf8_stat(p, &sb)) continue;
+        if (S_ISDIR(sb.st_mode)) {
+            if (!mix_dir(p, r, depth + 1, sum, files)) { ok = false; break; }
+        } else if (S_ISREG(sb.st_mode)) {
+            *sum += mix_stat(mix(0xcbf29ce484222325ull, r, strlen(r)), (uint64_t)sb.st_size, (int64_t)sb.st_mtime);
+            (*files)++;
+        }
+    }
+    xcde_closedir(dd);
+    return ok;
+}
+
+// Everything that changes what a run warms. Presence AND value: XCDE_FS_OPT= (empty) disables the optimisation, like
+// unset leaves it on; a set-but-empty Diagnostics row is a different cache input.
+static const char *const k_sig_env[] = {
+    // SPIR-V optimisation (runtime/nvn/vulkan/shaders.c stage_opt)
+    "LARECOMP_VK_OPT", "XCDE_FS_OPT",
+    // translator switches that change the emitted GLSL (runtime/nvn/maxwell/translate.c)
+    "XCDE_STATIC_STACKS", "XCDE_RSC_PIXEL", "XCDE_D16_REF", "XCDE_SCALED_GATHER", "LARECOMP_NO_DISCARD",
+    "XCDE_HW_FP16", "XCDE_EARLY_FS", "XCDE_STRUCTURED_CFG",
+    // the passes this run would execute (runtime/nvn/vulkan/precompile.c)
+    "XCDE_PRECOMPILE_LIBS", "XCDE_PRECOMPILE_PIPELINES",
+    NULL};
+// (the AMD-integrated-GPU auto-off of the whole-pipeline pass is device-dependent and stays out: the pass policy for the
+// current machine is not knowable without a Vulkan device, which --precompile-status deliberately never opens)
+
+bool vk_precompile_sig(const char *root, char out[17]) {
+    RootInfo ri;
+    if (!root_info(root, &ri)) return false;
+    uint64_t h = mix(0xcbf29ce484222325ull, XCDE_SHADER_SIG, strlen(XCDE_SHADER_SIG));
+    uint32_t rev = XCDE_PRECOMPILE_ARTIFACTS_REV;
+    h = mix(h, &rev, sizeof rev);
+    for (int i = 0; k_sig_env[i]; i++) {
+        bool set = env_present(k_sig_env[i]);
+        char value[1100];
+        const char *v = "";
+        if (set && xcde_utf8_getenv(k_sig_env[i], value, sizeof value)) v = value;  // ("" when set but empty)
+        h = mix(h, set ? "1" : "0", 1);
+        h = mix(h, v, strlen(v));
+        h = mix(h, "|", 1);
+    }
+    uint64_t files = 0;
+    if (ri.isdir) {
+        char romfs[2048];
+        if (snprintf(romfs, sizeof romfs, "%s/romfs", root) >= (int)sizeof romfs || !mix_dir(romfs, "", 0, &h, &files)) return false;
+    } else {  // (a .nup package: the file itself is the game files)
+        if (!is_package_file(root)) return false;  // (a plain file is not a game root: unreadable, not stale)
+        h = mix_stat(h, ri.size, ri.mtime);
+        files = 1;
+    }
+    char seed_env[1100];
+    const char *seed = xcde_utf8_getenv("XCDE_VARIANTS_SEED", seed_env, sizeof seed_env) ? seed_env : "data/variants_seed.bin";
+    RootInfo si;
+    if (root_info(seed, &si)) { h = mix(h, "seed", 4); h = mix_stat(h, si.size, si.mtime); }
+    h = mix(h, &files, sizeof files);
+    snprintf(out, 17, "%016llx", (unsigned long long)h);
+    return true;
+}
