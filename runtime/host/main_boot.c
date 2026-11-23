@@ -214,6 +214,12 @@ int main(int argc, char **argv) {
         extern int vk_precompile_main(const char *root);
         return vk_precompile_main(argv[2]);
     }
+    // [XCDE] T282: is the precompiled shader cache current for this build and these game files? (the launcher's JUGAR
+    // check and RecompLauncher's builder; no window, no Vulkan device, no scan - see precompile_sig.c)
+    if (argc >= 3 && !strcmp(argv[1], "--precompile-status")) {
+        extern int vk_precompile_status(const char *root);
+        return vk_precompile_status(argv[2]);
+    }
 #endif
     plat_init();
     setvbuf(stderr, NULL, _IONBF, 0);

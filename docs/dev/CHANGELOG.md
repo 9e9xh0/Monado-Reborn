@@ -359,3 +359,53 @@ Triage of both symptoms, the minidump findings and the A/B table:
   full unit suite (196) and `scripts/native_tests_linux.sh`. Left open: the fragment-spirv-opt default needs an
   in-game FPS A/B (86 % of a fragment compile is spirv-opt); a build-time fingerprint of the translator inputs to
   skip the rerun after builds that cannot change any shader; and the whole-pipeline pass policy on low-end PCs.
+
+## 2026-11-24 — incremental shader precompile (T282)
+
+- The user asked to "do incremental precompile": after T281 a rebuild that cannot change the shaders still precompiled
+  everything again, because `cache/precompile_done.txt` named the executable's size and time (T211). Measured on the
+  low-end PC, full dump, warm cache: a full re-run took 367.8 s (scan 32.7, build 316.3, seed 1.0, pipelines 16.6) and
+  393.3 s back to back - every time the game executable changed for any reason.
+- `tools/build/shader_sig.py` (new) fingerprints the sources that decide the precompiled artifacts: the Maxwell-to-GLSL
+  translator (`runtime/nvn/maxwell/`), the GLSL-to-SPIR-V compiler (`runtime/nvn/vulkan/shaders.c`, `shaders.h`, `vk.h`) and the
+  precompile's own program/key guesses (`runtime/nvn/vulkan/precompile.c`). CMake generates `build/inc/shader_sig.h`
+  from it with a custom command (only `precompile_sig.c` includes it, so a translator change recompiles that one unit),
+  and both shell build scripts and `tools/diag/validate_port.py` do the same.
+- `runtime/nvn/vulkan/precompile_sig.c` (new; native test `tests/native/test_precompile_sig.c`) computes the run
+  signature: the fingerprint, the options that change the compiled SPIR-V (`LARECOMP_VK_OPT`, `XCDE_FS_OPT`, by value),
+  every file under `<dump>/romfs` by relative name, size and mtime (for a `.nup` package, its size and mtime) and the
+  shipped variant seed. Deliberately not covered: `cache/variants.bin` (it grows while playing and must not invalidate
+  the cache) and the graphics driver (its caches are its own; after a driver update press "Precompile shaders").
+- `runtime/nvn/vulkan/precompile.c`: the done stamp gained a `sig <hex>` line and lost the `exe <size> <mtime>` one;
+  new `--precompile-status <dump>` mode (exit 0 current, 1 needs preparing, 2 game files unreadable) that touches no
+  cache, no scan and no Vulkan device; `--precompile` exits at once when the stamp's signature matches the sources
+  (`XCDE_PRECOMPILE_FORCE=1` runs the passes anyway). `runtime/host/main_boot.c` dispatches the new mode before any
+  platform/GPU init.
+- `tools/launcher/launcher.cpp`: `pc_done()` runs `<game> --precompile-status targets` (and writes its one line to
+  `build/last_precompile_status.log`) instead of parsing the stamp; the answer is memoized because the UI asks every
+  frame, and dropped when the builder creates the executable, a precompile ends or another dump is selected. The
+  explicit "Precompile shaders" button now also removes the done stamp, so an explicit retry still redoes the passes.
+  `tools/gamebuild/gamebuild.py`: `precompile_is_current` runs the same status command from the data root (no scan)
+  before RecompLauncher's setup step.
+- The measurements also exposed an older reason slow reruns never got faster: the cache never converged (consecutive
+  full runs compiled 19,878 / 7,685 / 6,959 SPIR-V stages). The found shaders' named-input masks
+  (`found[].int_in`/`named`) were never initialized after the `realloc`: every container that does not name its inputs
+  left heap garbage there, so the build made random integer-input variants of those shaders (17,251-19,610 "named
+  variants" per run; the real count is 87). And since T281 the build workers started during the scan, copying the
+  masks while the scanners were still merging them. Both fixed: the fields are initialized when a shader is added and
+  the build workers start after the scan. A forced warm full run is now 54.8 s / 57.6 s (scan 20.2/21.8, build
+  13.3/14.2, seed 1.0/1.2, pipelines 19.3/19.7) with 8 and then 0 SPIR-V compiled - deterministic.
+- Measured after the fix: `--precompile-status` on the full dump 78-108 ms (18,544-file walk, including process start);
+  `--precompile` with a current cache 87/95 ms ("nothing to do") instead of a 55-393 s run; touching the executable (a
+  rebuild that changes no shader source) keeps the cache current; `XCDE_FS_OPT=0` and a changed game-file mtime report
+  "needs preparing" in ~50 ms; the subset functional runs (312 files, 1,464 programs) show the same: cold 1,464
+  programs in 41.6 s (2,301 SPIR-V compiled), then status 57 ms, early exit 52 ms, forced warm re-run 1.9 s (0 SPIR-V
+  compiled). Two forced full runs after the fix compiled 8 and then 0 stages: the SPIR-V cache is deterministic now.
+  The game booted to the title with the new binary at 30 FPS, 619 frames, 0 compile failures.
+- Tests: `tests/unit/test_precompile_incremental.py` (fingerprint and the runtime/launcher/builder/build contracts),
+  `tests/unit/test_recomplauncher_support.py` (the builder asks the status and does not start a current precompile),
+  `tests/unit/test_launcher_utf8_paths.py` (the new wide-API child process), the native suite (the new signature test),
+  `python -m unittest discover -s tests/unit`, `tools/check_docs.py`, `tools/check_paths.py`, `package_guard.py --git`
+  and a runtime-only CMake configure that builds the generated header and the new unit.
+- Not verified here: the Windows build (the new code uses the existing wide-API patterns; CMake, both shell scripts and
+  `validate_port.py` were updated) and a real RecompLauncher setup run.

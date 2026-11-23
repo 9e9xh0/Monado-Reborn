@@ -246,8 +246,8 @@ def print_launcher_progress(phase, done, total, text, fraction):
 # ---- the shader precompile (--precompile, RecompLauncher's setup step)
 # Monado's own launcher runs `<game> --precompile <dump>` before the first start (tools/launcher/launcher.cpp,
 # pc_start): runtime/nvn/vulkan/precompile.c translates every shader in the romfs into cache/, rewriting
-# cache/precompile_progress.txt as it goes and writing cache/precompile_done.txt, stamped with the game executable, at
-# the end. RecompLauncher starts the game directly, so its setup step runs the same precompile here, from the data root.
+# cache/precompile_progress.txt as it goes and writing cache/precompile_done.txt at the end. RecompLauncher starts the
+# game directly, so its setup step runs the same precompile here, from the data root.
 
 def game_executable():
     """The game program that precompiles: MONADO_GAME_EXE (AppRun sets it), else build/xcde.exe beside this builder in
@@ -261,15 +261,20 @@ def game_executable():
     return sibling if sibling.is_file() else None
 
 
-def precompile_is_current(data_root, exe):
-    """Whether cache/precompile_done.txt was made with this executable (its `exe <size> <mtime>` line), as the
-    launcher's pc_done checks it: a new build translates shaders differently, so it precompiles again."""
+def precompile_is_current(data_root, exe, dump):
+    """Whether the runtime considers the precompiled shaders current for this build and these game files:
+    `<game> --precompile-status <dump>` (runtime/nvn/vulkan/precompile_sig.c) compares the translator/SPIR-V compiler
+    fingerprint, the SPIR-V options and the game files with cache/precompile_done.txt, without scanning or opening a
+    Vulkan device. Exit code 0 = current. ([XCDE] T282: before, this read an `exe <size> <mtime>` line, so every new
+    build precompiled everything again even when it could not change the shaders.)"""
+    reset_dll_directory()
+    flags = subprocess.CREATE_NO_WINDOW if sys.platform == 'win32' else 0
     try:
-        lines = (data_root / 'cache' / 'precompile_done.txt').read_text(encoding='utf-8', errors='replace').splitlines()
-        stat = exe.stat()
+        done = subprocess.run([str(exe), '--precompile-status', str(dump)], cwd=data_root, env=child_environment(),
+                              stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, creationflags=flags)
     except OSError:
         return False
-    return f'exe {stat.st_size} {int(stat.st_mtime)}' in (line.strip() for line in lines)
+    return done.returncode == 0
 
 
 # [XCDE] T281: the precompile writes "<phase> <overall done> <overall total> <this pass done> <this pass total>" over
@@ -327,7 +332,7 @@ def precompile_shaders(dump):
         print_progress(1, 'Shaders compile while you play')
         return
     data_root = default_data_root()
-    if precompile_is_current(data_root, exe):
+    if precompile_is_current(data_root, exe, dump):
         print_progress(1, 'Shaders already prepared')
         return
     print_progress(share, 'Preparing the shaders')

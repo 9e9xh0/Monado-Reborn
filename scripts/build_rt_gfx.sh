@@ -11,7 +11,7 @@ RT="loader dispatch kernel ipc fnprof log platform/windows services/fs services/
     services/hid_set services/kbicons services/misc services/audio services/hwopus hle/heaps hle/pl hle/vi hle/nvn_boot hle/fibers hle/input hle/party
     hle/bindings hle/movie hle/framepace hle/foliage_distance hle/foliage_pool hle/graphics hle/cheats_options hle/cheats_combat hle/cheats_rewards hle/cheats_enemy_health hle/title_exit hle/system_exit hle/desktop_exit_caption hle/expanded_saves hle/expanded_save_scan hle/quickstep_native hle/quickstep_picker hle/quickstep_save hle/quickstep_slot hle/quickstep_stats hle/quickstep_stats_ui hle/quickstep_ui_memory hle/collision_bvh host/stubs host/settings_ini host/gamelib_static host/main_boot diag/diag diag/sampler diag/watchdog
     diag/crashdump"
-NVN="astc cmdbuf formats maxwell/translate objects output_scale smaa_data tegra vulkan/device vulkan/exec vulkan/post vulkan/vkq vulkan/precompile vulkan/shaders vulkan/textures vulkan/temporal vulkan/fsr4"
+NVN="astc cmdbuf formats maxwell/translate objects output_scale smaa_data tegra vulkan/device vulkan/exec vulkan/post vulkan/vkq vulkan/precompile vulkan/precompile_sig vulkan/shaders vulkan/textures vulkan/temporal vulkan/fsr4"
 mkdir -p build/rt build/nvn
 want="$*"
 pick() { [ -z "$want" ] || [[ " $want " == *" $1 "* ]]; }
@@ -31,6 +31,11 @@ for f in $NVN; do
     mkdir -p build/inc
     .venv/Scripts/python tools/build/gen_smaa_inc.py third_party/smaa/SMAA.hlsl build/inc/smaa_hlsl.inc || fail=1
     extra="-Ibuild/inc -Ithird_party/smaa/Textures"
+  fi
+  if [ "$f" = vulkan/precompile_sig ]; then  # [XCDE] T282: the shader precompile fingerprint (tools/build/shader_sig.py)
+    mkdir -p build/inc
+    .venv/Scripts/python tools/build/shader_sig.py --out build/inc/shader_sig.h || fail=1
+    extra="-Ibuild/inc"
   fi
   o=build/nvn/nvn_$(echo $f | tr / _).o
   $Z -c runtime/nvn/$f.c -o $o.$$.tmp $CF -DGAMELIB_ID='"dev"' $extra && mv -f $o.$$.tmp $o || { echo "FAIL nvn/$f"; fail=1; }

@@ -878,6 +878,7 @@ static void SDLCALL dump_selected(void *, const char *const *files, int) {
     SDL_UnlockMutex(g_dump_lock);
 }
 static void check_game_version();
+static void pc_forget();  // [XCDE] T282: drops the memoized precompile status (defined with the shader precompile below)
 static void dump_poll() {
     if (!g_dump_lock) return;
     SDL_LockMutex(g_dump_lock);
@@ -907,6 +908,7 @@ static void dump_poll() {
     if (symlink(chosen.c_str(), link.c_str()) != 0) { g_status = std::string("Could not link targets/: ") + strerror(errno); return; }
     g_mismatch_desc[0] = 0;
     check_game_version();  // [XCDE] GitHub #18: the version check again, for the new files
+    pc_forget();  // [XCDE] T282: other game files: the precompiled shader cache is not known to be current any more
     g_status = g.ui_lang ? "Game dump selected." : "Volcado del juego seleccionado.";
 }
 #endif
@@ -970,18 +972,60 @@ static Uint64 g_pc_t0;  // [XCDE] T281: when the run started (time left estimate
 static float g_pc_frac;
 static std::string g_pc_text;
 
-// [XCDE] T211: done for THIS build - precompile_done.txt names the build/xcde.exe (size, time) it was made with; a new
-// build translates shaders differently, so JUGAR precompiles again (unchanged shaders are cache hits: quick)
+// [XCDE] T211: "already done for this build" was the done stamp's build/xcde.exe size and time, so a new build
+// precompiled again (the translator fixes that change SPIR-V made that safe).
+// [XCDE] T282: "this build" is now the runtime's answer, not the executable's file stamp. `xcde --precompile-status
+// targets` (runtime/nvn/vulkan/precompile_sig.c) compares the translator/SPIR-V compiler fingerprint, the SPIR-V options
+// and the game files with the stamp's `sig` line, without scanning or starting Vulkan: a rebuild that cannot change the
+// shaders (launcher, UI, gameplay code) keeps the precompiled cache, which used to be redone after every build. The
+// answer is memoized (pc_done is asked every frame); pc_forget drops it when the executable or the game files may have
+// changed (a precompile ended, the builder made the executable, the dump was switched).
+static int g_pc_current = -1;  // -1: not asked yet, 0: needs preparing, 1: current
+static void pc_forget() { g_pc_current = -1; }
+static bool pc_status_now() {
+    if (!exists(GAME_EXE)) return true;  // (no executable yet: the builder makes it; do not start a precompile that cannot run)
+    std::string log = path("build/last_precompile_status.log");
+#ifdef _WIN32
+    std::string exe = path(GAME_EXE);
+    std::string cmd = "\"" + exe + "\" --precompile-status targets";
+    std::wstring p = WPath(g_root) + L"\\build;C:\\msys64\\ucrt64\\bin;" + env_w(L"PATH");  // [portable] the folder's own DLLs first
+    SetEnvironmentVariableW(L"PATH", p.c_str());
+    STARTUPINFOW si = {};
+    si.cb = sizeof si;
+    PROCESS_INFORMATION pi = {};
+    SECURITY_ATTRIBUTES sa = {sizeof sa, NULL, TRUE};
+    HANDLE h = CreateFileW(WPath(log).c_str(), GENERIC_WRITE, FILE_SHARE_READ, &sa, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+    if (h != INVALID_HANDLE_VALUE) {
+        si.dwFlags = STARTF_USESTDHANDLES;
+        si.hStdOutput = si.hStdError = h;
+        si.hStdInput = GetStdHandle(STD_INPUT_HANDLE);
+    }
+    std::wstring wexe = WPath(exe), wcmd = W(cmd);
+    BOOL ok = CreateProcessW(wexe.c_str(), wcmd.data(), NULL, NULL, TRUE, CREATE_NO_WINDOW, NULL, WPath(g_root).c_str(), &si, &pi);
+    if (h != INVALID_HANDLE_VALUE) CloseHandle(h);
+    if (!ok) return true;  // (cannot ask it: do not start a precompile that would fail the same way)
+    DWORD code = 1;
+    if (WaitForSingleObject(pi.hProcess, 30000) == WAIT_OBJECT_0) GetExitCodeProcess(pi.hProcess, &code);
+    else TerminateProcess(pi.hProcess, 1);  // (a hung status check must not freeze the launcher)
+    CloseHandle(pi.hThread);
+    CloseHandle(pi.hProcess);
+    return code == 0;
+#else
+    pid_t pid = spawn_logged({path(GAME_EXE), "--precompile-status", "targets"}, log, false);
+    if (!pid) return true;  // (cannot ask it: do not start a precompile that would fail the same way)
+    int st = 0;
+    for (int i = 0; i < 300; i++) {  // (up to 30 s: a game-files walk from a slow disk)
+        if (waitpid(pid, &st, WNOHANG) == pid) return WIFEXITED(st) && WEXITSTATUS(st) == 0;
+        SDL_Delay(100);
+    }
+    kill(pid, SIGKILL);
+    waitpid(pid, &st, 0);
+    return false;
+#endif
+}
 static bool pc_done() {
-    FILE *f = xcde_utf8_fopen(path("cache/precompile_done.txt").c_str(), "r");
-    if (!f) return false;
-    char line[256];
-    long long sz = -1, mt = -1;
-    while (fgets(line, sizeof line, f)) sscanf(line, "exe %lld %lld", &sz, &mt);
-    fclose(f);
-    SDL_PathInfo es;
-    if (!SDL_GetPathInfo(path(GAME_EXE).c_str(), &es)) return true;
-    return sz == (long long)es.size && mt == (long long)(es.modify_time / SDL_NS_PER_SECOND);
+    if (g_pc_current < 0) g_pc_current = pc_status_now() ? 1 : 0;
+    return g_pc_current == 1;
 }
 static bool pc_running() {
 #ifdef _WIN32
@@ -995,9 +1039,13 @@ static void pc_start(bool then_play, bool fresh = false) {
     apply_env();  // [XCDE] the Diagnostics tab variables also reach the shader precompiler
     if (fresh) {  // [XCDE] T281: an explicit "Precompile shaders": retry the jobs that once crashed the driver, and drop a
                   // stale in-flight record. The automatic run (JUGAR) keeps the skip list; a user stop is not a crash.
+                  // [XCDE] T282: and drop the done stamp: the run must redo the passes (retry list / refresh the driver's
+                  // caches), not answer "current" and exit (precompile.c checks the stamp against the same signature).
         xcde_utf8_remove(path("cache/precompile_skip.txt").c_str());
         xcde_utf8_remove(path("cache/precompile_inflight.bin").c_str());
+        xcde_utf8_remove(path("cache/precompile_done.txt").c_str());
     }
+    pc_forget();
     g_pc_t0 = SDL_GetTicks();
 #ifdef _WIN32
     if (g_pc_proc) return;
@@ -1114,6 +1162,7 @@ static void pc_poll() {
     // [XCDE] T240: a run that died while the driver was building (cache/precompile_inflight.bin left behind) starts
     // again by itself - the new run skips what was being built (precompile.c crash-safe) - up to 3 times
     static int retries;
+    pc_forget();  // [XCDE] T282: the run wrote its stamp and cache: ask the runtime again instead of the memoized answer
     if (!(code == 0 && pc_done()) && exists("cache/precompile_inflight.bin") && retries < 3) {
         retries++;
         bool then_play = g_pc_then_play;
@@ -1320,6 +1369,7 @@ static void gc_poll() {
 #endif
     bool ok = code == 0 && gc_ready();
     if (ok) {
+        pc_forget();  // [XCDE] T282: the builder may have just made build/xcde.exe: ask it again (it is the precompile's)
         g_status = g.ui_lang ? "Game code ready." : "Código del juego listo.";
         if (g_gc_then_play) g_gc_play_now = true;
         return;
@@ -1863,8 +1913,8 @@ static void tab_home() {
     ImGui::SeparatorText(g.ui_lang ? "Shader preparation" : "Preparación de shaders");
     static uint64_t checked; static bool prepared;
     if (!checked || SDL_GetTicks()-checked>500) { prepared=pc_done(); checked=SDL_GetTicks(); }
-    ImGui::TextWrapped("%s",prepared ? (g.ui_lang ? "Prepared for this executable. New areas can still need additional variants." :
-        "Preparados para este ejecutable. Algunas zonas aún pueden necesitar variantes adicionales.") :
+    ImGui::TextWrapped("%s",prepared ? (g.ui_lang ? "Prepared for this build and these game files. New areas can still need additional variants." :
+        "Preparados para este build y estos archivos del juego. Algunas zonas aún pueden necesitar variantes adicionales.") :
         (g.ui_lang ? "Play prepares the shader cache first. Progress can be resumed." : "Jugar prepara primero la cache de shaders. El progreso se puede retomar."));
     upd_section();  // GitHub #119
 }

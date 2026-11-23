@@ -32,7 +32,9 @@
 // cache/precompile_done.txt at the end (the launcher's "already done" check). cache/precompile_times.txt keeps this
 // run's pass durations: the next run weights the bar with them. Threads at below-normal priority.
 // XCDE_PRECOMPILE_THREADS=<n> (default: all logical CPUs but one); XCDE_PRECOMPILE_LIST=<file>: the shader hashes and
-// programs found (tests); XCDE_PRECOMPILE_LIBS=0: SPIR-V only (no Vulkan device, no pipeline libraries).
+// programs found (tests); XCDE_PRECOMPILE_LIBS=0: SPIR-V only (no Vulkan device, no pipeline libraries);
+// XCDE_PRECOMPILE_FORCE=1: run even when the done stamp says the cache is current (the manual launcher button also
+// removes the stamp).
 //
 // [XCDE] T281, other changes: the translator is re-entrant now (runtime/nvn/maxwell/translate.c; its scratch buffers
 // and the guest-heap range are thread-local), so the workers translate in parallel instead of queueing on one global
@@ -40,6 +42,18 @@
 // the last, serialized tail); the seed pass skips the jobs the program pass already built; jobs on the crash skip
 // list are counted "skipped" instead of "failed". A user cancel must no longer look like a driver crash: the launcher
 // deletes cache/precompile_inflight.bin when it stops a run itself (tools/launcher/launcher.cpp pc_stop).
+//
+// [XCDE] T282: the done stamp carries a `sig` line, the signature of this run's inputs (runtime/nvn/vulkan/precompile_sig.c):
+// the build's translator/SPIR-V compiler fingerprint (tools/build/shader_sig.py), the options that change the compiled
+// SPIR-V and the game files. `xcde --precompile-status <dump>` recomputes it and says whether the cache is current -
+// without a scan - and this program exits at once when it is (an unrelated rebuild no longer precompiles everything:
+// the stamp used to name the executable's size and time). The launcher's JUGAR check and RecompLauncher's builder ask
+// for that status before starting a run.
+// T282 also made the cache converge. Two reasons it never did: the found shaders' named-input masks (int_in/named) were
+// undefined (realloc'd memory) for every container that does not name its inputs, so the build made random integer-input
+// variants of those shaders - a different set every run - and, since T281, the build started during the scan while the
+// scanners were still merging the masks of the shaders they had not reached. Both are fixed: the fields are initialized
+// when a shader is added and the build workers start when the scan is done.
 #include "../../platform/dir_utf8.h"
 #include <pthread.h>
 #include <stdatomic.h>
@@ -54,6 +68,7 @@
 #include "../../host/utf8_path.h"  // [XCDE] T278: UTF-8 paths through the wide APIs
 #include "../../rt.h"
 #include "../../services/game_files.h"  // [XCDE] T280
+#include "precompile_sig.h"
 #include "shaders.h"
 
 extern void plat_thread_background(void);
@@ -134,6 +149,10 @@ static uint32_t add_shader(const uint8_t *code, uint32_t blob, uint32_t coff, ui
     if (nfound == capfound) found = realloc(found, (capfound = capfound ? capfound * 2 : 4096) * sizeof *found);
     Found *f = &found[nfound];
     f->hash = h; f->stage = stage; f->coff = coff; f->csz = csz;
+    // [XCDE] T282: not every container names its inputs, and realloc leaves the fields undefined: a shader that no
+    // container named had a garbage int_in/named, so the build made random "named input" variants of it - a different
+    // set every run (heap contents) and a SPIR-V cache that never converged. Determinism starts here.
+    f->int_in = 0; f->named = false;
     uint32_t lim = coff ? coff : 0x10000, sz = lim > blob ? lim : blob;
     f->code = calloc(1, sz);
     memcpy(f->code, code, blob);
@@ -625,6 +644,8 @@ static void give_up(const char *phase, uint64_t count) {
     _exit(2);
 }
 
+// [XCDE] T282: started after the scan (see vk_precompile_main): the named-input masks it reads are final then, so the
+// same shaders always produce the same variants (a deterministic SPIR-V cache).
 static void *worker(void *arg) {
     (void)arg;
     plat_thread_background();
@@ -732,8 +753,58 @@ static void progress(int pass, bool force) {
     }
 }
 
+// [XCDE] T282: the precompile is current when the done stamp's `sig` line names the same inputs (vk_precompile_sig) and
+// the SPIR-V cache it describes is still there. Then nothing has to be scanned, translated or compiled.
+static bool stamp_sig(char out[64]) {  // the `sig <hex>` line of cache/precompile_done.txt, "" when there is none
+    out[0] = 0;
+    FILE *f = fopen("cache/precompile_done.txt", "r");
+    if (!f) return false;
+    char line[256];
+    bool found = false;
+    while (fgets(line, sizeof line, f))
+        if (sscanf(line, "sig %63s", out) == 1) { found = true; break; }
+    fclose(f);
+    return found;
+}
+static bool precompile_current(const char *sig) {
+    struct stat sb;
+    if (stat("cache/spirv.pack", &sb) || sb.st_size <= 0) return false;  // (the cache the stamp describes is gone)
+    char old[64];
+    return stamp_sig(old) && !strcmp(old, sig);
+}
+
+// `xcde --precompile-status <dump>`: 0 = the precompiled shaders are current for this build and these game files,
+// 1 = they need preparing, 2 = the game files cannot be read. No cache, Vulkan device or window is touched.
+int vk_precompile_status(const char *root) {
+    char sig[17], old[64];
+    if (!vk_precompile_sig(root, sig)) {
+        printf("[precompile] cannot read the game files under %s: cannot tell whether the precompiled shaders are current%c", root, 10);
+        return 2;
+    }
+    if (precompile_current(sig)) {
+        printf("[precompile] the precompiled shaders are current (signature %s)%c", sig, 10);
+        return 0;
+    }
+    bool have = stamp_sig(old);
+    printf("[precompile] the precompiled shaders need preparing: %s%c",
+           !have ? "they were never made for this build and these game files"
+                 : !strcmp(old, sig) ? "cache/spirv.pack is missing"
+                                     : "the shader translator, its SPIR-V options or the game files changed", 10);
+    return 1;
+}
+
 int vk_precompile_main(const char *root) {
     uint64_t t0 = now_ns();
+    char sig[17];
+    if (!vk_precompile_sig(root, sig)) {
+        printf("[precompile] cannot read the game files under %s%c", root, 10);
+        return 2;
+    }
+    const char *force = getenv("XCDE_PRECOMPILE_FORCE");
+    if (!(force && atoi(force) != 0) && precompile_current(sig)) {
+        printf("[precompile] the precompiled shaders are current (signature %s): nothing to do (XCDE_PRECOMPILE_FORCE=1 to run anyway)%c", sig, 10);
+        return 0;
+    }
     char romfs[1024];
     snprintf(romfs, sizeof romfs, "%s/romfs", root);
     mkdir("cache", 0755);
@@ -789,18 +860,18 @@ int vk_precompile_main(const char *root) {
     if (nthreads < 1) nthreads = 1;
     if (nthreads > 64) nthreads = 64;
     // [XCDE] T281: the scan is I/O + zlib bound; 4 scanners are enough on this class of PC (more only compete with the
-    // program workers, which build during the scan), but on a many-core PC half the cores feed it.
+    // build workers), but on a many-core PC half the cores feed it.
     int nscanners = nthreads > 4 ? (cpus >= 12 ? cpus / 2 : 4) : nthreads;
     if (nscanners < 1) nscanners = 1;
-    // [XCDE] T281: during the scan the build workers only take CPU away from the zlib inflate (measured: the full
-    // scan 21.8 s with 4 workers, 32.4 s with 7 on this 4-core PC; after it they are what compiles), so the first
-    // workers start with the scanners and the rest join once every file has been read.
-    int nworkers0 = nthreads > 4 ? 4 : nthreads;
-    printf("[precompile] %d worker threads + %d scanners of %d logical CPUs (%d workers during the scan)%c",
-           nthreads, nscanners, cpus, nworkers0, 10);
+    // [XCDE] T282: the build starts after the scan. T281 overlapped it (4 workers during the scan), but a build reads the
+    // shaders' named-input masks (found[].int_in/named) and the scanners are still merging them (the same shader found
+    // in a later container can add a name): which variants got built depended on the thread timing, so every run
+    // translated a different set of sources, stored its own SPIR-V and the next run compiled ~7,000 stages again - the
+    // cache never converged (three full runs compiled 19,878, 7,685 and 6,959 stages). The scan is I/O-bound, so the
+    // overlap was worth seconds; a cache that does not converge costs minutes on every later run.
+    printf("[precompile] %d worker threads + %d scanners of %d logical CPUs%c", nthreads, nscanners, cpus, 10);
     fflush(stdout);
     pthread_t th[64], sc[64];
-    for (int i = 0; i < nworkers0; i++) pthread_create(&th[i], NULL, worker, NULL);
     uint64_t t_scan0 = now_ns();
     for (int i = 0; i < nscanners; i++) pthread_create(&sc[i], NULL, scanner, NULL);
     while (files_done < npaths) {
@@ -810,11 +881,11 @@ int vk_precompile_main(const char *root) {
     }
     for (int i = 0; i < nscanners; i++) pthread_join(sc[i], NULL);
     pass_ms[P_SCAN] = (now_ns() - t_scan0) / 1000000;
-    for (int i = nworkers0; i < nthreads; i++) pthread_create(&th[i], NULL, worker, NULL);  // [XCDE] T281: the rest
     pthread_mutex_lock(&flock);
     scan_done = true;
     pthread_cond_broadcast(&fcond);
     pthread_mutex_unlock(&flock);
+    for (int i = 0; i < nthreads; i++) pthread_create(&th[i], NULL, worker, NULL);
     // [XCDE] T281: the variant files are read now, not after the build pass: the bar needs their counts from the start
     // (they only depend on the scan's shader map). The workers keep building this thread's maps.
     load_seed();  // [XCDE] T211
@@ -894,18 +965,11 @@ int vk_precompile_main(const char *root) {
     if (f) {
         fprintf(f, "programs %zu built %llu failed %llu skipped %llu shaders %zu seconds %.0f%c", nprogs,
                 (unsigned long long)n_built, (unsigned long long)n_failed, (unsigned long long)n_skipped, nfound, secs, 10);
-        // [XCDE] T211: the build that precompiled. A new build may translate shaders differently (every translator fix
-        // changes SPIR-V): its pieces would no longer match and the game compiled them while playing (10-58 ms hitches
-        // on the first draws of each area). The launcher compares this line with build/xcde.exe and precompiles again.
-        struct stat es;
-#ifdef _WIN32
-        const char *stamp_exe = "build/xcde.exe";
-#else
-        // Match the launcher's game_exe(), including inside an AppImage.
-        // The legacy Windows path is absent from the Linux data directory.
-        const char *stamp_exe = "/proc/self/exe";
-#endif
-        if (stat(stamp_exe, &es) == 0) fprintf(f, "exe %lld %lld%c", (long long)es.st_size, (long long)es.st_mtime, 10);
+        // [XCDE] T282: the signature of the inputs this run used (runtime/nvn/vulkan/precompile_sig.c). The launcher and
+        // RecompLauncher's builder answer "prepared?" by recomputing it (`--precompile-status`), so a rebuild that
+        // cannot translate shaders differently keeps the cache. Before T211 this was the executable's size and time,
+        // and every new build precompiled again (the translator fixes that change SPIR-V made that safe, T211).
+        fprintf(f, "sig %s%c", sig, 10);
         fclose(f);
     }
     fflush(stdout);

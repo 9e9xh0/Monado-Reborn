@@ -138,6 +138,12 @@ class ShaderPrecompile(unittest.TestCase):
         exe.chmod(0o755)
         return exe
 
+    def status_current(self):
+        """[XCDE] T282: a stand-in whose `--precompile-status <dump>` says the cache is current (exit 0), as the runtime
+        does when its signature matches cache/precompile_done.txt; anything else fails the check."""
+        return ('#!/bin/sh\n[ "$1" = --precompile-status ] && [ "$2" = "' + str(self.root / 'dump') + '" ] && exit 0\n'
+                'exit 1\n')
+
     def run_precompile(self, exe):
         env = {'RECOMPLAUNCHER': '1', 'MONADO_DATA_ROOT': str(self.root), 'MONADO_GAME_EXE': str(exe or '')}
         printed = io.StringIO()
@@ -167,18 +173,20 @@ class ShaderPrecompile(unittest.TestCase):
         self.assertIsNone(gb.precompile_step('scan 1 0 0 0'))
         self.assertIsNone(gb.precompile_step('half a line'))
 
-    def test_precompile_for_this_executable_is_current(self):
-        exe = self.game(GAME_FAILS)
-        stat = exe.stat()
-        (self.root / 'cache').mkdir()
-        (self.root / 'cache/precompile_done.txt').write_text(f'programs 1\nexe {stat.st_size} {int(stat.st_mtime)}\n')
-        self.assertTrue(gb.precompile_is_current(self.root, exe))
+    @unittest.skipUnless(os.name == 'posix', 'the stand-in game is a shell script')
+    def test_precompile_status_decides_whether_a_run_happens(self):
+        # T282: the builder asks the runtime (`--precompile-status <dump>`), not the old `exe <size> <mtime>` stamp.
+        self.assertTrue(gb.precompile_is_current(self.root, self.game(self.status_current()), self.root / 'dump'))
+        self.assertFalse(gb.precompile_is_current(self.root, self.game(GAME_FAILS), self.root / 'dump'))
 
-    def test_precompile_for_another_build_is_not_current(self):
-        exe = self.game(GAME_FAILS)
-        (self.root / 'cache').mkdir()
-        (self.root / 'cache/precompile_done.txt').write_text('programs 1\nexe 1 2\n')
-        self.assertFalse(gb.precompile_is_current(self.root, exe))
+    @unittest.skipUnless(os.name == 'posix', 'the stand-in game is a shell script')
+    def test_a_current_precompile_is_not_started(self):
+        lines = self.run_precompile(self.game(self.status_current()))
+        self.assertEqual(lines, ['progress 1.0000 Shaders already prepared'])
+        self.assertFalse((self.root / 'cache/precompile_progress.txt').exists())
+
+    def test_a_missing_game_executable_is_not_current(self):
+        self.assertFalse(gb.precompile_is_current(self.root, self.root / 'no-such-game', self.root / 'dump'))
 
     def test_frozen_builders_library_path_is_given_back(self):
         env = {'LD_LIBRARY_PATH': '/frozen/_internal', 'LD_LIBRARY_PATH_ORIG': '/app/usr/lib'}

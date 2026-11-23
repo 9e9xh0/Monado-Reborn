@@ -250,3 +250,20 @@ Details and the reporter's log evidence: [CHANGELOG](dev/CHANGELOG.md).
   (a user stop is not a driver crash); the manual Precompile button clears the skip list; `pc_start(..., fresh)`.
 - `tools/gamebuild/gamebuild.py`: reads the four-pass progress format.
 - `tests/unit/test_recomplauncher_support.py`: the parser tests and the launcher source contracts.
+
+## Incremental shader precompile (T282, 2026-11-24)
+
+- `tools/build/shader_sig.py` (new), `CMakeLists.txt`, `scripts/build_linux.sh`, `scripts/build_rt_gfx.sh`,
+  `tools/diag/validate_port.py`: fingerprint of the translator / SPIR-V compiler / precompile-guess sources as
+  `build/inc/shader_sig.h` (`XCDE_SHADER_SIG`), generated when one of them changes.
+- `runtime/nvn/vulkan/precompile_sig.c`, `precompile_sig.h` (new): the run signature (build fingerprint, SPIR-V
+  options, the game-file set by relative name/size/mtime or the `.nup` size/mtime, the shipped variant seed).
+- `runtime/nvn/vulkan/precompile.c`: `sig` line in `cache/precompile_done.txt` (the `exe` line is gone), early exit
+  for a current cache, `XCDE_PRECOMPILE_FORCE`, the `--precompile-status` answer and the build workers start after the
+  scan (the named-input masks are final then: a deterministic, converging SPIR-V cache).
+- `runtime/host/main_boot.c`: `--precompile-status <dump>` dispatch (exit 0 current / 1 stale / 2 unreadable).
+- `tools/launcher/launcher.cpp`: `pc_done()` asks the runtime (memoized, invalidated when the inputs can change)
+  instead of comparing the executable; the explicit Precompile button removes the done stamp.
+- `tools/gamebuild/gamebuild.py`: `precompile_is_current` runs the same status command.
+- `tests/native/test_precompile_sig.c` (new), `scripts/native_tests_linux.sh`, `tests/unit/test_precompile_incremental.py`
+  (new), `tests/unit/test_recomplauncher_support.py`, `tests/unit/test_launcher_utf8_paths.py`.

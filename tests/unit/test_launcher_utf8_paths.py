@@ -68,8 +68,8 @@ class LauncherUtf8Paths(unittest.TestCase):
 
     def test_every_child_process_gets_a_utf16_command_line(self):
         calls = re.findall(r"CreateProcessW\((.*?)\);", CODE, re.S)
-        # game, shader precompile, game code build, FSR 4 Lite preparation, curl, report
-        self.assertEqual(len(calls), 6)
+        # game, shader precompile, shader precompile status (T282), game code build, FSR 4 Lite preparation, curl, report
+        self.assertEqual(len(calls), 7)
         for call in calls:
             self.assertHas("wcmd.data()", call, "the UTF-8 command line, converted")
             self.assertHas("WPath(", call, "the executable and/or the working folder")
@@ -81,9 +81,10 @@ class LauncherUtf8Paths(unittest.TestCase):
         self.assertHas("xcde_utf8_fopen(", CODE, "fopen wrapper")
         self.assertHas("xcde_utf8_remove(", CODE, "remove wrapper")
         self.assertHas("xcde_utf8_rename(", CODE, "rename wrapper")
-        # a file's existence and its size/time: SDL reads UTF-8 paths on every platform
+        # a path's existence: SDL reads UTF-8 paths on every platform (the precompile status, T282, asks the runtime
+        # instead of reading the done stamp here)
         self.assertIsNone(re.search(r"(?<![\w.])stat\(", CODE), "stat")
-        self.assertHas("SDL_GetPathInfo(path(GAME_EXE)", CODE, "precompile_done.txt's exe stamp")
+        self.assertHas("SDL_GetPathInfo(path(rel)", CODE, "exists() through SDL")
 
     def test_the_update_check_hands_curl_a_relative_output_path(self):
         # C:\Windows\System32\curl.exe is not ours: give it no non-ASCII bytes in argv, its working folder is the root.

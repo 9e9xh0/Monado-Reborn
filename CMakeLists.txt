@@ -73,7 +73,8 @@ set(RT_UNITS loader dispatch kernel ipc fnprof log services/fs services/romfs_vi
     host/stubs host/settings_ini host/main_boot diag/diag diag/sampler diag/watchdog
     diag/crashdump paths)
 set(NVN_UNITS astc cmdbuf formats maxwell/translate objects output_scale smaa_data tegra vulkan/device
-    vulkan/exec vulkan/post vulkan/precompile vulkan/shaders vulkan/textures vulkan/temporal vulkan/vkq vulkan/fsr4)
+    vulkan/exec vulkan/post vulkan/precompile vulkan/precompile_sig vulkan/shaders vulkan/textures vulkan/temporal
+    vulkan/vkq vulkan/fsr4)
 set(IMGUI third_party/imgui)
 set(UI_SOURCES ${IMGUI}/imgui.cpp ${IMGUI}/imgui_draw.cpp ${IMGUI}/imgui_tables.cpp ${IMGUI}/imgui_widgets.cpp
     ${IMGUI}/backends/imgui_impl_vulkan.cpp runtime/nvn/vulkan/imgui_glue.cpp runtime/ui/menu_vk.cpp)
@@ -113,6 +114,20 @@ add_custom_command(OUTPUT "${GEN_INC}/smaa_hlsl.inc"
   COMMAND "${Python3_EXECUTABLE}" tools/build/gen_smaa_inc.py third_party/smaa/SMAA.hlsl "${GEN_INC}/smaa_hlsl.inc"
   DEPENDS tools/build/gen_smaa_inc.py third_party/smaa/SMAA.hlsl WORKING_DIRECTORY "${ROOT}" VERBATIM)
 set_source_files_properties(runtime/nvn/smaa_data.c PROPERTIES OBJECT_DEPENDS "${GEN_INC}/smaa_hlsl.inc")
+
+# [XCDE] T282: the shader precompile fingerprint (tools/build/shader_sig.py). cache/precompile_done.txt stores it, and
+# `<game> --precompile-status` compares it with the sources to tell an unrelated rebuild from one that can change the
+# precompiled shaders (the launcher's JUGAR check and RecompLauncher's builder). Generated when any of the translator /
+# SPIR-V compiler sources changes; only runtime/nvn/vulkan/precompile_sig.c includes it.
+file(GLOB SHADER_SIG_SOURCES CONFIGURE_DEPENDS
+     "${ROOT}/runtime/nvn/maxwell/*" "${ROOT}/runtime/nvn/vulkan/shaders.c" "${ROOT}/runtime/nvn/vulkan/shaders.h"
+     "${ROOT}/runtime/nvn/vulkan/vk.h" "${ROOT}/runtime/nvn/vulkan/precompile.c")
+add_custom_command(OUTPUT "${GEN_INC}/shader_sig.h"
+  COMMAND "${CMAKE_COMMAND}" -E make_directory "${GEN_INC}"
+  COMMAND "${Python3_EXECUTABLE}" tools/build/shader_sig.py --out "${GEN_INC}/shader_sig.h"
+  DEPENDS tools/build/shader_sig.py ${SHADER_SIG_SOURCES} WORKING_DIRECTORY "${ROOT}" VERBATIM)
+set_source_files_properties(runtime/nvn/vulkan/precompile_sig.c PROPERTIES
+  OBJECT_DEPENDS "${GEN_INC}/shader_sig.h" INCLUDE_DIRECTORIES "${GEN_INC}")
 
 if(NOT MONADO_RUNTIME_ONLY AND NOT MONADO_RELEASE)
   # (another folder of tools/build/gen_all.py output, for A/B builds of a lifter change)

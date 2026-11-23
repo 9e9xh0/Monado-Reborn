@@ -1770,9 +1770,10 @@ Detalle: `docs/PERFORMANCE_UI.md`. Evidencia: `docs/evidence/2026-11-04-performa
   The setup step also precompiles the shaders, as JUGAR does before the first start (RecompLauncher starts the game
   directly): a "Prepare the shaders now" tick (`prepare.options`, on by default) adds `--precompile`, and the builder
   then runs `<game> --precompile <dump>` from the data root (the game is `MONADO_GAME_EXE`, set by AppRun, or
-  `build/xcde.exe` beside the Windows builder), turns `cache/precompile_progress.txt` into progress lines and skips a
-  precompile whose `cache/precompile_done.txt` stamp matches the executable. A failed precompile never fails the setup: the
-  game compiles shaders as it reaches them, as with "Omitir".
+  `build/xcde.exe` beside the Windows builder), turns `cache/precompile_progress.txt` into progress lines and asks the
+  runtime's `--precompile-status` (T282; before, its `cache/precompile_done.txt` `exe` stamp) whether the precompiled
+  shaders are already current for this build and game files before starting one. A failed precompile never fails the
+  setup: the game compiles shaders as it reaches them, as with "Omitir".
   Tests: `tests/unit/test_recomplauncher_support.py` (AppRun run against stand-in programs, the progress lines,
   source contracts) and `tests/unit/test_make_portable.py` (the manifest). The manifest validates against
   RecompLauncher's published schema. Pending: a full setup and Play from RecompLauncher on Windows and Linux.
@@ -1821,5 +1822,44 @@ Detalle: `docs/PERFORMANCE_UI.md`. Evidencia: `docs/evidence/2026-11-04-performa
   poisons the crash skip list (the launcher deletes the in-flight file) and the manual Precompile button retries the
   list. Measured old vs new: warm rerun 8.37 -> 1.55 s, with drivers + pipelines 24.8 -> 3.6 s, cold SPIR-V 32.1 ->
   27.8 s, full-dump scan 40.6 -> 21.1 s; SPIR-V cache identical (2,133 entries, same bytes). Tests: unit suite (196),
-  native suite. Left: the fragment-spirv-opt default (in-game FPS A/B needed), the translator-input fingerprint to
-  skip reruns after unrelated builds, and the whole-pipeline pass policy on low-end PCs.
+  native suite. Left: the fragment-spirv-opt default (in-game FPS A/B needed) and the whole-pipeline pass policy on
+  low-end PCs; the translator-input fingerprint to skip reruns after unrelated builds is T282 (which also found and
+  fixed the reason a warm cache never converged: the build started during the scan, T282).
+
+## Incremental shader precompile — 2026-11-24 (T282)
+
+- [x] T282 **Incremental precompile** (user request, after T281: a rebuild that cannot change the shaders still
+  precompiled everything). The done stamp named the game executable's size and time (T211), so every new build - a
+  launcher tweak, a UI fix, gameplay code - ran the whole precompile again: measured back to back on the low-end PC
+  (i7-3770K / GTX 1050 Ti / 16 GB, full dump, warm cache) 367.8 s (scan 32.7, build 316.3, seed 1.0, pipelines 16.6)
+  and 393.3 s. While measuring it turned out the cache never converged either: consecutive full runs compiled
+  19,878 / 7,685 / 6,959 SPIR-V stages. Cause: the found shaders' named-input masks (`found[].int_in`/`named`) were
+  never initialized after the `realloc` - for every container that does not name its inputs they were heap garbage, so
+  the build made random integer-input variants of those shaders (17,251-19,610 "named variants" per run; the real
+  count is 87); and since T281 the workers started during the scan, copying masks while the scanners were still
+  merging them. Both fixed: the fields are initialized when a shader is added, and the build workers start after the
+  scan (the overlap was worth seconds; a non-converging cache costs minutes on every later run). A forced warm full
+  run is now 54.8 s / 57.6 s (scan 20.2/21.8, build 13.3/14.2, seed 1.0/1.2, pipelines 19.3/19.7) with 8 then 0 SPIR-V
+  compiled - the cache is deterministic (0 on the second run, same named-variant count). `tools/build/shader_sig.py`
+  (new) fingerprints the inputs that decide the precompiled artifacts - the translator, the SPIR-V compiler and the
+  precompile's own guesses - and
+  the build generates `build/inc/shader_sig.h` from it (CMake custom command; both shell builds; `validate_port.py`).
+  `runtime/nvn/vulkan/precompile_sig.c` (new) computes the run signature: that fingerprint, the options that change
+  the SPIR-V (`LARECOMP_VK_OPT`, `XCDE_FS_OPT`), every file under `<dump>/romfs` by relative name, size and mtime (a
+  `.nup` package: its size and mtime) and `data/variants_seed.bin`. `precompile.c` writes it as the stamp's `sig` line,
+  gets a `--precompile-status <dump>` mode (0 current, 1 needs preparing, 2 unreadable game files; no scan, no Vulkan
+  device) and exits at once when the cache is current (`XCDE_PRECOMPILE_FORCE=1` runs anyway). The launcher's
+  `pc_done()` asks that instead of comparing the executable (memoized; dropped when the builder makes the exe, a
+  precompile ends or the dump changes) and the explicit Precompile button removes the stamp so it really redoes the
+  passes; `gamebuild.py` asks the same before RecompLauncher's setup step. Measured: status 78-108 ms on the full dump
+  (18,544-file walk), `--precompile` "nothing to do" 87/95 ms instead of a 55-393 s run, a touched executable
+  (rebuilt, no shader source changed) stays current, `XCDE_FS_OPT=0` or a changed game-file mtime goes stale in
+  ~50 ms. On the 312-file subset: cold 1,464 programs in 41.6 s (2,301 SPIR-V compiled), then status 57 ms, early
+  exit 52 ms, forced warm re-run 1.9 s (0 compiled); a changed option or file mtime went stale in ~50 ms. Game boot
+  with the new binary: title at 30 FPS, 619 frames, 0 compile failures. Tests:
+  `tests/unit/test_precompile_incremental.py` (fingerprint, the runtime/launcher/builder/build contracts),
+  `tests/unit/test_recomplauncher_support.py` (the builder asks the status; a current precompile is not started),
+  `tests/native/test_precompile_sig.c` (a folder and a `.nup`, changed/added/renamed/removed files, options, seed,
+  unreadable dump); the subset functional runs below. Not covered by the signature: the graphics driver (its shader
+  caches are its own; after a driver update press Precompile shaders) and `cache/variants.bin` (it grows while
+  playing and must not invalidate the cache).
