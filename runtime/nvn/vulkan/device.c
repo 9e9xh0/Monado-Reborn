@@ -1730,8 +1730,15 @@ void ui_window_init(void) {
         gamescope_fs = getenv("GAMESCOPE_WAYLAND_DISPLAY") && !(e && *e == '0');
     }
 #endif
-    if ((g_settings.fullscreen || gamescope_fs) && !getenv("LARECOMP_WINDOW") && !getenv("LARECOMP_HIDDEN")) {
+    // [XCDE] T279: RecompLauncher's Big Picture mode (a controller on the couch): Play there sets
+    // RECOMPLAUNCHER_MODE=bigpicture, and the game opens fullscreen the same way, the saved setting untouched, so the
+    // desktop keeps the player's window.
+    const char *rl_mode = getenv("RECOMPLAUNCHER_MODE");
+    bool bigpicture_fs = rl_mode && !strcmp(rl_mode, "bigpicture");
+    bool forced_fs = gamescope_fs || bigpicture_fs;
+    if ((g_settings.fullscreen || forced_fs) && !getenv("LARECOMP_WINDOW") && !getenv("LARECOMP_HIDDEN")) {
         if (gamescope_fs && !g_settings.fullscreen) LOG("[window] gamescope session: fullscreen\n");
+        if (bigpicture_fs && !g_settings.fullscreen) LOG("[window] RecompLauncher Big Picture: fullscreen\n");
         SDL_SetWindowFullscreen(window, true);
     }
     {   // [XCDE] DLSS: Streamline must be loaded before the Vulkan instance (dlss.cpp)

@@ -108,5 +108,21 @@ class BuilderProgressLines(unittest.TestCase):
                 self.assertEqual(gb.main(['--prepare', '--write-costs', str(log), str(Path(d) / 'cost.json')]), 0)
 
 
+class SourceContracts(unittest.TestCase):
+    def test_big_picture_opens_fullscreen(self):
+        device = (ROOT / 'runtime/nvn/vulkan/device.c').read_text(encoding='utf-8')
+        self.assertIn('getenv("RECOMPLAUNCHER_MODE")', device)
+        self.assertIn('bool forced_fs = gamescope_fs || bigpicture_fs;', device)
+
+    def test_big_picture_keeps_the_saved_setting(self):
+        device = (ROOT / 'runtime/nvn/vulkan/device.c').read_text(encoding='utf-8')
+        self.assertNotIn('g_settings.fullscreen = true', device)
+
+    def test_no_update_banner_under_recomplauncher(self):
+        launcher = (ROOT / 'tools/launcher/launcher.cpp').read_text(encoding='utf-8')
+        self.assertIn('upd_is_release_build() && !from_recomplauncher) upd_start(false);', launcher)
+
+
+
 if __name__ == '__main__':
     unittest.main()
