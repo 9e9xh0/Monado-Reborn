@@ -182,3 +182,15 @@ Diagnostics and reporter context: [summary.md](evidence/2026-11-10-vertex-corrup
 - `tests/unit/test_vk_source_contracts.py`: source contract pinning the three facts.
 
 Details and the reporter's log evidence: [CHANGELOG](dev/CHANGELOG.md).
+
+## UTF-8 paths on Windows (GitHub #218, 2026-11-23)
+
+- `runtime/host/utf8_path.h` (new): UTF-8 → UTF-16 conversion and the path wrappers the ANSI CRT and Win32 APIs need
+  (`_wfopen`, `_wremove`, `_wrename`, `MoveFileExW`); on other systems the plain libc calls they replace.
+- `runtime/host/atomic_file.h`, `runtime/host/ini_writer.h`: the shared INI writer and the atomic replacement open and
+  replace through those wrappers, so the game's settings and caches and the launcher's `xcde.ini`/`xcde_env.ini` work
+  under a folder with accents.
+- `tools/launcher/launcher.cpp`: every Windows process start, log/progress file, environment variable and directory
+  listing converts to UTF-16 (`CreateProcessW`, `CreateFileW`, `MoveFileExW`, `SetEnvironmentVariableW`,
+  `FindFirstFileW`, `ShellExecuteW`); `curl` writes to a relative `-o`; `stat` became `SDL_GetPathInfo`.
+  The game's own path handling is not part of this change (T-UTF8-RUNTIME in `docs/dev/tasks.md`).

@@ -108,7 +108,7 @@ def main():
     standalone_tests = [
         'test_cliff_batch', 'test_display_options', 'test_port_core', 'test_gpu_probe',
         'test_render_policy', 'test_settings_roundtrip', 'test_stick_click', 'test_tex_resize',
-        'test_time_math', 'test_movie_buf', 'test_ui_scale', 'test_window_size',
+        'test_time_math', 'test_movie_buf', 'test_ui_scale', 'test_window_size', 'test_utf8_paths',
     ]
     for test in [*standalone_tests, *[k for k in extra_sources if k != 'test_settings_roundtrip']]:
         if test in args.skip_test:
@@ -126,7 +126,7 @@ def main():
                 skipped.append(test)
                 print(f'{test}: NOT EXECUTED (--compile-only)', flush=True)
             else:
-                run(test, [exe, output / 'test-settings.ini'] if test in ('test_port_core', 'test_settings_roundtrip') else [exe, output] if test=='test_romfs_cache' else [exe])
+                run(test, [exe, output / 'test-settings.ini'] if test in ('test_port_core', 'test_settings_roundtrip') else [exe, output] if test in ('test_romfs_cache', 'test_utf8_paths') else [exe])
     libs = [sdk / 'lib/libSDL3.dll.a', sdk / 'lib/libvulkan-1.dll.a']
     signature_test = output / 'test_nvidia_signature.exe'
     if run('test_nvidia_signature_build', [*compiler(True), '-std=c++17', '-Wall', '-Wextra', '-Werror',

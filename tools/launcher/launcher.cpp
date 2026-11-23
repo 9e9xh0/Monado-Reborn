@@ -21,6 +21,7 @@
 #include "imgui_impl_sdl3.h"
 #include "imgui_impl_sdlrenderer3.h"
 #include "../../runtime/host/ini_writer.h"
+#include "../../runtime/host/utf8_path.h"  // [XCDE] T277: GitHub #218 - UTF-8 paths through the wide Windows APIs
 #include "../../runtime/nvn/vulkan/gpu_scan.h"
 #include "../../runtime/ui/gpu_picker.h"
 #include "../../runtime/ui/theme.h"
@@ -76,6 +77,64 @@ extern "C" void rt_logf(const char *fmt, ...) {
 extern char **environ;
 #define GAME_EXE "build/linux/monado"
 #define IS_WINDOWS false
+#endif
+
+// [XCDE] T277 (GitHub #218): every path the launcher holds is UTF-8 (SDL_GetBasePath, the environment, the arguments).
+// Windows' ANSI (…A) APIs and the CRT take narrow strings in the system code page, so under "C:\Users\João\" they read
+// "JoÃ£o": CreateProcessA failed with error 267 before starting the game build or curl, and fopen() did not find
+// xcde.ini. Everything the Windows code below hands to the OS goes through these helpers instead (utf8_path.h does the
+// file functions; W()/U8() are the same conversion for process command lines, environment values and listings).
+#ifdef _WIN32
+static std::wstring W(const std::string &s) {  // UTF-8 -> UTF-16 (a command line is longer than XCDE_PATH_W)
+    int n = xcde_utf8_to_wide(s.c_str(), NULL, 0);
+    std::vector<wchar_t> b((size_t)(n > 0 ? n : 0) + 1, L'\0');
+    if (n > 0) xcde_utf8_to_wide(s.c_str(), b.data(), b.size());
+    return std::wstring(b.data());
+}
+static std::wstring W(const char *s) { return W(std::string(s)); }
+static std::wstring WPath(const std::string &s) {  // (CreateProcess does not take the '/' the launcher builds paths with)
+    std::wstring w = W(s);
+    for (wchar_t &c : w) if (c == L'/') c = L'\\';
+    return w;
+}
+static std::string U8(const wchar_t *s) {  // UTF-16 -> UTF-8 (a wide directory listing's file name)
+    int n = xcde_utf8_from_wide(s, NULL, 0);
+    std::vector<char> b((size_t)(n > 0 ? n : 0) + 1, '\0');
+    if (n > 0) xcde_utf8_from_wide(s, b.data(), b.size());
+    return std::string(b.data());
+}
+// getenv()/SetEnvironmentVariableA also convert through the code page: a PATH with the install folder in it would point
+// at a folder that does not exist, and the game would not find the package's DLLs.
+static std::string env_u8(const char *name) {
+    std::wstring wname = W(name);
+    DWORD n = GetEnvironmentVariableW(wname.c_str(), NULL, 0);
+    if (!n) return std::string();
+    std::vector<wchar_t> w(n, L'\0');
+    if (!GetEnvironmentVariableW(wname.c_str(), w.data(), n)) return std::string();
+    return U8(w.data());
+}
+static void env_set_u8(const char *name, const std::string &value) {
+    SetEnvironmentVariableW(W(name).c_str(), W(value).c_str());
+}
+static std::wstring env_w(const wchar_t *name) {  // (PATH itself: wide so its entries survive the conversion)
+    DWORD n = GetEnvironmentVariableW(name, NULL, 0);
+    if (!n) return std::wstring();
+    std::vector<wchar_t> v(n, L'\0');
+    GetEnvironmentVariableW(name, v.data(), n);
+    return std::wstring(v.data());
+}
+static void shell_open(const std::string &path) {  // a file or folder in the desktop's handler
+    ShellExecuteW(NULL, L"open", WPath(path).c_str(), NULL, NULL, SW_SHOWNORMAL);
+}
+static void shell_open_url(const std::string &url) {  // (as it is: "https://", not "https:\\")
+    ShellExecuteW(NULL, L"open", W(url).c_str(), NULL, NULL, SW_SHOWNORMAL);
+}
+#else
+static std::string env_u8(const char *name) {
+    const char *v = getenv(name);
+    return v ? std::string(v) : std::string();
+}
+static void env_set_u8(const char *name, const std::string &value) { setenv(name, value.c_str(), 1); }
 #endif
 
 // ------------------------------------------------------------------ settings (same keys as settings_ini.c)
@@ -532,16 +591,12 @@ static bool env_name_valid(const char *s) {
 static void apply_env() {
     for (int i = 0; i < g.nenv; i++) {
         if (!env_name_valid(g.env[i].name) || !g.env[i].name[0]) continue;
-#ifdef _WIN32
-        SetEnvironmentVariableA(g.env[i].name, g.env[i].value);
-#else
-        setenv(g.env[i].name, g.env[i].value, 1);
-#endif
+        env_set_u8(g.env[i].name, g.env[i].value);
     }
 }
 static void load_env() {
     g.nenv = 0;
-    FILE *f = fopen(path(k_env_file).c_str(), "r");
+    FILE *f = xcde_utf8_fopen(path(k_env_file).c_str(), "r");
     if (!f) return;
     char line[1024];
     while (fgets(line, sizeof line, f) && g.nenv < NENV) {
@@ -576,7 +631,7 @@ static bool save_env() {
     bool ok = !ferror(f) && fflush(f) == 0;
     if (fclose(f) != 0) ok = false;
     if (ok) ok = xcde_atomic_replace(tmp, p.c_str()) != 0;
-    if (!ok) remove(tmp);
+    if (!ok) xcde_utf8_remove(tmp);
     return ok;
 }
 // blank rows are editing space only: drop them when saving / applying / playing (they are never written to the file)
@@ -600,7 +655,7 @@ static void load() {
         g.cheats.cheat_enemy_health_percent = 100;
     for (int i = 0; i < NPAD; i++) g.pad[i] = k_def_pad[i];
     for (int i = 0; i < NACT; i++) g.key[i] = k_def_key[i], g.key2[i] = k_def_key2[i];
-    FILE *f = fopen(path("xcde.ini").c_str(), "r");
+    FILE *f = xcde_utf8_fopen(path("xcde.ini").c_str(), "r");
     if (!f) return;
     int layout = 1;  // (bind_layout: an older file's keyboard lines are the old layout - the new defaults replace them)
     char line[512];
@@ -763,7 +818,7 @@ static bool save() {
 static char g_mismatch_desc[8] = "";    // "" = ok, else the exefs file that differs ("main" / "sdk")
 static char g_mismatch_got[65], g_mismatch_want[65];
 static bool nso_matches(const char *rel, const char *want, char got[65]) {
-    FILE *f = fopen(path(rel).c_str(), "rb");
+    FILE *f = xcde_utf8_fopen(path(rel).c_str(), "rb");
     if (!f) return true;  // (the file is missing: the game-files message covers that case)
     uint8_t hdr[0x60];
     bool ok = fread(hdr, 1, sizeof hdr, f) == sizeof hdr && !memcmp(hdr, "NSO0", 4);
@@ -841,7 +896,7 @@ static void dump_poll() {
                                "targets/ es una carpeta real: muévela o renómbrala para usar otro volcado.";
         return;
     }
-    remove(link.c_str());
+    xcde_utf8_remove(link.c_str());
     if (symlink(chosen.c_str(), link.c_str()) != 0) { g_status = std::string("Could not link targets/: ") + strerror(errno); return; }
     g_mismatch_desc[0] = 0;
     check_game_version();  // [XCDE] GitHub #18: the version check again, for the new files
@@ -856,25 +911,23 @@ static void launch() {
     std::string exe = path("build/xcde.exe");
     std::string cmd = "\"" + exe + "\" targets";
     // the game's DLLs (SDL3, Vulkan loader, FFmpeg, opus) come from MSYS2
-    const char *old = getenv("PATH");
-    std::string p = g_root + "\\build;" + "C:\\msys64\\ucrt64\\bin;" + (old ? old : "");  // [portable] the folder's own DLLs first
-    SetEnvironmentVariableA("PATH", p.c_str());
-    STARTUPINFOA si = {};
+    std::wstring p = WPath(g_root) + L"\\build;C:\\msys64\\ucrt64\\bin;" + env_w(L"PATH");  // [portable] the folder's own DLLs first
+    SetEnvironmentVariableW(L"PATH", p.c_str());
+    STARTUPINFOW si = {};
     si.cb = sizeof si;
     PROCESS_INFORMATION pi = {};
     std::string log = path("build/last_game.log");
     // [XCDE] T260: the previous run's log is kept (last_game.prev.log): the report needs the run that failed
-    MoveFileExA(log.c_str(), path("build/last_game.prev.log").c_str(), MOVEFILE_REPLACE_EXISTING);
+    MoveFileExW(WPath(log).c_str(), WPath(path("build/last_game.prev.log")).c_str(), MOVEFILE_REPLACE_EXISTING);
     SECURITY_ATTRIBUTES sa = {sizeof sa, NULL, TRUE};
-    HANDLE h = CreateFileA(log.c_str(), GENERIC_WRITE, FILE_SHARE_READ, &sa, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+    HANDLE h = CreateFileW(WPath(log).c_str(), GENERIC_WRITE, FILE_SHARE_READ, &sa, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
     if (h != INVALID_HANDLE_VALUE) {
         si.dwFlags = STARTF_USESTDHANDLES;
         si.hStdOutput = si.hStdError = h;
         si.hStdInput = GetStdHandle(STD_INPUT_HANDLE);
     }
-    std::vector<char> buf(cmd.begin(), cmd.end());
-    buf.push_back(0);
-    BOOL ok = CreateProcessA(exe.c_str(), buf.data(), NULL, NULL, TRUE, CREATE_NO_WINDOW, NULL, g_root.c_str(), &si, &pi);
+    std::wstring wexe = WPath(exe), wcmd = W(cmd);
+    BOOL ok = CreateProcessW(wexe.c_str(), wcmd.data(), NULL, NULL, TRUE, CREATE_NO_WINDOW, NULL, WPath(g_root).c_str(), &si, &pi);
     if (h != INVALID_HANDLE_VALUE) CloseHandle(h);
     if (!ok) { g_status = std::string(T("No se pudo iniciar build/xcde.exe (error ")) + std::to_string(GetLastError()) + ")"; return; }
     CloseHandle(pi.hThread);
@@ -883,7 +936,7 @@ static void launch() {
     g_launched_ok = true;
 #else
     std::string exe = path(GAME_EXE), log = path("build/last_game.log");
-    rename(log.c_str(), path("build/last_game.prev.log").c_str());  // [XCDE] T260: keep the previous run's log
+    xcde_utf8_rename(log.c_str(), path("build/last_game.prev.log").c_str());  // [XCDE] T260: keep the previous run's log
     pid_t pid = spawn_logged({exe, "targets"}, log, false);
     if (!pid) { g_status = std::string("Could not start " GAME_EXE " (") + strerror(errno) + ")"; return; }
     g_status = T("Juego iniciado. Registro: build/last_game.log");
@@ -908,15 +961,15 @@ static std::string g_pc_text;
 // [XCDE] T211: done for THIS build - precompile_done.txt names the build/xcde.exe (size, time) it was made with; a new
 // build translates shaders differently, so JUGAR precompiles again (unchanged shaders are cache hits: quick)
 static bool pc_done() {
-    FILE *f = fopen(path("cache/precompile_done.txt").c_str(), "r");
+    FILE *f = xcde_utf8_fopen(path("cache/precompile_done.txt").c_str(), "r");
     if (!f) return false;
     char line[256];
     long long sz = -1, mt = -1;
     while (fgets(line, sizeof line, f)) sscanf(line, "exe %lld %lld", &sz, &mt);
     fclose(f);
-    struct stat es;
-    if (stat(path(GAME_EXE).c_str(), &es) != 0) return true;
-    return sz == (long long)es.st_size && mt == (long long)es.st_mtime;
+    SDL_PathInfo es;
+    if (!SDL_GetPathInfo(path(GAME_EXE).c_str(), &es)) return true;
+    return sz == (long long)es.size && mt == (long long)(es.modify_time / SDL_NS_PER_SECOND);
 }
 static bool pc_running() {
 #ifdef _WIN32
@@ -932,26 +985,24 @@ static void pc_start(bool then_play) {
     if (g_pc_proc) return;
     std::string exe = path("build/xcde.exe");
     std::string cmd = "\"" + exe + "\" --precompile targets";
-    const char *old = getenv("PATH");
-    std::string p = g_root + "\\build;" + "C:\\msys64\\ucrt64\\bin;" + (old ? old : "");  // [portable] the folder's own DLLs first
-    SetEnvironmentVariableA("PATH", p.c_str());
-    CreateDirectoryA(path("cache").c_str(), NULL);
-    DeleteFileA(path("cache/precompile_progress.txt").c_str());
-    STARTUPINFOA si = {};
+    std::wstring p = WPath(g_root) + L"\\build;C:\\msys64\\ucrt64\\bin;" + env_w(L"PATH");  // [portable] the folder's own DLLs first
+    SetEnvironmentVariableW(L"PATH", p.c_str());
+    SDL_CreateDirectory(path("cache").c_str());
+    xcde_utf8_remove(path("cache/precompile_progress.txt").c_str());
+    STARTUPINFOW si = {};
     si.cb = sizeof si;
     PROCESS_INFORMATION pi = {};
     std::string log = path("build/last_precompile.log");
     SECURITY_ATTRIBUTES sa = {sizeof sa, NULL, TRUE};
-    HANDLE h = CreateFileA(log.c_str(), GENERIC_WRITE, FILE_SHARE_READ, &sa, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+    HANDLE h = CreateFileW(WPath(log).c_str(), GENERIC_WRITE, FILE_SHARE_READ, &sa, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
     if (h != INVALID_HANDLE_VALUE) {
         si.dwFlags = STARTF_USESTDHANDLES;
         si.hStdOutput = si.hStdError = h;
         si.hStdInput = GetStdHandle(STD_INPUT_HANDLE);
     }
-    std::vector<char> buf(cmd.begin(), cmd.end());
-    buf.push_back(0);
-    BOOL ok = CreateProcessA(exe.c_str(), buf.data(), NULL, NULL, TRUE, CREATE_NO_WINDOW | BELOW_NORMAL_PRIORITY_CLASS, NULL,
-                             g_root.c_str(), &si, &pi);
+    std::wstring wexe = WPath(exe), wcmd = W(cmd);
+    BOOL ok = CreateProcessW(wexe.c_str(), wcmd.data(), NULL, NULL, TRUE, CREATE_NO_WINDOW | BELOW_NORMAL_PRIORITY_CLASS, NULL,
+                             WPath(g_root).c_str(), &si, &pi);
     if (h != INVALID_HANDLE_VALUE) CloseHandle(h);
     if (!ok) { g_status = std::string(T("No se pudo iniciar la precompilación (error ")) + std::to_string(GetLastError()) + ")"; return; }
     CloseHandle(pi.hThread);
@@ -963,7 +1014,7 @@ static void pc_start(bool then_play) {
 #else
     if (g_pc_proc) return;
     SDL_CreateDirectory(path("cache").c_str());
-    remove(path("cache/precompile_progress.txt").c_str());
+    xcde_utf8_remove(path("cache/precompile_progress.txt").c_str());
     pid_t pid = spawn_logged({path(GAME_EXE), "--precompile", "targets"}, path("build/last_precompile.log"), true);
     if (!pid) { g_status = std::string(T("No se pudo iniciar la precompilación (error ")) + strerror(errno) + ")"; return; }
     g_pc_proc = pid;
@@ -998,7 +1049,7 @@ static void pc_poll() {
     Uint64 now = SDL_GetTicks();
     if (now - last < 200) return;
     last = now;
-    FILE *f = fopen(path("cache/precompile_progress.txt").c_str(), "r");
+    FILE *f = xcde_utf8_fopen(path("cache/precompile_progress.txt").c_str(), "r");
     if (f) {
         char phase[16] = "";
         unsigned long long fd = 0, ft = 0, found = 0, done = 0;
@@ -1080,8 +1131,8 @@ static std::string gc_eta_text(Uint64 now, float frac) {
     return t;
 }
 static std::string gc_dir() {  // the packaged builder and its resources (read-only)
-    const char *env = getenv("XCDE_GAMEBUILD_DIR");  // (AppRun: inside the AppImage)
-    if (env && *env) return env;
+    std::string env = env_u8("XCDE_GAMEBUILD_DIR");  // (AppRun: inside the AppImage)
+    if (!env.empty()) return env;
     return path("build/gamebuild");                  // (Windows ZIP: <package>/build/gamebuild)
 }
 static bool gc_available() {
@@ -1090,7 +1141,7 @@ static bool gc_available() {
 }
 static std::string read_line(const std::string &file) {
     std::string line;
-    FILE *f = fopen(file.c_str(), "r");
+    FILE *f = xcde_utf8_fopen(file.c_str(), "r");
     if (!f) return line;
     char buf[128];
     if (fgets(buf, sizeof buf, f)) line = buf;
@@ -1122,31 +1173,30 @@ static bool gc_start(bool then_play) {
     }
     SDL_CreateDirectory(path("gamebuild").c_str());
     SDL_CreateDirectory(path("build").c_str());
-    remove(path("gamebuild/progress.txt").c_str());
+    xcde_utf8_remove(path("gamebuild/progress.txt").c_str());
     std::string root = path("targets"), out = path("gamebuild"), log = path("build/last_gamebuild.log");
 #ifdef _WIN32
     std::string cmd = "\"" + tool + "\" --root \"" + root + "\" --out \"" + out + "\" --resources \"" + gc_dir() + "\"";
-    STARTUPINFOA si = {};
+    STARTUPINFOW si = {};
     si.cb = sizeof si;
     PROCESS_INFORMATION pi2 = {};
     SECURITY_ATTRIBUTES sa = {sizeof sa, NULL, TRUE};
-    HANDLE h = CreateFileA(log.c_str(), GENERIC_WRITE, FILE_SHARE_READ, &sa, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+    HANDLE h = CreateFileW(WPath(log).c_str(), GENERIC_WRITE, FILE_SHARE_READ, &sa, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
     if (h != INVALID_HANDLE_VALUE) {
         si.dwFlags = STARTF_USESTDHANDLES;
         si.hStdOutput = si.hStdError = h;
         si.hStdInput = GetStdHandle(STD_INPUT_HANDLE);
     }
-    std::vector<char> buf(cmd.begin(), cmd.end());
-    buf.push_back(0);
-    HANDLE job = CreateJobObjectA(NULL, NULL);
+    HANDLE job = CreateJobObjectW(NULL, NULL);
     if (job) {
         JOBOBJECT_EXTENDED_LIMIT_INFORMATION li = {};
         li.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
         SetInformationJobObject(job, JobObjectExtendedLimitInformation, &li, sizeof li);
     }
-    BOOL ok = CreateProcessA(tool.c_str(), buf.data(), NULL, NULL, TRUE,
+    std::wstring wtool = WPath(tool), wcmd = W(cmd);
+    BOOL ok = CreateProcessW(wtool.c_str(), wcmd.data(), NULL, NULL, TRUE,
                              CREATE_NO_WINDOW | BELOW_NORMAL_PRIORITY_CLASS | CREATE_SUSPENDED, NULL,
-                             g_root.c_str(), &si, &pi2);
+                             WPath(g_root).c_str(), &si, &pi2);
     DWORD err = GetLastError();
     if (h != INVALID_HANDLE_VALUE) CloseHandle(h);
     if (!ok) {
@@ -1199,7 +1249,7 @@ static void gc_poll() {
     Uint64 now = SDL_GetTicks();
     if (now - last < 250) return;
     last = now;
-    FILE *f = fopen(path("gamebuild/progress.txt").c_str(), "r");
+    FILE *f = xcde_utf8_fopen(path("gamebuild/progress.txt").c_str(), "r");
     if (f) {
         char phase[24] = "";
         unsigned long long done = 0, total = 0;
@@ -1262,7 +1312,7 @@ static void gc_poll() {
     else snprintf(why, sizeof why, "exit %d%s", code, code == 1 ? (g.ui_lang ? ", the builder reported an error" : ", el constructor informó de un error")
                   : code == 0 ? (g.ui_lang ? ", but the library is missing or from another version" : ", pero la biblioteca falta o es de otra versión") : "");
 #endif
-    if (FILE *lf = fopen(path("build/last_gamebuild.log").c_str(), "a")) {
+    if (FILE *lf = xcde_utf8_fopen(path("build/last_gamebuild.log").c_str(), "a")) {
         fprintf(lf, "\n[launcher] game code build failed: %s\n", why);
         fclose(lf);
     }
@@ -1285,15 +1335,15 @@ static pid_t g_fp_proc;
 static float g_fp_frac;
 static std::string g_fp_text;
 static std::string fp_dir() {  // the packaged tool and capture tooling
-    const char *env = getenv("XCDE_FSR4PREP_DIR");  // (AppRun: inside the AppImage)
-    if (env && *env) return env;
+    std::string env = env_u8("XCDE_FSR4PREP_DIR");  // (AppRun: inside the AppImage)
+    if (!env.empty()) return env;
     return path("build/fsr4prep");
 }
 static bool fp_available() { SDL_PathInfo pi; return SDL_GetPathInfo((fp_dir() + "/" FP_TOOL).c_str(), &pi); }
 static bool fp_ready() {
     SDL_PathInfo pi;
-    const char *env = getenv("MONADO_FSR4_ASSET_DIR");
-    if (env && *env && SDL_GetPathInfo((std::string(env) + "/lite/t1080_m0/initializer.bin").c_str(), &pi)) return true;
+    std::string env = env_u8("MONADO_FSR4_ASSET_DIR");
+    if (!env.empty() && SDL_GetPathInfo((env + "/lite/t1080_m0/initializer.bin").c_str(), &pi)) return true;
     return SDL_GetPathInfo(path("fsr4/lite/t1080_m0/initializer.bin").c_str(), &pi) ||
            SDL_GetPathInfo(path("build/fsr4/lite/t1080_m0/initializer.bin").c_str(), &pi);
 }
@@ -1307,23 +1357,22 @@ static bool fp_running() {
 static void fp_start() {
     if (fp_running() || !fp_available()) return;
     std::string tool = fp_dir() + "/" FP_TOOL, out = path("fsr4"), log = path("build/last_fsr4prep.log");
-    remove(path("fsr4-progress.txt").c_str());
+    xcde_utf8_remove(path("fsr4-progress.txt").c_str());
     SDL_CreateDirectory(path("build").c_str());  // (the log's folder: missing in a fresh data root)
 #ifdef _WIN32
     std::string cmd = "\"" + tool + "\" --out \"" + out + "\" --tools \"" + fp_dir() + "\"";
-    STARTUPINFOA si = {};
+    STARTUPINFOW si = {};
     si.cb = sizeof si;
     PROCESS_INFORMATION pi2 = {};
     SECURITY_ATTRIBUTES sa = {sizeof sa, NULL, TRUE};
-    HANDLE h = CreateFileA(log.c_str(), GENERIC_WRITE, FILE_SHARE_READ, &sa, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+    HANDLE h = CreateFileW(WPath(log).c_str(), GENERIC_WRITE, FILE_SHARE_READ, &sa, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
     if (h != INVALID_HANDLE_VALUE) {
         si.dwFlags = STARTF_USESTDHANDLES;
         si.hStdOutput = si.hStdError = h;
         si.hStdInput = GetStdHandle(STD_INPUT_HANDLE);
     }
-    std::vector<char> buf(cmd.begin(), cmd.end());
-    buf.push_back(0);
-    BOOL ok = CreateProcessA(tool.c_str(), buf.data(), NULL, NULL, TRUE, CREATE_NO_WINDOW, NULL, g_root.c_str(), &si, &pi2);
+    std::wstring wtool = WPath(tool), wcmd = W(cmd);
+    BOOL ok = CreateProcessW(wtool.c_str(), wcmd.data(), NULL, NULL, TRUE, CREATE_NO_WINDOW, NULL, WPath(g_root).c_str(), &si, &pi2);
     if (h != INVALID_HANDLE_VALUE) CloseHandle(h);
     if (!ok) { g_status = std::string(g.ui_lang ? "Could not start the FSR 4 Lite preparation (error " : "No se pudo preparar FSR 4 Lite (error ") + std::to_string(GetLastError()) + ")"; return; }
     CloseHandle(pi2.hThread);
@@ -1358,7 +1407,7 @@ static void fp_poll() {
     Uint64 now = SDL_GetTicks();
     if (now - last < 250) return;
     last = now;
-    FILE *f = fopen(path("fsr4-progress.txt").c_str(), "r");
+    FILE *f = xcde_utf8_fopen(path("fsr4-progress.txt").c_str(), "r");
     if (f) {
         char phase[24] = "";
         unsigned long long done = 0, total = 0;
@@ -1518,7 +1567,7 @@ static pid_t g_upd_proc;
 #endif
 static bool upd_is_release_build() { UpdVersion v; return upd_version_parse(MONADO_VERSION, v); }
 static void upd_load() {
-    FILE *f = fopen(path(k_upd_file).c_str(), "r");
+    FILE *f = xcde_utf8_fopen(path(k_upd_file).c_str(), "r");
     if (!f) return;
     char line[256];
     while (fgets(line, sizeof line, f)) {
@@ -1535,7 +1584,7 @@ static void upd_load() {
     fclose(f);
 }
 static void upd_save() {
-    FILE *f = fopen(path(k_upd_file).c_str(), "w");
+    FILE *f = xcde_utf8_fopen(path(k_upd_file).c_str(), "w");
     if (!f) return;
     fprintf(f, "# Monado launcher: update check (GitHub #119)\ncheck_on_start = %d\nskip_version = %s\n", g_upd_auto,
             g_upd_skip.c_str());
@@ -1543,7 +1592,7 @@ static void upd_save() {
 }
 static void open_url(const std::string &url) {
 #ifdef _WIN32
-    if (!SDL_OpenURL(url.c_str())) ShellExecuteA(NULL, "open", url.c_str(), NULL, NULL, SW_SHOWNORMAL);
+    if (!SDL_OpenURL(url.c_str())) shell_open_url(url);
 #else
     if (!SDL_OpenURL(url.c_str())) spawn_logged({"xdg-open", url}, "", false);
 #endif
@@ -1555,25 +1604,26 @@ static void upd_start(bool manual) {
     g_upd_banner_closed = false;
     g_upd_error.clear();
     std::string out = path("build/update_check.json"), log = path("build/update_check.log");
-    remove(out.c_str());
+    xcde_utf8_remove(out.c_str());
     const std::string url = "https://api.github.com/repos/" MONADO_UPDATE_REPO "/releases/latest";
+    // [XCDE] T277: -o is relative (the child's working folder is the root, below): curl.exe is not ours and may decode
+    // its argv in the system code page, where an absolute UTF-8 path would be "JoÃ£o" again (GitHub #218).
     std::vector<std::string> args = {"-fsSL", "--max-time", "20", "-H", "Accept: application/vnd.github+json",
-                                     "-A", "Monado-launcher/" MONADO_VERSION, "-o", out, url};
+                                     "-A", "Monado-launcher/" MONADO_VERSION, "-o", "build/update_check.json", url};
 #ifdef _WIN32
-    char sys[MAX_PATH];
-    UINT n = GetSystemDirectoryA(sys, sizeof sys);
-    std::string exe = std::string(n ? sys : "C:\\Windows\\System32") + "\\curl.exe";  // (Windows 10 1803+)
+    wchar_t sys[MAX_PATH];
+    UINT n = GetSystemDirectoryW(sys, MAX_PATH);
+    std::string exe = U8(n ? sys : L"C:\\Windows\\System32") + "\\curl.exe";  // (Windows 10 1803+)
     std::string cmd = "\"" + exe + "\"";
     for (const std::string &a : args) cmd += " \"" + a + "\"";
-    STARTUPINFOA si = {};
+    STARTUPINFOW si = {};
     si.cb = sizeof si;
     PROCESS_INFORMATION pi = {};
     SECURITY_ATTRIBUTES sa = {sizeof sa, NULL, TRUE};
-    HANDLE h = CreateFileA(log.c_str(), GENERIC_WRITE, FILE_SHARE_READ, &sa, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+    HANDLE h = CreateFileW(WPath(log).c_str(), GENERIC_WRITE, FILE_SHARE_READ, &sa, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
     if (h != INVALID_HANDLE_VALUE) { si.dwFlags = STARTF_USESTDHANDLES; si.hStdOutput = si.hStdError = h; }
-    std::vector<char> buf(cmd.begin(), cmd.end());
-    buf.push_back(0);
-    BOOL ok = CreateProcessA(exe.c_str(), buf.data(), NULL, NULL, TRUE, CREATE_NO_WINDOW, NULL, g_root.c_str(), &si, &pi);
+    std::wstring wexe = WPath(exe), wcmd = W(cmd);
+    BOOL ok = CreateProcessW(wexe.c_str(), wcmd.data(), NULL, NULL, TRUE, CREATE_NO_WINDOW, NULL, WPath(g_root).c_str(), &si, &pi);
     if (h != INVALID_HANDLE_VALUE) CloseHandle(h);
     if (!ok) {
         g_upd_state = UPD_FAILED;
@@ -1585,13 +1635,13 @@ static void upd_start(bool manual) {
 #else
     // AppImage: its LD_LIBRARY_PATH points at the bundled libraries, which are not the host curl's - drop those
     // entries for the child (restored right after)
-    const char *ld = getenv("LD_LIBRARY_PATH"), *appdir = getenv("APPDIR");
-    std::string old_ld = ld ? ld : "";
-    if (ld && appdir && *appdir) {
+    std::string ld = env_u8("LD_LIBRARY_PATH"), appdir = env_u8("APPDIR");
+    std::string old_ld = ld;
+    if (!ld.empty() && !appdir.empty()) {
         std::string kept, item;
         for (size_t i = 0; i <= old_ld.size(); i++) {
             if (i < old_ld.size() && old_ld[i] != ':') { item += old_ld[i]; continue; }
-            if (!item.empty() && item.compare(0, strlen(appdir), appdir) != 0) kept += (kept.empty() ? "" : ":") + item;
+            if (!item.empty() && item.compare(0, appdir.size(), appdir) != 0) kept += (kept.empty() ? "" : ":") + item;
             item.clear();
         }
         if (kept.empty()) unsetenv("LD_LIBRARY_PATH");
@@ -1601,7 +1651,7 @@ static void upd_start(bool manual) {
     av.insert(av.end(), args.begin(), args.end());
     pid_t pid = spawn_logged(av, log, true);
     int spawn_err = errno;
-    if (ld && appdir && *appdir) setenv("LD_LIBRARY_PATH", old_ld.c_str(), 1);
+    if (!ld.empty() && !appdir.empty()) setenv("LD_LIBRARY_PATH", old_ld.c_str(), 1);
     if (!pid) {
         g_upd_state = UPD_FAILED;
         g_upd_error = std::string("curl could not be started (") + strerror(spawn_err) + ")";
@@ -1635,7 +1685,7 @@ static void upd_poll() {
     code = WIFEXITED(st) ? WEXITSTATUS(st) : -1;
 #endif
     std::string json;
-    if (FILE *f = fopen(path("build/update_check.json").c_str(), "rb")) {
+    if (FILE *f = xcde_utf8_fopen(path("build/update_check.json").c_str(), "rb")) {
         char b[4096];
         size_t n;
         while ((n = fread(b, 1, sizeof b, f)) > 0 && json.size() < (4u << 20)) json.append(b, n);
@@ -1870,17 +1920,19 @@ static void tab_graphics() {
     auto linux_dlss_runtime_present = []() {
         auto file_exists = [](const char *p) {
             if (!p || !*p) return false;
-            struct stat st{};
-            if (p[0] == '/') return stat(p, &st) == 0 && S_ISREG(st.st_mode);
+            if (p[0] == '/') {
+                SDL_PathInfo pi;
+                return SDL_GetPathInfo(p, &pi) && pi.type == SDL_PATHTYPE_FILE;
+            }
             return exists(p);
         };
         bool has_adapter = false, has_ngx = false;
-        const char *env_lib = getenv("MONADO_DLSS_LIBRARY");
-        if (file_exists(env_lib)) has_adapter = true;
+        std::string env_lib = env_u8("MONADO_DLSS_LIBRARY");
+        if (file_exists(env_lib.c_str())) has_adapter = true;
         if (!has_adapter && file_exists("build/linux/libmonado_dlss.so")) has_adapter = true;
-        const char *env_dir = getenv("MONADO_DLSS_DIR");
+        std::string env_dir = env_u8("MONADO_DLSS_DIR");
         char probe[4096];
-        if (env_dir && *env_dir && snprintf(probe, sizeof probe, "%s/libnvidia-ngx-dlss.so.310.9.1", env_dir) < (int)sizeof probe && file_exists(probe))
+        if (!env_dir.empty() && snprintf(probe, sizeof probe, "%s/libnvidia-ngx-dlss.so.310.9.1", env_dir.c_str()) < (int)sizeof probe && file_exists(probe))
             has_ngx = true;
         if (!has_ngx && (file_exists("dlss/libnvidia-ngx-dlss.so.310.9.1") || file_exists("build/linux/libnvidia-ngx-dlss.so.310.9.1")))
             has_ngx = true;
@@ -2251,18 +2303,19 @@ static void scan_mods() {
         found.push_back(m);
     }
 #else
-    WIN32_FIND_DATAA fd;
-    HANDLE h = FindFirstFileA(path("mods\\*").c_str(), &fd);
+    WIN32_FIND_DATAW fd;
+    HANDLE h = FindFirstFileW(WPath(path("mods\\*")).c_str(), &fd);
     if (h != INVALID_HANDLE_VALUE) {
         do {
-            if (!(fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) || fd.cFileName[0] == '.') continue;
-            std::string rf = path((std::string("mods\\") + fd.cFileName + "\\romfs").c_str());
-            DWORD a = GetFileAttributesA(rf.c_str());
+            if (!(fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) || fd.cFileName[0] == L'.') continue;
+            std::string name = U8(fd.cFileName);
+            std::string rf = path(("mods\\" + name + "\\romfs").c_str());
+            DWORD a = GetFileAttributesW(WPath(rf).c_str());
             if (a == INVALID_FILE_ATTRIBUTES || !(a & FILE_ATTRIBUTE_DIRECTORY)) continue;
-            Mod m{fd.cFileName, true};
+            Mod m{name, true};
             for (const Mod &o : g_mods) if (o.name == m.name) m.on = o.on;
             found.push_back(m);
-        } while (FindNextFileA(h, &fd));
+        } while (FindNextFileW(h, &fd));
         FindClose(h);
     }
 #endif
@@ -2311,47 +2364,49 @@ static void make_report() {
     std::vector<std::string> files;
     for (const char *f : {"build/last_game.log", "build/last_game.prev.log", "build/last_precompile.log", "build/launcher.log",
                           "build/lasrecomp.log", "build/lasrecomp.prev.log", "xcde.ini", "xcde_env.ini"})
-        if (GetFileAttributesA(path(f).c_str()) != INVALID_FILE_ATTRIBUTES) files.push_back(f);
-    WIN32_FIND_DATAA fd;
+        if (GetFileAttributesW(WPath(path(f)).c_str()) != INVALID_FILE_ATTRIBUTES) files.push_back(f);
+    WIN32_FIND_DATAW fd;
     {   // [XCDE] T260: any other build\*.log (the report only had xcde.ini: the game log is build\last_game.log, not lasrecomp.log)
-        HANDLE hl = FindFirstFileA(path("build/*.log").c_str(), &fd);
+        HANDLE hl = FindFirstFileW(WPath(path("build/*.log")).c_str(), &fd);
         if (hl != INVALID_HANDLE_VALUE) {
             do {
-                std::string rel = std::string("build/") + fd.cFileName;
+                std::string rel = std::string("build/") + U8(fd.cFileName);
                 bool dup = false;
                 for (const std::string &f : files) if (_stricmp(f.c_str(), rel.c_str()) == 0) dup = true;
                 if (!dup) files.push_back(rel);
-            } while (FindNextFileA(hl, &fd));
+            } while (FindNextFileW(hl, &fd));
             FindClose(hl);
         }
     }
     std::string newest;
-    HANDLE h = FindFirstFileA(path("crash/crash_*.txt").c_str(), &fd);
+    HANDLE h = FindFirstFileW(WPath(path("crash/crash_*.txt")).c_str(), &fd);
     if (h != INVALID_HANDLE_VALUE) {
-        do if (newest.empty() || strcmp(fd.cFileName, newest.c_str()) > 0) newest = fd.cFileName; while (FindNextFileA(h, &fd));
+        do {
+            std::string name = U8(fd.cFileName);
+            if (newest.empty() || name > newest) newest = name;
+        } while (FindNextFileW(h, &fd));
         FindClose(h);
     }
     if (!newest.empty()) {  // (crash_<stamp>.txt sorts by date)
         files.push_back("crash/" + newest);
         std::string dmp = "crash/" + newest.substr(0, newest.size() - 4) + ".dmp";
-        if (GetFileAttributesA(path(dmp.c_str()).c_str()) != INVALID_FILE_ATTRIBUTES) files.push_back(dmp);
+        if (GetFileAttributesW(WPath(path(dmp.c_str())).c_str()) != INVALID_FILE_ATTRIBUTES) files.push_back(dmp);
     }
     if (files.empty()) { g_status = T("No hay nada que reportar todavía (ni logs ni xcde.ini)"); return; }
-    CreateDirectoryA(path("reports").c_str(), NULL);
+    SDL_CreateDirectory(path("reports").c_str());
     char stamp[32];
     time_t now = time(NULL);
     strftime(stamp, sizeof stamp, "%Y%m%d_%H%M%S", localtime(&now));
     std::string zip = std::string("reports/xcde_report_") + stamp + ".zip";
-    char sys[MAX_PATH];
-    GetSystemDirectoryA(sys, sizeof sys);
-    std::string tar = std::string(sys) + "\\tar.exe";
+    wchar_t sys[MAX_PATH];
+    std::string sysdir = GetSystemDirectoryW(sys, MAX_PATH) ? U8(sys) : "C:\\Windows\\System32";
+    std::string tar = sysdir + "\\tar.exe";
     std::string cmd = "\"" + tar + "\" -a -c -f \"" + zip + "\"";
     for (const std::string &f : files) cmd += " \"" + f + "\"";
-    std::vector<char> buf(cmd.begin(), cmd.end());
-    buf.push_back(0);
-    STARTUPINFOA si = {sizeof si};
+    STARTUPINFOW si = {sizeof si};
     PROCESS_INFORMATION pi;
-    if (!CreateProcessA(tar.c_str(), buf.data(), NULL, NULL, FALSE, CREATE_NO_WINDOW, NULL, g_root.c_str(), &si, &pi)) {
+    std::wstring wtar = WPath(tar), wcmd = W(cmd);
+    if (!CreateProcessW(wtar.c_str(), wcmd.data(), NULL, NULL, FALSE, CREATE_NO_WINDOW, NULL, WPath(g_root).c_str(), &si, &pi)) {
         g_status = T("No se pudo crear el reporte (falta tar.exe de Windows)");
         return;
     }
@@ -2362,7 +2417,7 @@ static void make_report() {
     CloseHandle(pi.hThread);
     if (code) { g_status = T("No se pudo crear el reporte"); return; }
     g_status = std::string(T("Reporte creado: ")) + zip + T(" (adjúntalo al reportar el problema)");
-    ShellExecuteA(NULL, "open", path("reports").c_str(), NULL, NULL, SW_SHOWNORMAL);
+    shell_open(path("reports"));
 #endif
 }
 
@@ -2375,8 +2430,8 @@ static void tab_mods() {
                        "funcionan en esta versión recompilada."));
     if (ImGui::Button(T("Abrir carpeta de mods"))) {
 #ifdef _WIN32
-        CreateDirectoryA(path("mods").c_str(), NULL);
-        ShellExecuteA(NULL, "open", path("mods").c_str(), NULL, NULL, SW_SHOWNORMAL);
+        SDL_CreateDirectory(path("mods").c_str());
+        shell_open(path("mods"));
 #else
         SDL_CreateDirectory(path("mods").c_str());
         open_folder(path("mods"));
@@ -2422,7 +2477,7 @@ static int fail(const char *what) {
     snprintf(msg, sizeof msg, "%s\n\n%s\n\n(build\\launcher.log)", what, SDL_GetError());
     llog("ERROR: %s: %s", what, SDL_GetError());
 #ifdef _WIN32
-    MessageBoxA(NULL, msg, "Monado - Launcher", MB_OK | MB_ICONERROR);
+    MessageBoxW(NULL, W(msg).c_str(), L"Monado - Launcher", MB_OK | MB_ICONERROR);
 #else
     SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "Monado - Launcher", msg, NULL);
 #endif
@@ -2434,7 +2489,7 @@ static LONG WINAPI crash_filter(EXCEPTION_POINTERS *e) {
     snprintf(msg, sizeof msg, "The launcher crashed (exception %#lx at %p).\n\n(build\\launcher.log)",
              e->ExceptionRecord->ExceptionCode, e->ExceptionRecord->ExceptionAddress);
     llog("CRASH: exception %#lx at %p", e->ExceptionRecord->ExceptionCode, e->ExceptionRecord->ExceptionAddress);
-    MessageBoxA(NULL, msg, "Monado - Launcher", MB_OK | MB_ICONERROR);
+    MessageBoxW(NULL, W(msg).c_str(), L"Monado - Launcher", MB_OK | MB_ICONERROR);
     return EXCEPTION_EXECUTE_HANDLER;
 }
 #endif
@@ -2508,18 +2563,18 @@ int main(int argc, char **argv) {
         g_root.resize(g_root.size() - 6);
 #ifndef _WIN32
     // [XCDE] T-LINUX-APPIMAGE: a read-only package (AppImage) names the writable folder with the same layout instead
-    const char *data_root = getenv("LARECOMP_DATA_ROOT");
-    if (data_root && *data_root) g_root = data_root;
+    std::string data_root = env_u8("LARECOMP_DATA_ROOT");
+    if (!data_root.empty()) g_root = data_root;
 #endif
     // --shot <file.bmp> [tab] [precompile]: render a few frames of that tab, save the window as a BMP and quit (tests)
     const char *shot = argc > 2 && !strcmp(argv[1], "--shot") ? argv[2] : NULL;
     int shot_tab = argc > 3 ? atoi(argv[3]) : 0, frame_no = 0;
     bool shot_pc = shot && argc > 4 && !strcmp(argv[4], "precompile");  // (... <tab> precompile: the bar after ~5 s of a run)
 #ifdef _WIN32
-    g_llog = fopen((g_root + "\\build\\launcher.log").c_str(), "w");
+    g_llog = xcde_utf8_fopen((g_root + "\\build\\launcher.log").c_str(), "w");
     SetUnhandledExceptionFilter(crash_filter);
 #else
-    g_llog = fopen((g_root + "/build/launcher.log").c_str(), "w");
+    g_llog = xcde_utf8_fopen((g_root + "/build/launcher.log").c_str(), "w");
 #endif
     llog("launcher start, root %s", g_root.c_str());
     if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_GAMEPAD)) {

@@ -182,3 +182,37 @@ of `tasks.md`; do not move them, they are the record.
 
 Triage of both symptoms, the minidump findings and the A/B table:
 [summary.md](../evidence/2026-11-23-issue-216/summary.md).
+
+## 2026-11-23 — launcher under non-ASCII install paths (GitHub #218)
+
+- Symptom: on Windows, with the package under a folder like `C:\Users\João Santos\Monado`, the launcher starts
+  nothing — "Could not start the game code build (error 267)", "curl.exe could not be started (error 267)" — and its
+  settings file is not read (defaults silently).
+- Cause: the launcher's paths are UTF-8 (`SDL_GetBasePath`, the environment), but they went to the ANSI Win32 calls
+  (`CreateProcessA`'s `lpCurrentDirectory`, `CreateFileA`, `MoveFileExA`, `SetEnvironmentVariableA`,
+  `FindFirstFileA`, `ShellExecuteA`) and to the CRT (`fopen`, `remove`, `stat`). Windows reads those bytes in the system
+  code page: `João` (`C3 A3` in UTF-8) is `JoÃ£o` in CP1252, a folder that does not exist, so `CreateProcessA` failed
+  with `ERROR_DIRECTORY` (267) before the child started.
+- Fix: new `runtime/host/utf8_path.h` (UTF-8 → UTF-16, then `_wfopen`/`_wremove`/`_wrename`/`MoveFileExW`; plain libc
+  elsewhere). `atomic_file.h` and `ini_writer.h` save through it, so the game's settings/caches get the same handling.
+  The launcher starts all six children with `CreateProcessW` (wide executable, command line, working folder), opens its
+  logs and progress files with the wrappers, reads/writes `PATH` and the Diagnostics environment as UTF-16, lists mods
+  and builds the report with the wide APIs, opens folders with `ShellExecuteW`, and uses `SDL_GetPathInfo` instead of
+  `stat`. `curl` writes to the relative `build/update_check.json` (its working folder is the root already) so a child
+  that decodes argv in the system code page cannot mangle the path.
+- Tests: `tests/native/test_utf8_paths.c` (Linux and Windows; wired into `scripts/native_tests_linux.sh`,
+  `scripts/native_tests.sh` and `tools/diag/validate_port.py`) makes a `João-😀` folder, opens/renames/replaces/removes
+  files there, round-trips the shared INI writer and — on Windows — starts `cmd.exe` in it with `CreateProcessA` (the
+  reporter's 267) and with `CreateProcessW` (must run). `tests/unit/test_launcher_utf8_paths.py` pins the source
+  contracts (no ANSI Win32 call left, wide children, UTF-8 file helpers, shared writers).
+- Verified under Wine 11 (Proton-CachyOS, code page 1252) with the real Windows launcher built by zig + the project's
+  ucrt64 SDK: the fixed build writes `build/launcher.log` and starts stand-ins for `curl.exe` and
+  `monado-gamebuild.exe` under `Z:\…\João-😀\…`; the same test with `launcher.cpp` from `HEAD` starts neither and
+  writes no log (`CreateProcessA` 267). Route, outputs and limits:
+  [summary.md](../evidence/2026-11-23-issue-218/summary.md).
+- Still open: the game's own paths are ANSI on Windows (`plat_exe_path` = `GetModuleFileNameA`, `getcwd`, `stat`,
+  `fopen` in `runtime/paths.c` and the ~90 file calls elsewhere), so a package under a non-ASCII folder is expected to
+  stop at the game's data-root check. Tracked as `T-UTF8-RUNTIME`; a run of the shipped package under
+  `C:\Users\João\…` is still worth doing. The Windows CI job (windows-latest) built the launcher with the ucrt64
+  SDK and ran `tests/native/test_utf8_paths.c` green (run 45093578036: `test_utf8_paths_build: PASS`,
+  `test_utf8_paths: PASS`).
