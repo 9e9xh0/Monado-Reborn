@@ -123,7 +123,12 @@ class RuntimeUtf8Paths(unittest.TestCase):
     def test_absolute_dump_paths_are_opened_wide(self):
         # --game <absolute dump>: argv is UTF-8 now, and the loader, the romfs folder test, the romfs descriptors and the
         # virtual romfs scan must not fall back to the ANSI CRT either.
-        self.assertHas("xcde_utf8_fopen(", code_only(text("runtime/loader.c")), "exefs loading")
+        # T280: the loader, the shader scan and the romfs edits read through runtime/services/game_files.c (a folder or
+        # a .nup package), which opens and tests paths through the wrappers.
+        self.assertHas("gf_read(", code_only(text("runtime/loader.c")), "exefs loading")
+        game_files = code_only(text("runtime/services/game_files.c"))
+        self.assertHas("xcde_utf8_open(", game_files, "game file reads")
+        self.assertHas("xcde_utf8_stat(", game_files, "game file tests")
         fs = code_only(text("runtime/services/fs.c"))
         self.assertHas("xcde_utf8_stat(g_romfs_dir", fs, "romfs folder test")
         self.assertHas("xcde_utf8_open(", fs, "romfs/bin descriptors")
@@ -132,7 +137,7 @@ class RuntimeUtf8Paths(unittest.TestCase):
         # The precompiler opens the romfs/<file> paths itself: an absolute non-ASCII --precompile root must scan them.
         pre = code_only(text("runtime/nvn/vulkan/precompile.c"))
         self.assertHas("xcde_utf8_stat(p", pre, "precompile scan")
-        self.assertHas("xcde_utf8_fopen(path", pre, "precompile shader read")
+        self.assertHas("gf_read(path", pre, "precompile shader read")
         self.assertHas('xcde_utf8_getenv("XCDE_PRECOMPILE_LIST"', text("runtime/nvn/vulkan/precompile.c"), "precompile list")
 
     def test_save_tree_operations_use_the_utf8_wrappers(self):

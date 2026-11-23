@@ -43,6 +43,7 @@
 
 #include "../../host/utf8_path.h"  // [XCDE] T278: UTF-8 paths through the wide APIs
 #include "../../rt.h"
+#include "../../services/game_files.h"  // [XCDE] T280
 #include "shaders.h"
 
 extern void plat_thread_background(void);
@@ -237,22 +238,14 @@ static void scan_buf(const uint8_t *d, size_t n) {
 
 static pthread_mutex_t big_lock = PTHREAD_MUTEX_INITIALIZER;  // (one file over 64 MB at a time: memory on 8 GB PCs)
 static void scan_file(const char *path) {
-    FILE *f = xcde_utf8_fopen(path, "rb");
-    if (!f) return;
-    fseek(f, 0, SEEK_END);
-    // [XCDE] T-LINUX: off_t is 64-bit on the supported Linux x86-64 host.
-#ifdef _WIN32
-    long long n = _ftelli64(f);
-#else
-    long long n = ftello(f);
-#endif
-    fseek(f, 0, SEEK_SET);
-    bool big = n > (64 << 20);
+    GfSource src;  // [XCDE] T280: from the romfs folder or the .nup package (runtime/services/game_files.c)
+    if (!gf_source(path, &src) || !src.size) return;
+    bool big = src.size > (64 << 20);
     if (big) pthread_mutex_lock(&big_lock);
-    uint8_t *d = n > 0 ? malloc((size_t)n) : NULL;
-    if (!d || fread(d, 1, (size_t)n, f) != (size_t)n) { free(d); fclose(f); if (big) pthread_mutex_unlock(&big_lock); return; }
-    fclose(f);
-    scan_buf(d, (size_t)n);
+    size_t n = 0;
+    uint8_t *d = gf_read(path, &n);
+    if (!d) { if (big) pthread_mutex_unlock(&big_lock); return; }
+    scan_buf(d, n);
     // xbc1 blocks: "xbc1", u32 version, u32 decompressed size, u32 compressed size, u32 hash, name; zlib data at +0x30
     for (size_t i = 0; i + 0x30 <= (size_t)n; i += 4) {
         if (memcmp(d + i, "xbc1", 4)) continue;
@@ -279,6 +272,22 @@ static bool wanted(const char *name) {
 }
 static char **paths;
 static size_t npaths, cappaths;
+static void add_path(const char *p) {
+    if (npaths == cappaths) paths = realloc(paths, (cappaths = cappaths ? cappaths * 2 : 1024) * sizeof *paths);
+    paths[npaths++] = strdup(p);
+}
+// [XCDE] T280: the same list from the romfs inside a .nup package
+static void list_package(int node, const char *dir) {
+    const uint32_t *children;
+    int count = gf_pkg_children(node, &children);
+    for (int i = 0; i < count; i++) {
+        int child = (int)children[i];
+        char p[1024];
+        snprintf(p, sizeof p, "%s/%s", dir, gf_pkg_name(child));
+        if (gf_pkg_is_dir(child)) list_package(child, p);
+        else if (wanted(gf_pkg_name(child))) add_path(p);
+    }
+}
 static void list_dir(const char *dir) {
     XcdeDir *dd = xcde_opendir(dir);
     if (!dd) return;
@@ -290,10 +299,7 @@ static void list_dir(const char *dir) {
         struct stat sb;
         if (xcde_utf8_stat(p, &sb)) continue;
         if (S_ISDIR(sb.st_mode)) list_dir(p);
-        else if (wanted(e->d_name)) {
-            if (npaths == cappaths) paths = realloc(paths, (cappaths = cappaths ? cappaths * 2 : 1024) * sizeof *paths);
-            paths[npaths++] = strdup(p);
-        }
+        else if (wanted(e->d_name)) add_path(p);
     }
     xcde_closedir(dd);
 }
@@ -593,7 +599,14 @@ int vk_precompile_main(const char *root) {
     remove("cache/precompile_done.txt");
     vkey_guess.glsl = fkey_guess.glsl = 1;
     vkey_guess.depth_minus_one = true;  // (the game's depth mode and window origin, as exec.c sets them per draw)
-    list_dir(romfs);
+    // [XCDE] T280: the dump is a folder or a .nup package read in place
+    char why[768];
+    if (!gf_init(root, why, sizeof why)) {
+        printf("[precompile] cannot read the game files: %s\n", why);
+        return 2;
+    }
+    if (gf_is_package()) list_package(gf_pkg_node(romfs), romfs);
+    else list_dir(romfs);
     files_total = npaths;
     if (!npaths) { rt_logf("[precompile] no shader files under %s%c", romfs, 10); return 1; }
     qsort(paths, npaths, sizeof *paths, path_cmp);
