@@ -216,3 +216,39 @@ Triage of both symptoms, the minidump findings and the A/B table:
   `C:\Users\João\…` is still worth doing. The Windows CI job (windows-latest) built the launcher with the ucrt64
   SDK and ran `tests/native/test_utf8_paths.c` green (run 45093578036: `test_utf8_paths_build: PASS`,
   `test_utf8_paths: PASS`).
+
+## 2026-11-23 — the game under non-ASCII paths (GitHub #218, second half)
+
+- Measured, not assumed: with the #220 launcher fix the game could start under `Z:\…\João-😀\…`, but stopped at
+  `[fs] no romfs folder at targets/romfs` → `FATAL: cannot open targets/romfs.bin`. mingw's `opendir()` makes the path
+  absolute with `_tfullpath` → `GetFullPathNameA` (ANSI, MAX_PATH); in a non-ASCII working folder the search runs in
+  "JoÃ£o" and returns no entries, while relative `fopen`/`fstat`/`read` (resolved by the OS against the wide working
+  folder) kept working. Proof: a relative folder with 2 files listed **0 entries** from inside `João-😀`, 5 from an
+  ASCII folder, and `FindFirstFileW("targets\\romfs\\*")` works in the João folder.
+- Fix: `runtime/platform/dir_utf8.h` (new) — `xcde_opendir/readdir/closedir/telldir/seekdir` over
+  `FindFirstFileW`, names as UTF-8, `d_type` from the Windows attributes; the whole folder is read at open (the game
+  asks for an entry count before reading). `services/fs.c`, `services/romfs_virtual.c`, `nvn/vulkan/precompile.c` and
+  `paths.c` use it; on Linux it is `opendir`/`readdir`.
+- The other absolute-path sites: `runtime/host/utf8_path.h` grew `_wopen`, `wstat`, `_wmkdir`, `_wrmdir`, `_wchdir`,
+  `_wgetcwd`, `GetEnvironmentVariableW` and `LoadLibraryW` wrappers. `runtime/loader.c`, `services/fs.c`,
+  `services/romfs_fd_cache.h` and `services/romfs_virtual.c` open, stat and read through them (a `--game <absolute
+  dump>` path with accents works), `gamelib.c` loads the game library with `LoadLibraryW` and reads `LARECOMP_*`
+  paths as UTF-8, `settings_ini.c` reads `XCDE_INI`/`xcde.ini` the same way, `fsr4.c` loads APS components and model
+  paths the same way, and `platform/windows.c` gained `plat_argv_utf8` (argv parsed from the wide command line) and
+  writes `lasrecomp.log` next to the exe with `GetModuleFileNameW`/`_wfreopen`.
+- T135 relaunch (`runtime/host/main_boot.c`) and the crash minidump helper (`runtime/diag/crashdump.c`) start their
+  child with `CreateProcessW` and the wide exe/command line; `enter_install_dir` uses `_wchdir`. `XCDE_TEST_RESERVE_FAIL=1`
+  forces the relaunch once (the collision is random) so the route can be re-tested.
+- Tests: `tests/native/test_utf8_paths.c` now also chdirs into the `João-😀` folder, enumerates `.` through the shim
+  and (on Windows) reports the CRT's 0 entries next to it, and reads a UTF-16 environment value; new
+  `tests/unit/test_runtime_utf8_paths.py` pins the source contracts.
+- Verified with the Wine test bed (`docs/evidence/2026-11-23-issue-218/summary.md`): the game boots and renders
+  thousands of frames from `João-😀\Built` with a relative `targets/` (the run after the last change: 2,055 frames at
+  30 fps); `XCDE_TEST_RESERVE_FAIL=1` relaunches into the game; `XCDE_TEST_CRASH_AT=150` writes
+  `crash/crash_*.txt` **and a 296 KB `.dmp`** (minidump helper exit 0); a detached launch (no standard handles) writes
+  `build/lasrecomp.log` in the João folder; `--game` with the absolute `João-😀\…\targets` path loads the game and
+  renders (3,463 frames). Linux native tests and CI are green; the Windows CI job compiles the runtime and runs the
+  native test on windows-latest.
+- Leftovers (none on the start/play path): `services/kbicons.c` still opens its cache / mod icon files with the
+  narrow CRT (relative ASCII names in practice), and `platform/win_compat.h`'s `realpath` shim (`_fullpath`) is not
+  used by the game. The reported install, dump and save paths are covered.

@@ -55,6 +55,11 @@ bool plat_exe_path(char *buf, size_t size);
 void plat_data_dir(char *buf, size_t size);  // [XCDE] #88: the default data folder (runtime/paths.h)
 #endif
 void plat_exec(char *const argv[]);  // replace the process (NULL = same command line); returns only on failure
+#ifdef _WIN32
+// [XCDE] T278: argv parsed from the wide command line (the CRT decodes argv in the ANSI code page, so a non-ASCII
+// --game / --minidump / --precompile path would arrive mangled; GitHub #218). On failure *out is argv.
+int plat_argv_utf8(int argc, char **argv, char ***out);
+#endif
 #if defined(_WIN32) || defined(__linux__)
 void plat_terminate(void);  // end the process now, skipping DLL teardown (exit status 0)
 #endif

@@ -18,6 +18,7 @@
 #include "../kernel.h"
 #include "../paths.h"
 #include "../rt.h"
+#include "utf8_path.h"  // [XCDE] T278: UTF-8 paths through the wide APIs
 
 const char *g_romfs_dir;
 
@@ -111,28 +112,37 @@ static void rtld_init_sdk(Cpu *c) { module_init(c, &g_modules[1]); }
 static void rtld_init_main(Cpu *c) { module_init(c, &g_modules[0]); }
 
 __attribute__((constructor(101))) static void reserve_guest_space(void) {
-    if (!plat_reserve_guest(GUEST_LO, GUEST_HI)) {
+    bool reserved = plat_reserve_guest(GUEST_LO, GUEST_HI);
+#ifdef _WIN32
+    // [XCDE] T278 test hook: force the first start into the relaunch path (the ASLR collision is random, ~1 in 5).
+    if (reserved && getenv("XCDE_TEST_RESERVE_FAIL") && atoi(getenv("XCDE_TEST_RESERVE_FAIL")) > 0 && !getenv("XCDE_RELAUNCH"))
+        reserved = false;
+#endif
+    if (!reserved) {
         // [XCDE] T135: something the loader placed at random (ASLR) sits in the guest range in ~1 of 5 starts. A new
         // process gets a new layout: start this one again (same command line, same console), up to 8 times.
 #ifdef _WIN32
-        char n[16] = "0";
-        GetEnvironmentVariableA("XCDE_RELAUNCH", n, sizeof n);
-        int tries = atoi(n);
+        wchar_t n[16] = L"0";
+        GetEnvironmentVariableW(L"XCDE_RELAUNCH", n, 16);
+        int tries = _wtoi(n);
         rt_logf("[boot] guest address range %llx-%llx is not free (try %d)%s\n", (unsigned long long)GUEST_LO,
                 (unsigned long long)GUEST_HI, tries + 1, tries < 8 ? ": starting again" : "");
         if (tries < 8) {
-            snprintf(n, sizeof n, "%d", tries + 1);
-            SetEnvironmentVariableA("XCDE_RELAUNCH", n);
-            STARTUPINFOA si = {.cb = sizeof si};
+            _snwprintf(n, 16, L"%d", tries + 1);
+            SetEnvironmentVariableW(L"XCDE_RELAUNCH", n);
+            // Wide: the exe and the working folder may have non-ASCII characters (GitHub #218). GetCommandLineW keeps
+            // the arguments exactly as this process got them.
+            STARTUPINFOW si = {.cb = sizeof si};
             PROCESS_INFORMATION pi;
-            char exe[MAX_PATH];
-            GetModuleFileNameA(NULL, exe, sizeof exe);
+            wchar_t exe[XCDE_PATH_W];
+            DWORD exe_len = GetModuleFileNameW(NULL, exe, XCDE_PATH_W);
             // the new process dies with this one (a test's timeout or a closed console must not leave it running)
-            HANDLE job = CreateJobObjectA(NULL, NULL);
+            HANDLE job = CreateJobObjectW(NULL, NULL);
             JOBOBJECT_EXTENDED_LIMIT_INFORMATION jl = {0};
             jl.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
             if (job) SetInformationJobObject(job, JobObjectExtendedLimitInformation, &jl, sizeof jl);
-            if (CreateProcessA(exe, GetCommandLineA(), NULL, NULL, TRUE, CREATE_SUSPENDED, NULL, NULL, &si, &pi)) {
+            if (exe_len && exe_len < XCDE_PATH_W &&
+                CreateProcessW(exe, GetCommandLineW(), NULL, NULL, TRUE, CREATE_SUSPENDED, NULL, NULL, &si, &pi)) {
                 if (job) AssignProcessToJobObject(job, pi.hProcess);
                 ResumeThread(pi.hThread);
                 WaitForSingleObject(pi.hProcess, INFINITE);
@@ -140,6 +150,7 @@ __attribute__((constructor(101))) static void reserve_guest_space(void) {
                 GetExitCodeProcess(pi.hProcess, &code);
                 ExitProcess(code);
             }
+            if (job) CloseHandle(job);
         }
 #else
         // [XCDE] T-LINUX: re-exec preserves arguments and the AppImage mount.
@@ -183,12 +194,19 @@ static bool enter_install_dir(void) {
     if (!build || _stricmp(build + 1, "build") != 0) return false;
     *build = 0;  // <install>
     if (dir[0] && dir[1] == ':' && !dir[2]) { dir[2] = '\\'; dir[3] = 0; }  // "C:" -> "C:\"
-    return SetCurrentDirectoryA(dir) != 0;
+    return xcde_utf8_chdir(dir) == 0;
 }
 #endif
 
 
 int main(int argc, char **argv) {
+#ifdef _WIN32
+    {  // [XCDE] T278: a non-ASCII path in the arguments must not be decoded in the ANSI code page (GitHub #218)
+        char **utf8 = NULL;
+        int n = plat_argv_utf8(argc, argv, &utf8);
+        if (utf8) { argc = n; argv = utf8; }
+    }
+#endif
     if (argc >= 6 && !strcmp(argv[1], "--minidump")) return diag_minidump_helper(argc, argv);  // [XCDE] T028: crash helper process
 #ifdef XCDE_GFX
     if (argc >= 3 && !strcmp(argv[1], "--precompile")) {  // [XCDE] T187: fill the shader cache from the RomFS, then exit
@@ -242,7 +260,7 @@ int main(int argc, char **argv) {
 
     uint32_t stack_size = 0x100000;
     int prio = 44;
-    FILE *f = fopen(npdm_path, "rb");
+    FILE *f = xcde_utf8_fopen(npdm_path, "rb");
     if (f) {
         uint8_t meta[0x80];
         if (fread(meta, 1, sizeof meta, f) == sizeof meta && !memcmp(meta, "META", 4)) {

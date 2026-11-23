@@ -3,6 +3,7 @@
 #include <fcntl.h>
 #include <unistd.h>
 #include <pthread.h>
+#include "../host/utf8_path.h"  // [XCDE] T278: UTF-8 paths through the wide APIs
 #include "../render_policy.h"
 #define XCDE_FD_CACHE 256
 typedef struct { int file,fd,users; uint64_t stamp; } XcdeFdEntry;
@@ -17,10 +18,10 @@ static inline int xcde_fd_acquire(XcdeFdEntry *entries,pthread_mutex_t *lock,uin
         entries[s].users++; *slot=s; fd=entries[s].fd;
     } else if (s>=0 && !entries[s].users) {
         if (entries[s].fd>=0) close(entries[s].fd);
-        entries[s].fd=open(path,flags); entries[s].file=idx;
+        entries[s].fd=xcde_utf8_open(path,flags,0644); entries[s].file=idx;
         entries[s].users=entries[s].fd>=0;
         *slot=entries[s].fd>=0 ? s : -1; fd=entries[s].fd;
-    } else { *slot=-1; fd=open(path,flags); }
+    } else { *slot=-1; fd=xcde_utf8_open(path,flags,0644); }
     pthread_mutex_unlock(lock); return fd;
 }
 static inline void xcde_fd_release(XcdeFdEntry *entries,pthread_mutex_t *lock,int fd,int slot) {

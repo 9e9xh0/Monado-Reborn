@@ -30,7 +30,7 @@
 // <programs done>"); cache/precompile_done.txt at the end (the launcher's "already done" check). Threads at below-normal
 // priority. XCDE_PRECOMPILE_THREADS=<n> (default CPUs - 1); XCDE_PRECOMPILE_LIST=<file>: the shader hashes and programs
 // found (tests); XCDE_PRECOMPILE_LIBS=0: SPIR-V only (no Vulkan device, no pipeline libraries).
-#include <dirent.h>
+#include "../../platform/dir_utf8.h"
 #include <pthread.h>
 #include <stdatomic.h>
 #include <stdio.h>
@@ -41,6 +41,7 @@
 #include <unistd.h>
 #include <zlib.h>
 
+#include "../../host/utf8_path.h"  // [XCDE] T278: UTF-8 paths through the wide APIs
 #include "../../rt.h"
 #include "shaders.h"
 
@@ -279,10 +280,10 @@ static bool wanted(const char *name) {
 static char **paths;
 static size_t npaths, cappaths;
 static void list_dir(const char *dir) {
-    DIR *dd = opendir(dir);
+    XcdeDir *dd = xcde_opendir(dir);
     if (!dd) return;
-    struct dirent *e;
-    while ((e = readdir(dd))) {
+    XcdeDirent *e;
+    while ((e = xcde_readdir(dd))) {
         if (e->d_name[0] == '.') continue;
         char p[1024];
         snprintf(p, sizeof p, "%s/%s", dir, e->d_name);
@@ -294,7 +295,7 @@ static void list_dir(const char *dir) {
             paths[npaths++] = strdup(p);
         }
     }
-    closedir(dd);
+    xcde_closedir(dd);
 }
 static int path_rank(const char *p) { return strstr(p, "/monolib/") ? 0 : strstr(p, ".wishp") ? 1 : 2; }
 static int path_cmp(const void *a, const void *b) { return path_rank(*(char *const *)a) - path_rank(*(char *const *)b); }
@@ -433,8 +434,9 @@ static void load_seed_file(const char *path, Map *done);
 static void load_seed(void) {
     Map done = {0};
     // [XCDE] T-LINUX: the AppImage exports the bundled seed path.
-    const char *seed = getenv("XCDE_VARIANTS_SEED");
-    load_seed_file(seed && *seed ? seed : "data/variants_seed.bin", &done);
+    char seed_env[1100];
+    const char *seed = xcde_utf8_getenv("XCDE_VARIANTS_SEED", seed_env, sizeof seed_env) ? seed_env : NULL;
+    load_seed_file(seed ? seed : "data/variants_seed.bin", &done);
     load_seed_file("cache/variants.bin", &done);
 }
 static void load_seed_file(const char *path, Map *done_) {

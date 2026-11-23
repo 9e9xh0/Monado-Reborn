@@ -1,6 +1,7 @@
 // [XCDE] T-FSR4-LITE. The optional component and AMD model assets are loaded separately.
 #include "fsr4.h"
 #include "vk.h"
+#include "../../host/utf8_path.h"  // [XCDE] T278: UTF-8 paths through the wide APIs
 #include <stdio.h>
 #include <stdlib.h>
 #include <stddef.h>
@@ -8,7 +9,7 @@
 #ifdef _WIN32
 #include <windows.h>
 #define FSR4_LIBRARY_NAME "monado_fsr4.dll"
-static void *fsr4_open(const char *name) { return (void *)LoadLibraryA(name); }
+static void *fsr4_open(const char *name) { return xcde_utf8_load_library(name); }
 static void *fsr4_sym(void *m, const char *n) { return (void *)GetProcAddress((HMODULE)m, n); }
 static void fsr4_close(void *m) { FreeLibrary((HMODULE)m); }
 static const char *fsr4_error(void) {
@@ -28,9 +29,10 @@ static const char *fsr4_error(void) { return dlerror(); }
 // Resolve <executable folder>/<leaf> (the component is deployed beside the game).
 static bool fsr4_beside_exe(char *path, size_t n, const char *leaf) {
 #ifdef _WIN32
-    DWORD len = GetModuleFileNameA(NULL, path, (DWORD)n);
-    if (!len || (size_t)len >= n) return false;
-    char *slash = strrchr(path, '\\');
+    char *slash;
+    if (!plat_exe_path(path, n)) return false;  // (UTF-8: the component sits next to an exe folder that may have accents)
+    slash = strrchr(path, '\\');
+    if (!slash) return false;
 #else
     ssize_t got = readlink("/proc/self/exe", path, n - 1);
     if (got <= 0) return false;
@@ -59,7 +61,8 @@ bool fsr4_available(void) {
     }
     if (load_state) return load_state > 0;
     load_state = -1;
-    const char *lib = getenv("MONADO_FSR4_LIBRARY");
+    char module_env[1100];
+    const char *lib = xcde_utf8_getenv("MONADO_FSR4_LIBRARY", module_env, sizeof module_env) ? module_env : NULL;
     void *module = fsr4_open(lib ? lib : FSR4_LIBRARY_NAME);
     if (!module && !lib) {
         char path[4096];
@@ -73,16 +76,18 @@ bool fsr4_available(void) {
     }
     // The prepared model files: MONADO_FSR4_ASSET_DIR, <executable folder>/fsr4, then the data folder's fsr4/, where
     // the launcher's "Prepare FSR 4 Lite" (tools/package/fsr4_prepare.py) puts them on the player's PC.
-    const char *dir = getenv("MONADO_FSR4_ASSET_DIR");
+    char asset_env[4200];
+    const char *dir = xcde_utf8_getenv("MONADO_FSR4_ASSET_DIR", asset_env, sizeof asset_env) ? asset_env : NULL;
     static char beside[4096], data_dir[4096];
     char probe[4300];
     if (!dir && fsr4_beside_exe(beside, sizeof beside, "fsr4")) {
         snprintf(probe, sizeof probe, "%s/lite/t1080_m0/initializer.bin", beside);
-        FILE *f = fopen(probe, "rb");
+        FILE *f = xcde_utf8_fopen(probe, "rb");
         if (f) { fclose(f); dir = beside; }
     }
     if (!dir) {
-        const char *data = getenv("LARECOMP_DATA_ROOT");
+        char data_env[4200];
+        const char *data = xcde_utf8_getenv("LARECOMP_DATA_ROOT", data_env, sizeof data_env) ? data_env : NULL;
         snprintf(data_dir, sizeof data_dir, "%s%sfsr4", data && *data ? data : "", data && *data ? "/" : "");
         dir = data_dir;  // ("fsr4" relative to the working directory, the data folder, without LARECOMP_DATA_ROOT)
     }
@@ -90,7 +95,7 @@ bool fsr4_available(void) {
     strcpy(assets,dir);
     static const char *sets[] = {"t1080_m0","t1080_m1","t2160_m0","t2160_m1"};
     for (unsigned i=0;i<4;i++) { char path[4200]; snprintf(path,sizeof(path),"%s/lite/%s/initializer.bin",assets,sets[i]);
-        FILE *f=fopen(path,"rb"); if (!f) { LOG("[fsr4] missing Lite weights: %s (the launcher's \"Prepare FSR 4 Lite\" makes them)\n",path); return false; }
+        FILE *f=xcde_utf8_fopen(path,"rb"); if (!f) { LOG("[fsr4] missing Lite weights: %s (the launcher's \"Prepare FSR 4 Lite\" makes them)\n",path); return false; }
         fseek(f,0,SEEK_END); long size=ftell(f); fclose(f);
         if(size!=27392) { LOG("[fsr4] invalid Lite weights: %s\n",path); return false; }
     }

@@ -13,6 +13,7 @@
 #include <windows.h>
 #include <dbghelp.h>
 
+#include "../host/utf8_path.h"  // [XCDE] T278: UTF-8 paths through the wide APIs
 #include "../kernel.h"
 #include "../rt.h"
 #include "diag.h"
@@ -23,7 +24,10 @@ int diag_minidump_helper(int argc, char **argv) {
     DWORD pid = (DWORD)strtoul(argv[2], NULL, 10), tid = (DWORD)strtoul(argv[3], NULL, 10);
     uint64_t ptr = strtoull(argv[4], NULL, 0);
     HANDLE proc = OpenProcess(PROCESS_QUERY_INFORMATION | PROCESS_VM_READ | PROCESS_DUP_HANDLE, FALSE, pid);
-    HANDLE file = CreateFileA(argv[5], GENERIC_WRITE, 0, NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+    wchar_t wfile[XCDE_PATH_W];
+    HANDLE file = xcde_utf8_to_wide(argv[5], wfile, XCDE_PATH_W) >= 0
+                      ? CreateFileW(wfile, GENERIC_WRITE, 0, NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL)
+                      : INVALID_HANDLE_VALUE;
     if (!proc || file == INVALID_HANDLE_VALUE) return 3;
     MINIDUMP_EXCEPTION_INFORMATION ei = {.ThreadId = tid, .ExceptionPointers = (PEXCEPTION_POINTERS)(uintptr_t)ptr, .ClientPointers = TRUE};
     MINIDUMP_TYPE type = MiniDumpNormal | MiniDumpWithThreadInfo | MiniDumpWithIndirectlyReferencedMemory | MiniDumpWithUnloadedModules;
@@ -38,7 +42,7 @@ void diag_crash_report(EXCEPTION_POINTERS *ep) {
     static volatile LONG once;
     if (InterlockedExchange(&once, 1)) return;  // a second crash while reporting: skip
     if (getenv("XCDE_NO_MINIDUMP")) return;
-    CreateDirectoryA("crash", NULL);
+    xcde_utf8_mkdir("crash");
     time_t t = time(NULL);
     char stamp[32];
     strftime(stamp, sizeof stamp, "%Y%m%d_%H%M%S", localtime(&t));
@@ -47,7 +51,7 @@ void diag_crash_report(EXCEPTION_POINTERS *ep) {
     snprintf(dmp, sizeof dmp, "crash/crash_%s.dmp", stamp);
 
     EXCEPTION_RECORD *er = ep->ExceptionRecord;
-    FILE *f = fopen(txt, "w");
+    FILE *f = xcde_utf8_fopen(txt, "w");
     if (f) {
         fprintf(f, "xcde crash report\nexception %08lx at host pc %p", er->ExceptionCode, er->ExceptionAddress);
         if (er->NumberParameters >= 2) fprintf(f, ", %s address %llx", er->ExceptionInformation[0] == 1 ? "write to" : er->ExceptionInformation[0] == 8 ? "execute" : "read of",
@@ -63,14 +67,16 @@ void diag_crash_report(EXCEPTION_POINTERS *ep) {
         fclose(f);
     }
 
-    char exe[MAX_PATH];
-    if (!GetModuleFileNameA(NULL, exe, sizeof exe)) return;
-    char cmd[MAX_PATH + 256];
-    snprintf(cmd, sizeof cmd, "\"%s\" --minidump %lu %lu 0x%llx \"%s\"", exe, GetCurrentProcessId(), GetCurrentThreadId(),
-             (unsigned long long)(uintptr_t)ep, dmp);
-    STARTUPINFOA si = {.cb = sizeof si};
+    // [XCDE] T278: wide exe and command line (the game's folder may have non-ASCII characters, GitHub #218)
+    wchar_t exe[XCDE_PATH_W], wdmp[XCDE_PATH_W], cmd[2 * XCDE_PATH_W];
+    DWORD exe_len = GetModuleFileNameW(NULL, exe, XCDE_PATH_W);
+    if (!exe_len || exe_len >= XCDE_PATH_W) return;
+    if (xcde_utf8_to_wide(dmp, wdmp, XCDE_PATH_W) < 0) return;
+    _snwprintf(cmd, 2 * XCDE_PATH_W, L"\"%s\" --minidump %lu %lu 0x%llx \"%s\"", exe, GetCurrentProcessId(),
+               GetCurrentThreadId(), (unsigned long long)(uintptr_t)ep, wdmp);
+    STARTUPINFOW si = {.cb = sizeof si};
     PROCESS_INFORMATION pi;
-    if (!CreateProcessA(NULL, cmd, NULL, NULL, FALSE, CREATE_NO_WINDOW, NULL, NULL, &si, &pi)) {
+    if (!CreateProcessW(NULL, cmd, NULL, NULL, FALSE, CREATE_NO_WINDOW, NULL, NULL, &si, &pi)) {
         rt_logf("[crash] cannot start the minidump helper (error %lu)\n", GetLastError());
         return;
     }

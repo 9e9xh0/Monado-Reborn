@@ -15,6 +15,10 @@
 
 #include "../../runtime/host/ini_writer.h"  // the launcher's xcde.ini and the game's settings
 #include "../../runtime/host/utf8_path.h"
+#include "../../runtime/platform/dir_utf8.h"
+#ifdef _WIN32
+#include <dirent.h>  // (only to report what the CRT's opendir does in the same folder)
+#endif
 
 #ifndef _WIN32
 #include <sys/stat.h>
@@ -161,6 +165,34 @@ int main(int argc, char **argv) {
     CHECK(f != NULL);
     if (f) { CHECK(fgets(text, sizeof text, f) != NULL); fclose(f); }
     CHECK(!strcmp(text, "first"));
+
+    // [XCDE] T278: enumerating a relative folder from inside the non-ASCII one. The CRT's opendir() makes the path
+    // absolute with the ANSI GetFullPathNameA and finds nothing (the game could not read targets/romfs or saves,
+    // GitHub #218); the wide listing resolves the relative path against the wide working folder.
+    char cwd[4200];
+    CHECK(xcde_utf8_getcwd(cwd, sizeof cwd) != NULL);
+    CHECK(xcde_utf8_chdir(dir) == 0);
+    XcdeDir *dh = xcde_opendir(".");
+    int listed = 0;
+    CHECK(dh != NULL);
+    if (dh) {
+        XcdeDirent *entry;
+        while ((entry = xcde_readdir(dh))) if (!strcmp(entry->d_name, "file.txt")) listed = 1;
+        xcde_closedir(dh);
+    }
+    CHECK(listed);
+#ifdef _WIN32
+    int crt_listed = 0;
+    DIR *crt_dir = opendir(".");
+    if (crt_dir) { while (readdir(crt_dir)) crt_listed++; closedir(crt_dir); }
+    printf("opendir/readdir in the non-ASCII folder: CRT %d entries, wide %s\n", crt_listed, listed ? "found file.txt" : "missing");
+    // getenv() decodes in the ANSI code page too: the wide read gives the same text back.
+    SetEnvironmentVariableW(L"XCDE_TEST_UTF8", L"Jo\u00e3o-\U0001F600");
+    char env[64];
+    CHECK(xcde_utf8_getenv("XCDE_TEST_UTF8", env, sizeof env));
+    CHECK(!strcmp(env, "Jo\xC3\xA3" "o-\xF0\x9F\x98\x80"));
+#endif
+    CHECK(xcde_utf8_chdir(cwd) == 0);
 
     // rename, then the same-directory replacement (T247)
     CHECK(xcde_utf8_rename(file, file2) == 0);

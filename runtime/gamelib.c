@@ -10,6 +10,7 @@
 #include <dlfcn.h>
 #endif
 
+#include "host/utf8_path.h"  // [XCDE] T278: UTF-8 paths through the wide APIs
 #include "paths.h"
 #include "rt.h"
 
@@ -20,7 +21,7 @@ static char g_error[256];
 static bool id_matches(const char *lib) {
     char path[1100], id[128] = {0};
     snprintf(path, sizeof path, "%s.id", lib);
-    FILE *f = fopen(path, "rb");
+    FILE *f = xcde_utf8_fopen(path, "rb");
     if (!f) return false;
     size_t n = fread(id, 1, sizeof id - 1, f);
     fclose(f);
@@ -29,7 +30,7 @@ static bool id_matches(const char *lib) {
 }
 
 static bool exists(const char *p) {
-    FILE *f = fopen(p, "rb");
+    FILE *f = xcde_utf8_fopen(p, "rb");
     if (f) fclose(f);
     return f != NULL;
 }
@@ -37,16 +38,15 @@ static bool exists(const char *p) {
 // The places to look, in order (gamelib.h). Returns how many were filled.
 static int candidates(const char *game_dir, char out[5][1100]) {
     int n = 0;
-    const char *env = getenv("LARECOMP_GAME_LIB");
-    if (env && *env) snprintf(out[n++], 1100, "%s", env);
+    char env[1100];
+    if (xcde_utf8_getenv("LARECOMP_GAME_LIB", env, sizeof env)) snprintf(out[n++], 1100, "%s", env);
     char exe_side[1024];
     if (rt_resource(GAMELIB_NAME, NULL, exe_side, sizeof exe_side) && exists(exe_side))
         snprintf(out[n++], 1100, "%s", exe_side);
     if (game_dir) snprintf(out[n++], 1100, "%s/%s", game_dir, GAMELIB_NAME);
     // Release packages build it once into the writable data folder (tools/gamebuild/gamebuild.py). That is also the working
     // directory the launcher and AppRun enter; rt_data_root() is empty here (rt_paths_init has no caller).
-    const char *data = getenv("LARECOMP_DATA_ROOT");
-    if (data && *data) snprintf(out[n++], 1100, "%s/gamebuild/%s", data, GAMELIB_NAME);
+    if (xcde_utf8_getenv("LARECOMP_DATA_ROOT", env, sizeof env)) snprintf(out[n++], 1100, "%s/gamebuild/%s", env, GAMELIB_NAME);
     snprintf(out[n++], 1100, "gamebuild/%s", GAMELIB_NAME);
     return n;
 }
@@ -62,7 +62,7 @@ bool gamelib_present(const char *game_dir) {
 
 static const GameLibTables *open_lib(const char *path) {
 #ifdef _WIN32
-    HMODULE h = LoadLibraryA(path);
+    HMODULE h = (HMODULE)xcde_utf8_load_library(path);
     if (!h) { snprintf(g_error, sizeof g_error, "can't load %s (error %lu)", path, GetLastError()); return NULL; }
     GameLibEntry entry = (GameLibEntry)(void *)GetProcAddress(h, GAMELIB_ENTRY);
 #else
@@ -81,16 +81,17 @@ static const GameLibTables *open_lib(const char *path) {
 
 bool gamelib_load(const char *game_dir, char *why, size_t why_size) {
     static bool tried;
+    char data_env[1100];
     if (!tried) {
         tried = true;
-        const char *data = getenv("LARECOMP_DATA_ROOT");
+        const char *data = xcde_utf8_getenv("LARECOMP_DATA_ROOT", data_env, sizeof data_env) ? data_env : NULL;
         snprintf(g_error, sizeof g_error,
                  "the game code hasn't been built in %s/gamebuild/%s: start the launcher once so it prepares it from "
                  "your game files",
-                 data && *data ? data : ".", GAMELIB_NAME);
+                 data ? data : ".", GAMELIB_NAME);
         char c[5][1100];
         int n = candidates(game_dir, c);
-        const char *env = getenv("LARECOMP_GAME_LIB");
+        const char *env = xcde_utf8_getenv("LARECOMP_GAME_LIB", data_env, sizeof data_env) ? data_env : NULL;
         for (int i = 0; i < n && !g_tables; i++) {
             if (!exists(c[i])) continue;
             bool given = i == 0 && env && *env;  // LARECOMP_GAME_LIB: loaded as given, the library's own id decides

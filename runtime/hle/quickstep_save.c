@@ -18,6 +18,7 @@ enum { CAPTURES = 32, OBSERVATIONS = 256, PENDING = 32, PATH_CAP = 1100 };
 #include <pthread.h>
 #include <stdarg.h>
 #include <windows.h>
+#include "../host/utf8_path.h"  // [XCDE] T278: UTF-8 paths through the wide APIs
 #define O_DIRECTORY 0x40000000
 #define O_CLOEXEC 0
 #define O_NOFOLLOW 0
@@ -42,9 +43,9 @@ static int qs_join(int dir, const char *name, char out[PATH_CAP]) {
 static int qs_open(const char *path, int flags, ...) {
     int mode = 0;
     if (flags & O_CREAT) { va_list ap; va_start(ap, flags); mode = va_arg(ap, int); va_end(ap); }
-    if (!(flags & O_DIRECTORY)) return _open(path, flags | O_BINARY, mode);
+    if (!(flags & O_DIRECTORY)) return xcde_utf8_open(path, flags | O_BINARY, mode);
     struct stat st;
-    if (stat(path, &st)) return -1;
+    if (xcde_utf8_stat(path, &st)) return -1;
     if (!S_ISDIR(st.st_mode)) { errno = ENOTDIR; return -1; }
     if (strlen(path) >= PATH_CAP) { errno = ENAMETOOLONG; return -1; }
     pthread_mutex_lock(&qs_dir_lock);
@@ -64,28 +65,28 @@ static int qs_openat(int dir, const char *name, int flags, ...) {
     if (flags & O_CREAT) { va_list ap; va_start(ap, flags); mode = va_arg(ap, int); va_end(ap); }
     char path[PATH_CAP];
     if (qs_join(dir, name, path)) return -1;
-    if ((flags & O_CREAT) && (flags & O_EXCL) && !(flags & O_DIRECTORY)) return _open(path, flags | O_BINARY, mode);
+    if ((flags & O_CREAT) && (flags & O_EXCL) && !(flags & O_DIRECTORY)) return xcde_utf8_open(path, flags | O_BINARY, mode);
     return qs_open(path, flags, mode);
 }
 static int qs_mkdirat(int dir, const char *name, int mode) {
     (void)mode;
     char path[PATH_CAP];
-    return qs_join(dir, name, path) ? -1 : _mkdir(path);
+    return qs_join(dir, name, path) ? -1 : xcde_utf8_mkdir(path);
 }
 static int qs_fstatat(int dir, const char *name, struct stat *st, int flags) {
     (void)flags;
     char path[PATH_CAP];
-    return qs_join(dir, name, path) ? -1 : stat(path, st);
+    return qs_join(dir, name, path) ? -1 : xcde_utf8_stat(path, st);
 }
 static int qs_unlinkat(int dir, const char *name, int flags) {
     (void)flags;
     char path[PATH_CAP];
-    return qs_join(dir, name, path) ? -1 : _unlink(path);
+    return qs_join(dir, name, path) ? -1 : xcde_utf8_remove(path);
 }
 static int qs_renameat(int from_dir, const char *from, int to_dir, const char *to) {
     char a[PATH_CAP], b[PATH_CAP];
     if (qs_join(from_dir, from, a) || qs_join(to_dir, to, b)) return -1;
-    if (MoveFileExA(a, b, MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)) return 0;
+    if (xcde_utf8_replace(a, b) == 0) return 0;
     errno = GetLastError() == ERROR_FILE_NOT_FOUND ? ENOENT : EIO;
     return -1;
 }
