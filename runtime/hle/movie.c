@@ -217,7 +217,7 @@ static int pkg_read(void *opaque, uint8_t *buf, int size) {
     PkgIo *p = opaque;
     if (p->pos >= p->src.size) return AVERROR_EOF;
     uint64_t left = p->src.size - p->pos, want = (uint64_t)size < left ? (uint64_t)size : left;
-    ssize_t got = pread(p->fd, buf, (size_t)want, (off_t)(p->src.base + p->pos));
+    int64_t got = gf_pread_at(p->fd, buf, want, p->src.base + p->pos);  // (64-bit: deep in a 15 GB package)
     if (got <= 0) return AVERROR_EOF;
     p->pos += (uint64_t)got;
     return (int)got;

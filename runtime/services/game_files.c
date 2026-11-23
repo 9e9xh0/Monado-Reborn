@@ -56,11 +56,52 @@ static bool fail(char *why, size_t n, const char *text) {
     return false;
 }
 
+// A package is 15 GB, so offsets and sizes are 64-bit here. The Windows build has a 32-bit off_t (no
+// _FILE_OFFSET_BITS=64) and its stat size is 32-bit (_wstat64i32): reads go through ReadFile with a 64-bit
+// OVERLAPPED offset and the size through GetFileSizeEx instead.
+int64_t gf_pread_at(int fd, void *dst, uint64_t n, uint64_t off) {
+    uint64_t done = 0;
+#ifdef _WIN32
+    HANDLE h = (HANDLE)_get_osfhandle(fd);
+    if (h == INVALID_HANDLE_VALUE) return -1;
+    while (done < n) {
+        OVERLAPPED ov = {0};
+        uint64_t at = off + done;
+        ov.Offset = (DWORD)at, ov.OffsetHigh = (DWORD)(at >> 32);
+        DWORD chunk = n - done > 0x40000000 ? 0x40000000 : (DWORD)(n - done), got = 0;
+        if (!ReadFile(h, (uint8_t *)dst + done, chunk, &got, &ov) || !got) break;
+        done += got;
+    }
+#else
+    while (done < n) {
+        ssize_t got = pread(fd, (uint8_t *)dst + done, (size_t)(n - done), (off_t)(off + done));
+        if (got <= 0) break;
+        done += (uint64_t)got;
+    }
+#endif
+    return done || !n ? (int64_t)done : -1;
+}
+
+static bool fd_size(int fd, uint64_t *size) {
+#ifdef _WIN32
+    LARGE_INTEGER li;
+    if (!GetFileSizeEx((HANDLE)_get_osfhandle(fd), &li)) return false;
+    *size = (uint64_t)li.QuadPart;
+    return true;
+#else
+    struct stat st;
+    if (fstat(fd, &st) != 0) return false;
+    *size = (uint64_t)st.st_size;
+    return true;
+#endif
+}
+
+// By its first bytes, never its name (a folder fails to open on Windows, or to read elsewhere).
 static bool is_package_file(const char *path) {
     int fd = xcde_utf8_open(path, GF_OPEN_FLAGS, 0);
     if (fd < 0) return false;
     uint8_t magic[4] = {0};
-    bool yes = pread(fd, magic, 4, 0) == 4 && !memcmp(magic, "NUP\x01", 4);
+    bool yes = gf_pread_at(fd, magic, 4, 0) == 4 && !memcmp(magic, "NUP\x01", 4);
     close(fd);
     return yes;
 }
@@ -135,14 +176,14 @@ static bool parse(const uint8_t *t, uint64_t tables_size, uint64_t file_size, ch
 static bool open_package(char *why, size_t why_size) {
     int fd = xcde_utf8_open(g_root, GF_OPEN_FLAGS, 0);
     if (fd < 0) return fail(why, why_size, "can't be opened");
-    struct stat st;
     uint8_t head[0xb0];
-    bool ok = fstat(fd, &st) == 0 && pread(fd, head, sizeof head, 0) == (ssize_t)sizeof head;
+    uint64_t file_size = 0;
+    bool ok = fd_size(fd, &file_size) && gf_pread_at(fd, head, sizeof head, 0) == (int64_t)sizeof head;
     if (!ok || memcmp(head + 0x80, "TOC\x01", 4)) {
         close(fd);
         return fail(why, why_size, "isn't a .nup package Monado can read");
     }
-    uint64_t file_size = (uint64_t)st.st_size, declared = u64le(head + 0x40);
+    uint64_t declared = u64le(head + 0x40);
     if (declared && file_size < declared) {
         close(fd);
         return fail(why, why_size, "is incomplete (smaller than its header says): copy or make it again");
@@ -153,7 +194,7 @@ static bool open_package(char *why, size_t why_size) {
         return fail(why, why_size, "its table of contents can't be read (a damaged or incomplete .nup)");
     }
     uint8_t *tables = malloc(tables_size);
-    ok = tables && gf_pread(&(GfSource){g_root, 0, file_size}, tables, tables_size, 0) == (int64_t)tables_size;
+    ok = tables && gf_pread_at(fd, tables, tables_size, 0) == (int64_t)tables_size;
     close(fd);
     if (!ok) {
         free(tables);
@@ -173,8 +214,7 @@ bool gf_init(const char *root, char *why, size_t why_size) {
     g_nodes = NULL, g_children = NULL, g_nnodes = g_ndirs = g_nchildren = 0;
     g_exefs = g_romfs = NONE;
     snprintf(g_root, sizeof g_root, "%s", root);
-    struct stat st;
-    g_package = xcde_utf8_stat(root, &st) == 0 && S_ISREG(st.st_mode) && is_package_file(root);
+    g_package = is_package_file(root);  // (no stat: its size is 32-bit on Windows, and a package is 15 GB)
     if (g_package) {
         snprintf(g_prefix, sizeof g_prefix, "%s/", root);
         if (!open_package(why, why_size)) return false;
@@ -241,15 +281,9 @@ int64_t gf_pread(const GfSource *src, void *dst, uint64_t n, uint64_t off) {
     if (n > src->size - off) n = src->size - off;
     int fd = gf_open(src);
     if (fd < 0) return -1;
-    uint64_t done = 0;
-    while (done < n) {
-        uint64_t chunk = n - done > (64u << 20) ? (64u << 20) : n - done;
-        ssize_t got = pread(fd, (uint8_t *)dst + done, (size_t)chunk, (off_t)(src->base + off + done));
-        if (got <= 0) break;
-        done += (uint64_t)got;
-    }
+    int64_t done = gf_pread_at(fd, dst, n, src->base + off);
     close(fd);
-    return (int64_t)done;
+    return done;
 }
 
 uint8_t *gf_read(const char *path, size_t *len) {

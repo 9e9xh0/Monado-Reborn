@@ -461,7 +461,8 @@ int64_t rvfs_read(uint8_t *dst, uint64_t size, uint64_t off) {
                 uint64_t in = rel - f->data_off, avail = f->size - in;
                 if (n > avail) n = avail;
                 int slot, fd = file_fd(hit, &slot);
-                ssize_t r = fd >= 0 ? pread(fd, dst + done, (size_t)n, (off_t)(f->base + in)) : -1;  // [XCDE] T280
+                // [XCDE] T280: a 64-bit offset (a file deep in a 15 GB package; off_t is 32-bit in the Windows build)
+                int64_t r = fd >= 0 ? gf_pread_at(fd, dst + done, n, f->base + in) : -1;
                 file_fd_release(fd, slot);
                 if (r < 0) rt_logf("[romfs] read error %s +%llx (%llu bytes): zero-filled\n", g_files[hit]->path, (unsigned long long)in, (unsigned long long)n);
                 if (r < 0) r = 0;

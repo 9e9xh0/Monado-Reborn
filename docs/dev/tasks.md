@@ -1795,5 +1795,11 @@ Detalle: `docs/PERFORMANCE_UI.md`. Evidencia: `docs/evidence/2026-11-04-performa
   Checked on the player's real XCDE package (base game, 18,544 files): parsed, and refused by build ID as it is not
   2.0.0. Tests: `tests/native/test_nup_package.c` (a package written in the test: newest title, in-place reads, the
   romfs listing, compressed and incomplete packages refused, a folder dump), `tests/unit/test_nup_package.py`
-  (reader, `check_dump`, builder, AppRun, source contracts). The Linux runtime compiles. Pending: a full run from a
-  2.0.0 package (base game plus the 2.0.0 update).
+  (reader, `check_dump`, builder, AppRun, source contracts). The Linux runtime compiles.
+  Played from a real 2.0.0 package (base game and the v262144 update, 14.6 GB, uncompressed) on Windows with the
+  release runtime (`MONADO_RELEASE=ON`, RTX 5080): RecompLauncher's setup step built the game code from it in 126 s and
+  precompiled 9,823 programs from 8,124 shader files in the package (0 failed); `xcde.exe --game <package>` reached
+  the title screen at 30 FPS with no shader waits. The builder also made the Linux game code from it (209 s). That
+  run found a Windows-only bug, fixed here: the Windows build has a 32-bit `off_t` and stat size, so a 15 GB package
+  was not seen as one and reads past 2 GB would have been cut; `gf_pread_at` (ReadFile with a 64-bit offset) and
+  `GetFileSizeEx` read it now. Not covered: a cutscene from a package (the run reached the title without one).

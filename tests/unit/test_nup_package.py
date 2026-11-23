@@ -239,7 +239,15 @@ class RuntimeContracts(unittest.TestCase):
                       self.code('runtime/services/romfs_virtual.c'))
 
     def test_romfs_reads_start_at_the_files_place_in_the_package(self):
-        self.assertIn('(off_t)(f->base + in)', self.code('runtime/services/romfs_virtual.c'))
+        self.assertIn('gf_pread_at(fd, dst + done, n, f->base + in)', self.code('runtime/services/romfs_virtual.c'))
+
+    def test_package_offsets_are_64_bit_on_windows(self):
+        # The Windows build has a 32-bit off_t: a package's reads, size and detection must not go through it.
+        game_files = self.code('runtime/services/game_files.c')
+        self.assertIn('ov.OffsetHigh = (DWORD)(at >> 32)', game_files)
+        self.assertIn('GetFileSizeEx(', game_files)
+        self.assertNotIn('fstat(fd, &st) == 0 && pread', game_files)
+        self.assertIn('gf_pread_at(p->fd', self.code('runtime/hle/movie.c'))
 
     def test_movies_are_read_in_place(self):
         movie = self.code('runtime/hle/movie.c')

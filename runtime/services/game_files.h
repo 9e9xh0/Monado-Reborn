@@ -25,8 +25,11 @@ bool gf_source(const char *path, GfSource *out);
 uint8_t *gf_read(const char *path, size_t *len);
 // n bytes at off of a source; short only at its end or on a read error.
 int64_t gf_pread(const GfSource *src, void *dst, uint64_t n, uint64_t off);
-// A descriptor on the source's host file, for many reads (pread at src->base + offset); -1 when it can't be opened.
+// A descriptor on the source's host file, for many reads (gf_pread_at at src->base + offset); -1: can't be opened.
 int gf_open(const GfSource *src);
+// n bytes at a 64-bit offset of a descriptor (pread with a 32-bit off_t, as the Windows build has, stops at 2 GB).
+// Short only at the end or on a read error; -1 when nothing could be read.
+int64_t gf_pread_at(int fd, void *dst, uint64_t n, uint64_t off);
 
 // The package's tree, for listing it (romfs_virtual.c, precompile.c). Nodes are dirs or files; -1: none.
 int gf_pkg_node(const char *path);

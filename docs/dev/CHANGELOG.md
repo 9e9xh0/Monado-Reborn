@@ -313,5 +313,12 @@ Triage of both symptoms, the minidump findings and the A/B table:
 - AppRun `--game` takes a `.nup`; `recomplauncher.json` offers a folder or a `.nup` file.
 - Tests: `tests/native/test_nup_package.c` (in `scripts/native_tests_linux.sh`), `tests/unit/test_nup_package.py`;
   `test_runtime_utf8_paths.py` follows the reads into `game_files.c`. Checked on a real XCDE package (base game):
-  parsed, 18,544 files, refused by build ID. Not done: a full run from a 2.0.0 package, and the Windows native test
-  (the Windows `pread` lives in `runtime/platform/windows.c`).
+  parsed, 18,544 files, refused by build ID. Not done: the Windows native test (the Windows `pread` lives in
+  `runtime/platform/windows.c`).
+- 64-bit offsets on Windows: the Windows build has a 32-bit `off_t` and its stat size is 32-bit (`_wstat64i32`), so
+  the first real run did not see a 15 GB package as one (no shader files found) and reads past 2 GB would have been
+  cut. `gf_pread_at` (ReadFile with a 64-bit OVERLAPPED offset; `pread` elsewhere) and `GetFileSizeEx` replace them for
+  package reads, its size and its detection; `romfs_virtual.c` and `movie.c` read through it.
+- Played from a real 2.0.0 package (14.6 GB, base game plus the v262144 update) on Windows with the release runtime
+  (RTX 5080): the setup step built the game code (126 s) and precompiled 9,823 programs from the package's 8,124
+  shader files (0 failed); the game reached the title screen at 30 FPS. A cutscene from a package was not reached.
