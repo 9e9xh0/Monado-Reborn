@@ -1694,3 +1694,25 @@ Detalle: `docs/PERFORMANCE_UI.md`. Evidencia: `docs/evidence/2026-11-04-performa
   in the main checkout and re-verify #181 smoothness on the regenerated build. Workaround for players until then:
   `cutscenes = 30` / `XCDE_CUTSCENE_UNQUANTIZE=0`. Evidence:
   [summary.md](../evidence/2026-11-23-issue-216/summary.md).
+
+## Launcher under non-ASCII install paths — 2026-11-23 (GitHub #218)
+
+- [x] T277 **The Windows launcher started nothing under a path like `C:\Users\João\…`** ("Could not start the game
+  code build (error 267)", "curl.exe could not be started (error 267)", and `xcde.ini` silently read as missing).
+  `CreateProcessA`'s `lpCurrentDirectory`, the other ANSI Win32 calls and the CRT read the launcher's UTF-8 paths in the
+  system code page (`João` → `JoÃ£o`), so the folder did not exist. Fix: new `runtime/host/utf8_path.h` (UTF-8 →
+  UTF-16; `_wfopen`/`_wremove`/`_wrename`/`MoveFileExW`), the shared `atomic_file.h`/`ini_writer.h` through it, and
+  every Windows process start, file, environment variable and directory listing in `tools/launcher/launcher.cpp` wide
+  (six `CreateProcessW`); `curl -o` relative and `stat` → `SDL_GetPathInfo`.
+  Tests: `tests/native/test_utf8_paths.c` (Linux + Windows; `CreateProcessA` 267 vs `CreateProcessW` in a `João-😀`
+  folder) and `tests/unit/test_launcher_utf8_paths.py` (source contracts).
+  Verified under Wine 11 (code page 1252) with the real Windows launcher: the fixed build writes `build/launcher.log`
+  and starts `curl.exe` / `monado-gamebuild.exe` stand-ins in `Z:\…\João-😀\…`; a build from `HEAD` starts neither.
+  Evidence: [summary.md](../evidence/2026-11-23-issue-218/summary.md); detail: [CHANGELOG.md](CHANGELOG.md).
+  Real Windows verification pending (the Windows CI job compiles the launcher and runs the native test).
+- [ ] T-UTF8-RUNTIME **The game's own Windows paths are still ANSI:** `runtime/platform/windows.c` `plat_exe_path`
+  (`GetModuleFileNameA`), `runtime/paths.c` (`getcwd`, `stat`, `chdir`, `fopen`, `mkdir`) and the runtime's other file
+  calls (≈90 `fopen` sites: `services/fs.c`, `host/settings_ini.c`, the Vulkan caches). After T277 the launcher builds
+  and starts the game from a non-ASCII folder, but the game is expected to stop at its data-root check ("can't write to
+  its folder"). Wants the same UTF-8 → wide treatment (or a UTF-8 manifest with a Windows 10 1903 floor) and a
+  Wine/Windows run of `build/xcde.exe` under `João-😀` to verify.

@@ -1,8 +1,10 @@
 // [XCDE] T247: shared flat-INI writer. Preserve keys owned by other/newer frontends.
+// [XCDE] T277: UTF-8 paths through utf8_path.h (GitHub #218).
 #pragma once
 #include <stdio.h>
 #include <string.h>
 #include "atomic_file.h"
+#include "utf8_path.h"
 #ifdef _WIN32
 #include <process.h>
 #define XCDE_INI_PID _getpid
@@ -30,14 +32,14 @@ static inline FILE *xcde_ini_begin(const char *path, char *tmp, size_t cap) {
     static unsigned serial;
     int n = snprintf(tmp, cap, "%s.%lu.%u.tmp", path, (unsigned long)XCDE_INI_PID(), ++serial);
     if (n < 0 || (size_t)n >= cap) return NULL;
-    return fopen(tmp, "w+");
+    return xcde_utf8_fopen(tmp, "w+");
 }
 
 static inline int xcde_ini_commit(FILE *out, const char *tmp, const char *path) {
     int ok = !ferror(out) && fflush(out) == 0;
     long generated_end = ok ? ftell(out) : -1;
     if (generated_end < 0) ok = 0;
-    FILE *old = ok ? fopen(path, "r") : NULL;
+    FILE *old = ok ? xcde_utf8_fopen(path, "r") : NULL;
     char line[4096], key[512], fresh[4096], fresh_key[512];
     while (old && ok && fgets(line, sizeof line, old)) {
         // Refuse overlong input rather than silently truncate a future setting.
@@ -54,6 +56,6 @@ static inline int xcde_ini_commit(FILE *out, const char *tmp, const char *path) 
     if (old) { if (ferror(old)) ok = 0; if (fclose(old) != 0) ok = 0; }
     if (fclose(out) != 0) ok = 0;
     if (ok) ok = xcde_atomic_replace(tmp, path);
-    if (!ok) remove(tmp);
+    if (!ok) xcde_utf8_remove(tmp);
     return ok;
 }

@@ -38,6 +38,9 @@ build/test/test_settings_roundtrip.exe build/test/settings-roundtrip.ini
 # [XCDE] window size presets shared by the launcher and the F1 menu (runtime/window_size.h).
 $Z -std=c11 -Wall -Wextra -Werror -o build/test/test_window_size.exe tests/native/test_window_size.c
 build/test/test_window_size.exe
+# [XCDE] T277: GitHub #218 - a non-ASCII folder through the UTF-8 path wrappers (utf8_path.h).
+$Z -std=c11 -Wall -Wextra -Werror -o build/test/test_utf8_paths.exe tests/native/test_utf8_paths.c
+build/test/test_utf8_paths.exe build/test
 $Z -std=c11 -O1 -w -Iruntime -o build/test/test_graphics_options.exe tests/native/test_graphics_options.c runtime/hle/graphics.c  # [XCDE]
 build/test/test_graphics_options.exe
 $Z -std=c11 -O1 -w -Iruntime -o build/test/test_prop_lod.exe tests/native/test_prop_lod.c runtime/hle/graphics.c
