@@ -154,6 +154,10 @@ class ShaderPrecompile(unittest.TestCase):
         self.assertAlmostEqual(share, gb.PRECOMPILE_SCAN_SHARE + (1 - gb.PRECOMPILE_SCAN_SHARE) * 0.25)
         self.assertEqual(text, 'Preparing the shaders: final pass, 1 of 4')
 
+    def test_the_closing_done_line_never_moves_the_bar_back(self):
+        # precompile.c writes "done" with the scan's totals after the pipelines pass (seen on a real run: 0.999 -> 0.94)
+        self.assertIsNone(gb.precompile_step('done 8124 8124 9823 9823'))
+
     def test_unreadable_progress_is_skipped(self):
         self.assertIsNone(gb.precompile_step('scan 1 0 0 0'))
         self.assertIsNone(gb.precompile_step('half a line'))

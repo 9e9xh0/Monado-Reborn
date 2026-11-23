@@ -279,9 +279,10 @@ PRECOMPILE_SCAN_SHARE = 0.8
 def precompile_step(line):
     """(share of the precompile done, text) from a cache/precompile_progress.txt line, `<phase> <files done> <files>
     <programs found> <programs built>`, weighted as the launcher's bar (pc_poll): reading the files is a fifth of the
-    scan, building the programs found the rest. The `pipelines` pass counts its own files. None when unreadable."""
+    scan, building the programs found the rest. The `pipelines` pass counts its own files. None when unreadable, and
+    for the closing `done` line (scan totals again: the bar would go back; "Shaders ready" follows it)."""
     parts = line.split()
-    if len(parts) != 5:
+    if len(parts) != 5 or parts[0] == 'done':
         return None
     try:
         files_done, files, found, built = (int(x) for x in parts[1:])
