@@ -46,11 +46,7 @@ static void *q_main(void *arg);
 int vkq_enabled(void) {
     if (q_state < 0) {
         const char *e = getenv("LARECOMP_VKQ");
-#ifdef _WIN32
-        q_state = e && *e == '1';  // (Windows: opt-in until measured there; DLSS / frame generation drain before recording)
-#else
-        q_state = e ? *e == '1' : 1;  // (Linux: on by default; LARECOMP_VKQ=0 off)
-#endif
+        q_state = e ? *e == '1' : 1;  // [XCDE] on by default on Linux and Windows (LARECOMP_VKQ=0 disables)
         e = getenv("LARECOMP_VKQ_SPIN");
         q_spin = e ? atoi(e) : 0;   // (d51/d52: 0 vs 200 = same fps (58.1-58.8 both); 0 keeps the core idle when the frame is capped)
         e = getenv("LARECOMP_VKQ_BATCH");
