@@ -161,6 +161,12 @@ class LauncherManifest(unittest.TestCase):
         # build.json is written last, on Windows (lasgame.dll) and Linux (lasgame.so) alike
         self.assertEqual(self.manifest()['prepare']['done'], ['{install}/gamebuild/build.json'])
 
+    def test_manifest_offers_the_shader_precompile_as_a_tick(self):
+        option = self.manifest()['prepare']['options'][0]
+        self.assertEqual(option['id'], 'shaders')
+        self.assertEqual(option['args'], ['--precompile'])
+        self.assertNotIn('license', option)  # (no license: the tick starts on)
+
     def test_manifest_has_only_prepare_fields_the_launcher_knows(self):
         known = {'program', 'args', 'label', 'done', 'env', 'keeps_copy', 'options'}
         self.assertLessEqual(set(self.manifest()['prepare']), known)

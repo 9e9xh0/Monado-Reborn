@@ -18,7 +18,7 @@ beside the executable, or `../share/monado/gamebuild` in an AppImage):
     games/                 profile.json, patches.py, hle_symbols.txt
 
 Usage: monado-gamebuild --root <dump> [--out DIR] [--resources DIR] [--jobs N]
-                        [--force] [--dry-run]
+                        [--force] [--dry-run] [--precompile]
        gamebuild.py --write-costs <gamebuild.log> games/xcde/compile_cost.json   (after a release's lifter change)
 Exit codes: 0 ok, 1 usage, 2 bad game files, 3 generation failed, 4 compile failed,
 5 link failed. Progress is written for the launcher: `<out>/progress.txt`, and also printed as
@@ -222,13 +222,141 @@ def launcher_step_text(phase, done, total, text):
     return text
 
 
-def print_launcher_progress(phase, done, total, text, fraction):
+def print_progress(value, text):
     """RecompLauncher (recomplauncher.json) runs this builder as its setup step, with RECOMPLAUNCHER=1, and reads
-    `progress <0..1> <text>` lines from stdout. Monado's own launcher reads progress.txt instead, so its runs stay
+    `progress <0..1> <text>` lines from stdout. Monado's own launcher reads progress files instead, so its runs stay
     quiet."""
     if os.environ.get('RECOMPLAUNCHER') != '1':
         return
-    print(f'progress {overall(phase, fraction):.4f} {launcher_step_text(phase, done, total, text)}', flush=True)
+    print(f'progress {value:.4f} {text}', flush=True)
+
+
+# With --precompile, the shader precompile follows the game code in one setup step: the bar's first part is the
+# build, the rest the shaders (a few minutes each on the reference PC). Without it, the build is the whole bar.
+PRECOMPILE_BUILD_SHARE = 0.7
+_launcher_build_share = [1.0]
+
+
+def print_launcher_progress(phase, done, total, text, fraction):
+    value = overall(phase, fraction) * _launcher_build_share[0]
+    print_progress(value, launcher_step_text(phase, done, total, text))
+
+
+# ---- the shader precompile (--precompile, RecompLauncher's setup step)
+# Monado's own launcher runs `<game> --precompile <dump>` before the first start (tools/launcher/launcher.cpp,
+# pc_start): runtime/nvn/vulkan/precompile.c translates every shader in the romfs into cache/, rewriting
+# cache/precompile_progress.txt as it goes and writing cache/precompile_done.txt, stamped with the game executable, at
+# the end. RecompLauncher starts the game directly, so its setup step runs the same precompile here, from the data root.
+
+def game_executable():
+    """The game program that precompiles: MONADO_GAME_EXE (AppRun sets it), else build/xcde.exe beside this builder in
+    the Windows package (build/gamebuild/). None when neither is there."""
+    named = os.environ.get('MONADO_GAME_EXE')
+    if named and Path(named).is_file():
+        return Path(named)
+    if not getattr(sys, 'frozen', False):
+        return None
+    sibling = Path(sys.executable).resolve().parent.parent / 'xcde.exe'
+    return sibling if sibling.is_file() else None
+
+
+def precompile_is_current(data_root, exe):
+    """Whether cache/precompile_done.txt was made with this executable (its `exe <size> <mtime>` line), as the
+    launcher's pc_done checks it: a new build translates shaders differently, so it precompiles again."""
+    try:
+        lines = (data_root / 'cache' / 'precompile_done.txt').read_text(encoding='utf-8', errors='replace').splitlines()
+        stat = exe.stat()
+    except OSError:
+        return False
+    return f'exe {stat.st_size} {int(stat.st_mtime)}' in (line.strip() for line in lines)
+
+
+# Of the shaders' part of the bar: the scan and the programs it finds first, the last pass (whole pipelines) after.
+PRECOMPILE_SCAN_SHARE = 0.8
+
+
+def precompile_step(line):
+    """(share of the precompile done, text) from a cache/precompile_progress.txt line, `<phase> <files done> <files>
+    <programs found> <programs built>`, weighted as the launcher's bar (pc_poll): reading the files is a fifth of the
+    scan, building the programs found the rest. The `pipelines` pass counts its own files. None when unreadable."""
+    parts = line.split()
+    if len(parts) != 5:
+        return None
+    try:
+        files_done, files, found, built = (int(x) for x in parts[1:])
+    except ValueError:
+        return None
+    if not files:
+        return None
+    read = files_done / files
+    if parts[0] == 'pipelines':
+        share = PRECOMPILE_SCAN_SHARE + (1 - PRECOMPILE_SCAN_SHARE) * read
+        return share, f'Preparing the shaders: final pass, {files_done} of {files}'
+    built_share = built / found if found else 0.0
+    share = PRECOMPILE_SCAN_SHARE * (0.15 * read + 0.85 * read * built_share)
+    return share, f'Preparing the shaders: {files_done} of {files} files'
+
+
+def child_environment():
+    """The environment for the game when this builder starts it. A frozen builder (PyInstaller) points
+    LD_LIBRARY_PATH at its own libraries and keeps the original in LD_LIBRARY_PATH_ORIG: the game needs the original
+    (AppRun's usr/lib)."""
+    env = dict(os.environ)
+    if 'LD_LIBRARY_PATH_ORIG' in env:
+        env['LD_LIBRARY_PATH'] = env.pop('LD_LIBRARY_PATH_ORIG')
+    elif getattr(sys, 'frozen', False):
+        env.pop('LD_LIBRARY_PATH', None)
+    return env
+
+
+def reset_dll_directory():
+    """A frozen builder on Windows adds its own folder to the DLL search (SetDllDirectory), and the programs it starts
+    inherit that: the game must load its DLLs from build/ only."""
+    if sys.platform != 'win32' or not getattr(sys, 'frozen', False):
+        return
+    import ctypes
+    ctypes.windll.kernel32.SetDllDirectoryW(None)
+
+
+def precompile_shaders(dump):
+    """The shader precompile, after the game code. It never fails the setup: without it the game compiles each shader
+    when it first needs it, as it always could (the launcher's "Omitir")."""
+    share = _launcher_build_share[0]
+    exe = game_executable()
+    if exe is None:
+        print('gamebuild: no game executable to precompile the shaders with (MONADO_GAME_EXE); skipped', flush=True)
+        print_progress(1, 'Shaders compile while you play')
+        return
+    data_root = default_data_root()
+    if precompile_is_current(data_root, exe):
+        print_progress(1, 'Shaders already prepared')
+        return
+    print_progress(share, 'Preparing the shaders')
+    (data_root / 'cache').mkdir(parents=True, exist_ok=True)
+    (data_root / 'build').mkdir(parents=True, exist_ok=True)
+    progress = data_root / 'cache' / 'precompile_progress.txt'
+    progress.unlink(missing_ok=True)
+    reset_dll_directory()
+    flags = subprocess.CREATE_NO_WINDOW | subprocess.BELOW_NORMAL_PRIORITY_CLASS if sys.platform == 'win32' else 0
+    last = None
+    with (data_root / 'build' / 'last_precompile.log').open('w', encoding='utf-8', errors='replace') as log:
+        process = subprocess.Popen([str(exe), '--precompile', str(dump)], cwd=data_root, stdout=log,
+                                   stderr=subprocess.STDOUT, env=child_environment(), creationflags=flags)
+        while process.poll() is None:
+            time.sleep(0.5)
+            try:
+                step = precompile_step(progress.read_text(encoding='utf-8', errors='replace'))
+            except OSError:
+                continue  # (not written yet, or being replaced)
+            if step and step != last:
+                last = step
+                print_progress(share + (1 - share) * step[0], step[1])
+    if process.returncode != 0:
+        print(f'gamebuild: the shader precompile stopped with code {process.returncode} (build/last_precompile.log); '
+              'the game compiles shaders as it reaches them', flush=True)
+        print_progress(1, 'Shaders compile while you play')
+        return
+    print_progress(1, 'Shaders ready')
 
 
 def report(out, phase, done, total, text='', fraction=None):
@@ -500,6 +628,9 @@ def main(argv=None):
     # recomplauncher.json passes one argument list to this program on Windows and to the AppImage on Linux, whose
     # AppRun needs --prepare to pick the builder; here it changes nothing.
     parser.add_argument('--prepare', action='store_true', help='(ignored: the AppImage\'s setup-step switch)')
+    # RecompLauncher's "Prepare the shaders now" tick (recomplauncher.json, prepare.options)
+    parser.add_argument('--precompile', action='store_true',
+                        help='then precompile the shaders with the game executable (MONADO_GAME_EXE, or build/xcde.exe)')
     args = parser.parse_args(argv)
     if args.write_costs:
         write_compile_costs(*args.write_costs)
@@ -513,6 +644,8 @@ def main(argv=None):
     out = Path(args.out).expanduser().resolve() if args.out else default_data_root() / 'gamebuild'
     jobs = args.jobs or default_jobs()
     set_shares(jobs)
+    if args.precompile:
+        _launcher_build_share[0] = PRECOMPILE_BUILD_SHARE
     library = out / os.path.basename(link['library'])
     current = fingerprint(dump, resources, link)
     stamp = out / 'build.json'
@@ -521,6 +654,8 @@ def main(argv=None):
             if json.loads(stamp.read_text(encoding='utf-8')).get('fingerprint') == current:
                 print(f'gamebuild: up to date: {library}')
                 report(out, 'link', 1, 1, 'Already built')
+                if args.precompile:
+                    precompile_shaders(dump)
                 return 0
         except (OSError, ValueError):
             pass
@@ -570,6 +705,8 @@ def main(argv=None):
         shutil.rmtree(out / 'generated', ignore_errors=True)
     report(out, 'link', 1, 1, 'Game code ready')
     print(f'gamebuild: {library} ({time.time() - started:.0f}s)')
+    if args.precompile:
+        precompile_shaders(dump)
     return 0
 
 

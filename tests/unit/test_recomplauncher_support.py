@@ -23,7 +23,8 @@ if _stub:
     del sys.modules['gen']
 
 # A stand-in that prints its own name, its arguments and the folder it runs in, one per line.
-STAND_IN = '#!/bin/sh\necho "$(basename "$0")"\nfor a in "$@"; do echo "arg $a"; done\necho "cwd $(pwd -P)"\n'
+STAND_IN = ('#!/bin/sh\necho "$(basename "$0")"\nfor a in "$@"; do echo "arg $a"; done\n'
+            'echo "game ${MONADO_GAME_EXE:-}"\necho "cwd $(pwd -P)"\n')
 
 
 @unittest.skipUnless(os.name == 'posix' and shutil.which('sh'), 'AppRun is a POSIX shell script')
@@ -74,6 +75,10 @@ class AppRunModes(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertEqual(lines[:5], ['monado-gamebuild', 'arg --root', f'arg {self.dump}', 'arg --out', 'arg x'])
 
+    def test_prepare_names_the_game_for_the_shader_precompile(self):
+        _, lines = self.run_apprun('--prepare', '--precompile')
+        self.assertIn(f'game {self.appdir}/usr/bin/monado', lines)
+
     def test_play_still_links_the_dump(self):
         self.run_apprun('--play', str(self.dump))
         self.assertEqual((self.appdir / 'targets').resolve(), self.dump.resolve())
@@ -106,6 +111,95 @@ class BuilderProgressLines(unittest.TestCase):
             log.write_text('[00:00:01 +1s] compile main/a.c: exit 0 after 2.5s\n', encoding='utf-8')
             with contextlib.redirect_stdout(io.StringIO()):
                 self.assertEqual(gb.main(['--prepare', '--write-costs', str(log), str(Path(d) / 'cost.json')]), 0)
+
+
+# A stand-in game for `--precompile <dump>`: writes the progress file twice and the done stamp, as precompile.c does.
+GAME_PRECOMPILES = ('#!/bin/sh\n[ "$1" = --precompile ] || exit 9\n'
+                    'echo "scan 5 10 4 2" > cache/precompile_progress.txt\nsleep 1\n'
+                    'echo "pipelines 3 3 3 3" > cache/precompile_progress.txt\nsleep 1\n'
+                    'echo "programs 3 built 3" > cache/precompile_done.txt\n')
+GAME_FAILS = '#!/bin/sh\nexit 3\n'
+
+
+class ShaderPrecompile(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self.tmp.name)
+        gb._launcher_build_share[0] = gb.PRECOMPILE_BUILD_SHARE
+
+    def tearDown(self):
+        gb._launcher_build_share[0] = 1.0
+        self.tmp.cleanup()
+
+    def game(self, script):
+        exe = self.root / 'monado'
+        exe.write_text(script, encoding='utf-8')
+        exe.chmod(0o755)
+        return exe
+
+    def run_precompile(self, exe):
+        env = {'RECOMPLAUNCHER': '1', 'MONADO_DATA_ROOT': str(self.root), 'MONADO_GAME_EXE': str(exe or '')}
+        printed = io.StringIO()
+        with mock.patch.dict(os.environ, env, clear=False), contextlib.redirect_stdout(printed):
+            gb.precompile_shaders(self.root / 'dump')
+        return [line for line in printed.getvalue().splitlines() if line.startswith('progress ')]
+
+    def test_scan_line_is_the_first_part_of_the_shaders(self):
+        share, text = gb.precompile_step('scan 5 10 4 2')
+        self.assertAlmostEqual(share, gb.PRECOMPILE_SCAN_SHARE * (0.15 * 0.5 + 0.85 * 0.5 * 0.5))
+        self.assertEqual(text, 'Preparing the shaders: 5 of 10 files')
+
+    def test_pipelines_pass_follows_the_scan(self):
+        share, text = gb.precompile_step('pipelines 1 4 4 1')
+        self.assertAlmostEqual(share, gb.PRECOMPILE_SCAN_SHARE + (1 - gb.PRECOMPILE_SCAN_SHARE) * 0.25)
+        self.assertEqual(text, 'Preparing the shaders: final pass, 1 of 4')
+
+    def test_unreadable_progress_is_skipped(self):
+        self.assertIsNone(gb.precompile_step('scan 1 0 0 0'))
+        self.assertIsNone(gb.precompile_step('half a line'))
+
+    def test_precompile_for_this_executable_is_current(self):
+        exe = self.game(GAME_FAILS)
+        stat = exe.stat()
+        (self.root / 'cache').mkdir()
+        (self.root / 'cache/precompile_done.txt').write_text(f'programs 1\nexe {stat.st_size} {int(stat.st_mtime)}\n')
+        self.assertTrue(gb.precompile_is_current(self.root, exe))
+
+    def test_precompile_for_another_build_is_not_current(self):
+        exe = self.game(GAME_FAILS)
+        (self.root / 'cache').mkdir()
+        (self.root / 'cache/precompile_done.txt').write_text('programs 1\nexe 1 2\n')
+        self.assertFalse(gb.precompile_is_current(self.root, exe))
+
+    def test_frozen_builders_library_path_is_given_back(self):
+        env = {'LD_LIBRARY_PATH': '/frozen/_internal', 'LD_LIBRARY_PATH_ORIG': '/app/usr/lib'}
+        with mock.patch.dict(os.environ, env, clear=False):
+            self.assertEqual(gb.child_environment()['LD_LIBRARY_PATH'], '/app/usr/lib')
+
+    def test_no_game_skips_without_failing(self):
+        lines = self.run_precompile(None)
+        self.assertEqual(lines, ['progress 1.0000 Shaders compile while you play'])
+
+    @unittest.skipUnless(os.name == 'posix', 'the stand-in game is a shell script')
+    def test_precompile_reports_its_progress_after_the_build(self):
+        lines = self.run_precompile(self.game(GAME_PRECOMPILES))
+        values = [float(line.split()[1]) for line in lines]
+        self.assertEqual(values, sorted(values))
+        self.assertEqual(values[0], gb.PRECOMPILE_BUILD_SHARE)
+        self.assertEqual(lines[-1], 'progress 1.0000 Shaders ready')
+        self.assertIn('final pass', ' '.join(lines))
+
+    @unittest.skipUnless(os.name == 'posix', 'the stand-in game is a shell script')
+    def test_a_failed_precompile_still_finishes_the_setup(self):
+        lines = self.run_precompile(self.game(GAME_FAILS))
+        self.assertEqual(lines[-1], 'progress 1.0000 Shaders compile while you play')
+
+    def test_precompile_switch_is_accepted(self):
+        with tempfile.TemporaryDirectory() as d:
+            log = Path(d) / 'gamebuild.log'
+            log.write_text('[00:00:01 +1s] compile main/a.c: exit 0 after 2.5s\n', encoding='utf-8')
+            with contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(gb.main(['--precompile', '--write-costs', str(log), str(Path(d) / 'cost.json')]), 0)
 
 
 class SourceContracts(unittest.TestCase):

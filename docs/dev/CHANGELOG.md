@@ -278,6 +278,13 @@ Triage of both symptoms, the minidump findings and the A/B table:
   update is also printed as `progress <0..1> <text>`; "Already built" when the build is up to date.
 - `runtime/nvn/vulkan/device.c`: `RECOMPLAUNCHER_MODE=bigpicture` opens the window fullscreen without changing the
   saved setting. `tools/launcher/launcher.cpp`: no update check at start under RecompLauncher.
+- Shaders in the setup step: `prepare.options` has a "Prepare the shaders now" tick (on by default) that adds
+  `--precompile`. `tools/gamebuild/gamebuild.py` then runs `<game> --precompile <dump>` from the data root after the
+  game code (built or already up to date), with the game from `MONADO_GAME_EXE` (AppRun) or `build/xcde.exe` beside
+  the Windows builder. The bar is 70% build, 30% shaders; a precompile whose `cache/precompile_done.txt` stamp matches the
+  executable is skipped (the launcher's own check), and a failed one is logged in `build/last_precompile.log` without
+  failing the setup. A frozen builder gives the game back the original `LD_LIBRARY_PATH` and resets its Windows DLL
+  folder first.
 - Tests: `tests/unit/test_recomplauncher_support.py`, `tests/unit/test_make_portable.py`; the unit suite, the package
   guard and the documentation/path checks pass on Linux. Not done here: a full setup and Play from RecompLauncher
   (needs a dump), and a Windows build of the two C/C++ edits (CI compiles them).

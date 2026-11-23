@@ -1767,6 +1767,12 @@ Detalle: `docs/PERFORMANCE_UI.md`. Evidencia: `docs/evidence/2026-11-04-performa
   `progress <0..1> <text>` lines when `RECOMPLAUNCHER=1`. RecompLauncher's Big Picture mode
   (`RECOMPLAUNCHER_MODE=bigpicture`) opens the game fullscreen without changing the saved setting, like gamescope,
   and the launcher skips its own update banner under RecompLauncher (it installs every release itself).
+  The setup step also precompiles the shaders, as JUGAR does before the first start (RecompLauncher starts the game
+  directly): a "Prepare the shaders now" tick (`prepare.options`, on by default) adds `--precompile`, and the builder
+  then runs `<game> --precompile <dump>` from the data root (the game is `MONADO_GAME_EXE`, set by AppRun, or
+  `build/xcde.exe` beside the Windows builder), turns `cache/precompile_progress.txt` into progress lines and skips a
+  precompile whose `cache/precompile_done.txt` stamp matches the executable. A failed precompile never fails the setup: the
+  game compiles shaders as it reaches them, as with "Omitir".
   Tests: `tests/unit/test_recomplauncher_support.py` (AppRun run against stand-in programs, the progress lines,
   source contracts) and `tests/unit/test_make_portable.py` (the manifest). The manifest validates against
   RecompLauncher's published schema. Pending: a full setup and Play from RecompLauncher on Windows and Linux.

@@ -45,8 +45,10 @@ if [ -f "$appdir/usr/share/monado/gamebuild/link.json" ]; then
   export XCDE_GAMEBUILD_DIR="${XCDE_GAMEBUILD_DIR:-$appdir/usr/share/monado/gamebuild}"
 fi
 if [ "${1:-}" = --prepare ]; then
-  # The builder takes its own arguments (--root, --out) and finds its resources beside itself.
+  # The builder takes its own arguments (--root, --out) and finds its resources beside itself; with --precompile it
+  # then precompiles the shaders with the game, named here.
   shift
+  export MONADO_GAME_EXE="$appdir/usr/bin/monado"
   exec "$appdir/usr/share/monado/gamebuild/monado-gamebuild" "$@"
 fi
 direct=

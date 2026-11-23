@@ -28,7 +28,7 @@ Vulkan. Windows x86-64 is the primary target; Linux builds are supported too.
 
 **With [RecompLauncher](https://recomplauncher.com/game/monado-fix-portable)** (Windows and Linux): install Monado
 there, pick the folder that holds your `exefs` and `romfs`, and press Play. It builds the game code once from your
-copy and shows the video, upscaling, frame-rate and language settings on the game's page (`recomplauncher.json`).
+copy, prepares the shaders (a tick on its setup screen) and shows the video, upscaling, frame-rate and language settings on the game's page (`recomplauncher.json`).
 
 Extra launchers: `Play Monado (performance metrics).bat` and `Play Monado (stutter diagnostics).bat` are
 diagnostic variants; `Crear Monado Portable.bat` builds a movable folder for another PC / USB disk (for your own

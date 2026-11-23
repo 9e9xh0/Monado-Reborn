@@ -24,7 +24,15 @@
     "args": ["--prepare", "--root", "{input:game}", "--out", "{install}/gamebuild"],
     "env": { "MONADO_DATA_ROOT": "{install}" },
     "label": "Building the game code from your copy",
-    "done": ["{install}/gamebuild/build.json"]
+    "done": ["{install}/gamebuild/build.json"],
+    "options": [
+      {
+        "id": "shaders",
+        "label": "Prepare the shaders now",
+        "note": "A few more minutes now, so new areas don't stutter the first time you reach them.",
+        "args": ["--precompile"]
+      }
+    ]
   },
   "system": {
     "windows": { "version": "10", "graphics": { "vulkan": "1.2" } },
