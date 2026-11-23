@@ -1045,22 +1045,41 @@ for _site, (_word, _emit, _note) in QUICKSTEP_STATS_UI_PATCHES.items():
     PATCHES[_site] = Patch(_word, _emit, 'LINUX-040', _note)
 
 
-# [XCDE] T224 / GitHub #181: in-engine cutscenes (rtmevt) have three 30 Hz quantization gates:
+# [XCDE] T224 / GitHub #181 / #223: in-engine cutscenes (rtmevt) have three 30 Hz quantization gates:
 #  1. L_70004e6b84 (0x70004e6b9c): rounds the continuous cutscene clock [sp+0x14] to the nearest
 #     1/30 s frame before calling f_70004e84c0 (sequence / pose update).
 #  2. f_70004f55b0 (0x70004f55f8): camera sequence skips its built-in floor/ceil lerp+slerp path
 #     and rounds to an integer 30 Hz frame whenever playback speed == 1.0f.
 #  3. f_700050c150 (0x700050c374): sequence track time lookup rounds local track time to 1/30 s
 #     when the track's snap flag (+0x220) is set.
-# When cutscenes run above 30 fps (cutscenes = same), gates 1 and 2 are bypassed so cameras and
-# character poses evaluate smoothly every presented frame at identical playback speed. At 30 fps
-# (and in cutscenes = 30 / 30fg) xcde_cutscene_unquantize() returns false so 30 fps stays
-# bit-identical.
-# Gate 3 is NOT bypassed (GitHub #216): snap-flagged tracks are authored on the exact 30 Hz grid
-# and the sequence evaluator matches their key / trigger times against it. Feeding it continuous
-# time missed those exact times, so cutscene tracks that switch effects on (the Monado's ether
-# glow / ring lens, the sparkle emitters) never fired and the FX were missing in every 60 FPS
-# cutscene. The clock and camera gates above keep the smoothness of #181.
+# When cutscenes run above 30 fps (cutscenes = same), all three gates are bypassed so cameras,
+# character/model poses, and effect transforms evaluate smoothly every presented frame at identical
+# playback speed. At 30 fps (and in cutscenes = 30 / 30fg) xcde_cutscene_unquantize() returns false
+# so 30 fps stays bit-identical.
+#
+# Root fix for cutscene effect tracks under continuous time (GitHub #216 / #223):
+# f_70004e84c0 already sub-steps the cutscene clock in increments of <= 1/30 s (<= 1.0 frame) and
+# f_70004f6a10 (0x70004f6d60) already debounces effect spawns by comparing floor(s8) (fcvtms w8, s8)
+# against the last triggered integer frame at [x19+0xc08] (initialized to -1 = 0xffffffff).
+# Unquantizing Gate 3 previously broke cutscene effects for three specific reasons in the curve
+# evaluator f_70005a98e0 and its callers:
+#  a) f_70005aa5c0 (+0x19cc, effect spawn trigger curve -> [sp+0x24] tested for >= 1.0f at
+#     0x70004f6d50), f_70005aa700 (+0x19e8, discrete effect command ID curve -> [sp+0x8] /
+#     [x19+0xbcd]), and f_70005a98b0 (discrete integer curve evaluator) passed fractional frame s8
+#     to f_70005a98e0, which linearly interpolated 1-frame trigger impulses (0 -> 1 -> 0) down to
+#     1.0 - frac < 1.0 (failing the >= 1.0f trigger threshold) and linearly blended discrete
+#     integer command IDs into bogus intermediate IDs. Evaluating those discrete channels at
+#     floor(s8) matches the fcvtms w8, s8 debounce at 0x70004f6d60 while keeping all spatial /
+#     color / alpha channels continuous.
+#  b) Cut-start float accumulation drift in f_700050c150 (summing cut_frames[i] * (1/30f) vs
+#     f_70004fe0b0's sum(cut_frames[i]) * (1/30f)) can produce local_time = -1e-6f at the first
+#     sub-step of a cut, making floor(s8) == -1 == [x19+0xc08] and suppressing frame-0 triggers.
+#     Clamping s8 >= 0.0f at Gate 3 prevents negative cut-start local time.
+#  c) In f_70005a98e0, unauthored keyframes carry sentinel 0xcccccccc (-107374176.0f), which
+#     L_70005a9b64 sanitizes to 0.0f. When floor(s8) != ceil(s8), f_70005a98e0 linearly
+#     interpolated 0xcccccccc with valid floats before L_70005a9b64 could sanitize it, producing
+#     huge garbage floats that escaped the equality check. Guarding both lerp sites (0x70005a9b08
+#     and 0x70005a9b54) against 0xcccccccc / non-finite endpoints prevents sentinel pollution.
 def _cutscene_unquantize(gen, addr):
     original = _plain(gen, addr)
     return ('{ extern _Bool xcde_cutscene_unquantize(void); '
@@ -1073,10 +1092,61 @@ def _cutscene_cam_interp(gen, addr):
             'if (!xcde_cutscene_unquantize() && COND_EQ(c)) goto L_70004f5814; }')
 
 
+def _cutscene_track_unquantize(gen, addr):
+    original = _plain(gen, addr)
+    return ('{ extern _Bool xcde_cutscene_unquantize(void); '
+            'if (xcde_cutscene_unquantize()) { '
+            'if (VSF32(8) < 0.0f) c->v[8] = 0u; '
+            'goto L_700050c398; } } ' + original)
+
+
+def _cutscene_discrete_key_s8(gen, addr):
+    original = _plain(gen, addr)
+    return ('{ extern _Bool xcde_cutscene_unquantize(void); '
+            'if (xcde_cutscene_unquantize()) { '
+            'FP_SETS(0, frint_s(c, VSF32(8), 2)); '
+            '} else { ' + original + ' } }')
+
+
+def _cutscene_discrete_key_s0(gen, addr):
+    original = _plain(gen, addr)
+    return ('{ extern _Bool xcde_cutscene_unquantize(void); '
+            'if (xcde_cutscene_unquantize()) { '
+            'FP_SETS(0, frint_s(c, VSF32(0), 2)); } } ' + original)
+
+
+def _cutscene_curve_lerp_uncompressed(gen, addr):
+    original = _plain(gen, addr)
+    return ('{ uint32_t b0_ = VS32(0), b1_ = VS32(1); '
+            'if (b0_ == 0xccccccccu || b1_ == 0xccccccccu || '
+            '(0x7f800000u & ~b0_) == 0u || (0x7f800000u & ~b1_) == 0u) '
+            'goto L_70005a9b64; } ' + original)
+
+
+def _cutscene_curve_lerp_compressed(gen, addr):
+    original = _plain(gen, addr)
+    return ('{ uint32_t b0_ = VS32(11), b1_ = VS32(0); '
+            'if (b0_ == 0xccccccccu || b1_ == 0xccccccccu || '
+            '(0x7f800000u & ~b0_) == 0u || (0x7f800000u & ~b1_) == 0u) { '
+            'c->v[0] = b0_; goto L_70005a9b64; } } ' + original)
+
+
 PATCHES[0x70004e6b9c] = Patch(0x1e2c1800, _cutscene_unquantize, 'T224',
                               'fdiv s0, s0, s12 - skip 30 Hz cutscene clock quantization above 30 fps')
 PATCHES[0x70004f55f8] = Patch(0x540010e0, _cutscene_cam_interp, 'T224',
                               'b.eq L_70004f5814 - use built-in sub-frame camera lerp+slerp above 30 fps')
+PATCHES[0x700050c374] = Patch(0x1e201901, _cutscene_track_unquantize, 'T224',
+                              'fdiv s1, s8, s0 - skip 30 Hz track local-time quantization above 30 fps (clamping negative cut-start drift)')
+PATCHES[0x70005aa618] = Patch(0x4ea81d00, _cutscene_discrete_key_s8, 'T224',
+                              'mov v0.16b, v8.16b - evaluate discrete effect spawn trigger curve (+0x19cc) at floor(s8)')
+PATCHES[0x70005aa778] = Patch(0x4ea81d00, _cutscene_discrete_key_s8, 'T224',
+                              'mov v0.16b, v8.16b - evaluate discrete effect command ID curve (+0x19e8) at floor(s8)')
+PATCHES[0x70005a98b8] = Patch(0x9400000a, _cutscene_discrete_key_s0, 'T224',
+                              'bl f_70005a98e0 - evaluate discrete integer track curve at floor(s0)')
+PATCHES[0x70005a9b08] = Patch(0x1e203821, _cutscene_curve_lerp_uncompressed, 'T224',
+                              'fsub s1, s1, s0 - do not linearly interpolate 0xcccccccc / non-finite curve sentinels (uncompressed)')
+PATCHES[0x70005a9b54] = Patch(0x1e2b3800, _cutscene_curve_lerp_compressed, 'T224',
+                              'fsub s0, s0, s11 - do not linearly interpolate 0xcccccccc / non-finite curve sentinels (compressed)')
 
 # [XCDE] GitHub #179: volumetric cloud scroll speed above 30 FPS.
 # f_700062f860 (ml::Scn::update) passes Scene+0x3848 (Scene+0x37d4 * Scene+0x3844)
