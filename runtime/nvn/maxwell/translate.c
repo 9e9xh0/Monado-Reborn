@@ -1520,15 +1520,16 @@ static void emit_insn(Ctx *c, uint64_t w, uint32_t pc) {
         }
     } else if (OPM(0x5c10000000000000ull, 0xfff8000000000000ull) || OPM(0x4c10000000000000ull, 0xfff8000000000000ull) ||
                OPM(0x3810000000000000ull, 0xfef8000000000000ull)) {  // IADD
-        if (bits(w, 43, 1) || bits(w, 47, 1)) c->uses_cc = true;
-        sprintf(t, "(%s%s + %s%s%s)", bits(w, 49, 1) ? "-" : "", R(a), bits(w, 48, 1) ? "-" : "", B(false),
-                bits(w, 43, 1) ? " + cc" : "");
-        if (bits(w, 47, 1)) {
-            sp(&c->body, "    { uint s = %s%s; uint t2 = %s%s; uint res = s + t2%s; cc = (res < s) ? 1u : 0u;\n", bits(w, 49, 1) ? "-" : "",
-               R(a), bits(w, 48, 1) ? "-" : "", B(false), bits(w, 43, 1) ? " + cc" : "");
-            if (d != RZ) { c->reg_used[d] = 1; sp(&c->body, "      r%d = res;\n", d); }
+        bool na = bits(w, 49, 1), nb = bits(w, 48, 1), x = bits(w, 43, 1), wcc = bits(w, 47, 1);
+        if (x || wcc) {
+            c->uses_cc = true;
+            const char *cin = x ? "ulong(cc & 1u)" : ((na ^ nb) ? "ulong(1u)" : (na && nb ? "ulong(2u)" : "ulong(0u)"));
+            sp(&c->body, "    { ulong sum = ulong(%s%s) + ulong(%s%s) + %s;\n", na ? "~" : "", R(a), nb ? "~" : "", B(false), cin);
+            if (wcc) sp(&c->body, "      cc = uint(sum >> 32) & 1u;\n");
+            if (d != RZ) { c->reg_used[d] = 1; sp(&c->body, "      r%d = uint(sum);\n", d); }
             sp(&c->body, "    }\n");
         } else {
+            sprintf(t, "(%s%s + %s%s)", na ? "-" : "", R(a), nb ? "-" : "", B(false));
             set_reg(c, d, t);
         }
     } else if (OPM(0x1c00000000000000ull, 0xfe00000000000000ull)) {  // IADD32I (CC bit 52, X bit 53)
@@ -1756,9 +1757,9 @@ static void emit_insn(Ctx *c, uint64_t w, uint32_t pc) {
         case 4: sp(&c->body, "      uint cc_ = %s + (xbu << 16);\n", cv); break;                              // cbcc
         default: sp(&c->body, "      uint cc_ = %s;\n", cv);                                                  // cfull
         }
-        if (ext) sp(&c->body, "      uint res = prod + (cc & 1u);\n");
-        else sp(&c->body, "      uint res = prod + cc_;\n");
-        if (wcc) sp(&c->body, "      cc = (res < prod) ? 1u : 0u;\n");
+        sp(&c->body, "      ulong sum = ulong(prod) + ulong(cc_)%s;\n", ext ? " + ulong(cc & 1u)" : "");
+        sp(&c->body, "      uint res = uint(sum);\n");
+        if (wcc) sp(&c->body, "      cc = uint(sum >> 32) & 1u;\n");
         if (mrg) sp(&c->body, "      res = (res & 0xFFFFu) | (xbu << 16);\n");
         if (d != RZ) { c->reg_used[d] = 1; sp(&c->body, "      r%d = res;\n", d); }
         sp(&c->body, "    }\n");

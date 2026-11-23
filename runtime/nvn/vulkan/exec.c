@@ -1287,7 +1287,7 @@ static struct {
     uint8_t color_state[4], ds[8], ms[0x18], poly[4];
     float poly_offset[3];
     float alpha_ref;  // [XCDE] T191 (color_state[2]: the alpha test compare)
-    uint32_t attrib[16];
+    uint32_t attrib[32];
     int nattrib;
     uint32_t stream[16][2];
     int nstream;
@@ -1768,7 +1768,8 @@ static void att_barrier(VkCommandBuffer cb) {
 
 #define MEM_READ_STAGES (VK_PIPELINE_STAGE_2_DRAW_INDIRECT_BIT | VK_PIPELINE_STAGE_2_INDEX_INPUT_BIT | \
                          VK_PIPELINE_STAGE_2_VERTEX_ATTRIBUTE_INPUT_BIT | VK_PIPELINE_STAGE_2_VERTEX_SHADER_BIT | \
-                         VK_PIPELINE_STAGE_2_GEOMETRY_SHADER_BIT | VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT)
+                         VK_PIPELINE_STAGE_2_GEOMETRY_SHADER_BIT | VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT | \
+                         VK_PIPELINE_STAGE_2_TRANSFER_BIT)
 
 // guest memory written since the last barrier -> any later read or write of it; reads since then -> the memory-writing
 // draw that starts next (write after read); with_att: the attachment barrier too
@@ -5387,11 +5388,14 @@ uint64_t prof_vc_new_bytes, prof_vc_dirty_bytes, prof_vc_evicts, prof_vc_fb256;
 static void vc_free_dead(bool all) {
     uint64_t done = vk_completed_seq();
     int k = 0;
+    bool freed = false;
     for (int i = 0; i < vc_ndead; i++) {
         if (!all && vc_dead[i].seq > done) { vc_dead[k++] = vc_dead[i]; continue; }
         vmaDestroyBuffer(g_vk.vma, vc_dead[i].b, vc_dead[i].m);
+        freed = true;
     }
     vc_ndead = k;
+    if (freed) { ss.vb_known = 0; ss.known &= ~SS_IB; }
 }
 
 static bool vc_drop(VcEnt *e) {  // (freed once the submissions that may read it are done)
@@ -5448,7 +5452,7 @@ static void vc_mark_gpu(uint64_t lo, uint64_t hi) {
     { static int nl; if (getenv("XCDE_TRACE_VC") && nl < 40 && !vc_page_gpu[lo / VC_PAGE]) { nl++; LOG("[vc] GPU writes %llx..%llx\n", (unsigned long long)(lo + HEAP_BASE), (unsigned long long)(hi + HEAP_BASE)); } }
     bool changed = false;
     for (uint64_t p = lo / VC_PAGE; p < (hi + VC_PAGE - 1) / VC_PAGE && p < HEAP_MAX / VC_PAGE; p++)
-        if (!vc_page_gpu[p]) { vc_page_gpu[p] = 1; changed = true; }
+        if (!vc_page_gpu[p]) { vc_page_gpu[p] = 2; changed = true; }
     // [XCDE] perf: only when a page newly turned GPU-written (every grass / skinning writer draw re-marks the same
     // scratch pages: each bump made every cache entry rescan its pages, up to 16,384 of them, on its next lookup)
     if (changed) vc_epoch++;
@@ -5462,6 +5466,7 @@ static void vc_mark_sbufs(int stage) {
     }
 }
 
+bool backend_async(void);
 static bool vcache_lookup(uint64_t addr, uint64_t size, VkBuffer *buf, VkDeviceSize *off) {
     if (vc_on < 0) {
         const char *e = getenv("LARECOMP_VK_VCACHE");
@@ -5506,14 +5511,21 @@ static bool vcache_lookup(uint64_t addr, uint64_t size, VkBuffer *buf, VkDeviceS
     if (!e) {  // a new range: its own device-local buffer (gen 0: copied whole at the submission)
         if (vc_npend == VC_TAB) return false;
         if (vc_ndead) vc_free_dead(false);
+        uint64_t evict_lim = backend_async() ? vk_completed_seq() + 1 : pend;
         if (free_slot == ~0u) {
+            uint32_t ps = (uint32_t)(h ^ (h >> 32)) & (VC_TAB - 1);
+            old_slot = ~0u;
+            for (int probe = 0; probe < 16; probe++, ps = (ps + 1) & (VC_TAB - 1)) {
+                VcEnt *c = &vc_tab[ps];
+                if (c->buf && c->used_seq < evict_lim && (old_slot == ~0u || c->used_seq < vc_tab[old_slot].used_seq)) old_slot = ps;
+            }
             if (old_slot == ~0u || !vc_drop(&vc_tab[old_slot])) return false;
             free_slot = old_slot;
         }
         while (vc_bytes + (hi - lo) > VC_BUDGET) {  // over budget: the least recently used entry goes
             int lru = -1;
             for (int i = 0; i < VC_TAB; i++)
-                if (vc_tab[i].buf && vc_tab[i].used_seq < pend && (lru < 0 || vc_tab[i].used_seq < vc_tab[lru].used_seq)) lru = i;
+                if (vc_tab[i].buf && vc_tab[i].used_seq < evict_lim && (lru < 0 || vc_tab[i].used_seq < vc_tab[lru].used_seq)) lru = i;
             if (lru < 0 || !vc_drop(&vc_tab[lru])) return false;
         }
         e = &vc_tab[free_slot];
@@ -5580,36 +5592,55 @@ void vc_flush(void) {
     }
     prof_vc_scan_ns += SDL_GetTicksNS() - t0;
     VkCommandBuffer cb = VK_NULL_HANDLE;
+    bool stage = atomic_load(&vc_lag) && vc_stage_on();
     for (int i = 0; i < vc_npend; i++) {
         VcEnt *e = &vc_tab[vc_pend[i]];
         VkBufferCopy cp[256];
         int nc = 0;
         for (uint64_t p = e->lo / VC_PAGE; p < e->hi / VC_PAGE; p++) {
-            if (vc_page_gpu && vc_page_gpu[p]) continue;
+            bool newly_gpu = vc_page_gpu && vc_page_gpu[p] == 2;
+            if (vc_page_gpu && vc_page_gpu[p] == 1) continue;
+            if (newly_gpu) vc_page_gpu[p] = 1;
             if (e->gen && vc_page_gen[p] <= e->gen) continue;
             uint64_t o = p * VC_PAGE;
             if (nc && cp[nc - 1].srcOffset + cp[nc - 1].size == o) { cp[nc - 1].size += VC_PAGE; continue; }
-            if (nc == 256) { nc = 1; cp[0] = (VkBufferCopy){e->lo, 0, e->hi - e->lo}; prof_vc_fb256++; break; }  // (scattered: the whole range)
+            if (nc == 256) {
+                if (!cb) cb = vk_upload_cmd();
+                if (stage) {
+                    uint64_t total = 0, at = 0;
+                    for (int k = 0; k < nc; k++) total += cp[k].size;
+                    VkSpan st_ = vk_transient(total, 16);
+                    for (int k = 0; k < nc; k++) {
+                        memcpy((uint8_t *)st_.ptr + at, (const void *)(uintptr_t)(HEAP_BASE + cp[k].srcOffset), cp[k].size);
+                        cp[k].srcOffset = st_.off + at;
+                        at += cp[k].size;
+                    }
+                    vkCmdCopyBuffer(cb, st_.buf, e->buf, (uint32_t)nc, cp);
+                } else {
+                    vkCmdCopyBuffer(cb, gmem_buf, e->buf, (uint32_t)nc, cp);
+                }
+                for (int k = 0; k < nc; k++) {
+                    prof_vc_copied += cp[k].size;
+                    if (!e->gen) prof_vc_new_bytes += cp[k].size;
+                    else prof_vc_dirty_bytes += cp[k].size;
+                }
+                prof_vc_fb256++;
+                nc = 0;
+            }
             cp[nc++] = (VkBufferCopy){o, o - e->lo, VC_PAGE};
         }
         if (nc) {
             if (!cb) cb = vk_upload_cmd();
-            bool gpu_pages = false;  // (a GPU writer may fill part of it: those bytes are only current on the GPU timeline)
-            if (atomic_load(&vc_lag) && vc_stage_on() && vc_page_gpu)
-                for (uint64_t p = e->lo / VC_PAGE; p < e->hi / VC_PAGE && !gpu_pages; p++) gpu_pages = vc_page_gpu[p];
-            if (atomic_load(&vc_lag) && vc_stage_on() && !gpu_pages) {
-                // [XCDE] T-FRAME-LAG: copy the pages out now, while they still hold this submission's data, and let the
-                // GPU read the staged bytes. The ring chunk is not reused before this submission completes.
-                uint64_t total = 0;
+            if (stage) {
+                uint64_t total = 0, at = 0;
                 for (int k = 0; k < nc; k++) total += cp[k].size;
-                VkSpan st = vk_transient(total, 16);
-                uint64_t at = 0;
+                VkSpan st_ = vk_transient(total, 16);
                 for (int k = 0; k < nc; k++) {
-                    memcpy((uint8_t *)st.ptr + at, (const void *)(uintptr_t)(HEAP_BASE + cp[k].srcOffset), cp[k].size);
-                    cp[k].srcOffset = st.off + at;
+                    memcpy((uint8_t *)st_.ptr + at, (const void *)(uintptr_t)(HEAP_BASE + cp[k].srcOffset), cp[k].size);
+                    cp[k].srcOffset = st_.off + at;
                     at += cp[k].size;
                 }
-                vkCmdCopyBuffer(cb, st.buf, e->buf, (uint32_t)nc, cp);
+                vkCmdCopyBuffer(cb, st_.buf, e->buf, (uint32_t)nc, cp);
             } else {
                 vkCmdCopyBuffer(cb, gmem_buf, e->buf, (uint32_t)nc, cp);
             }
@@ -5707,6 +5738,7 @@ static void xsh_copy(XfbShadow *s, VkCommandBuffer cb, uint64_t at, uint64_t n) 
     vkCmdPipelineBarrier2(cb, &dpre);
     VkBufferCopy c = {at - HEAP_BASE, at - s->base, n};
     vkCmdCopyBuffer(cb, gmem_buf, s->buf, 1, &c);
+    mem_rd |= VK_PIPELINE_STAGE_2_TRANSFER_BIT;
     VkBufferMemoryBarrier2 post = {
         .sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER_2,
         .srcStageMask = VK_PIPELINE_STAGE_2_TRANSFER_BIT,
@@ -5790,10 +5822,10 @@ static void xsh_stored(int stage) {
     if (!xsh_store_on()) return;
     for (int i = 0; i < 16; i++) {
         uint64_t a = st.sbuf[stage][i].addr, sz = st.sbuf[stage][i].size;
-        if (a < HEAP_BASE || !sz || sz > (1ull << 20)) continue;
+        if (a < HEAP_BASE || !sz) continue;
+        if (sz > (1ull << 20)) { xsh_retire_overlaps(a, sz); continue; }
         XfbShadow *s = NULL;
         for (int k = 0; k < nxsh; k++) if (xsh[k].base == a && xsh[k].size == sz) s = &xsh[k];
-        if (s && !s->sb) continue;  // (a transform-feedback mirror: refreshed by its captures)
         if (!s) {
             // [XCDE] T205 (third look, the user's shot: Shulk's face as strips after dying in a battle, log without any
             // overlapping new mirror): a store into a range that only overlaps a mirror (another base / size than the
@@ -5836,12 +5868,13 @@ static void xsh_stored(int stage) {
 // [XCDE] T-STG-WRITERS: would xsh_stored(stage) act for the current storage-buffer bindings? Only when one of them
 // overlaps a mirror or holds an address noted as an in-place read of GPU-written data (otherwise it skips them all).
 static bool xsh_stage_relevant(int stage) {
-    if (!xsh_store_on() || !nwant) return false;
+    if (!xsh_store_on() || (!nwant && !nxsh)) return false;
     for (int i = 0; i < 16; i++) {
         uint64_t a = st.sbuf[stage][i].addr, sz = st.sbuf[stage][i].size;
-        if (a < HEAP_BASE || !sz || sz > (1ull << 20)) continue;
+        if (a < HEAP_BASE || !sz) continue;
         for (int k = 0; k < nxsh; k++) if (xsh[k].base < a + sz && a < xsh[k].base + xsh[k].size) return true;
-        for (int k = 0; k < nwant; k++) if (xsh_want[k] >= a && xsh_want[k] < a + sz) return true;
+        if (sz <= (1ull << 20))
+            for (int k = 0; k < nwant; k++) if (xsh_want[k] >= a && xsh_want[k] < a + sz) return true;
     }
     return false;
 }
@@ -5865,7 +5898,7 @@ static bool guest_direct(uint64_t addr, uint64_t size, VkBuffer *buf, VkDeviceSi
         // XCDE_MIRROR_SHORT=0: as before.
         static int short_on = -1;
         if (short_on < 0) short_on = !(getenv("XCDE_MIRROR_SHORT") && atoi(getenv("XCDE_MIRROR_SHORT")) == 0);
-        if (s && s->sb && short_on && size != ~0ull && addr + size > s->base + s->size) {
+        if (s && s->sb && short_on && (size == ~0ull || addr + size > s->base + s->size)) {
             static uint64_t n_short;
             n_short++;
             if ((n_short & (n_short - 1)) == 0)
@@ -6417,7 +6450,7 @@ static void dispatch_compute(uint32_t gx, uint32_t gy, uint32_t gz) {
     }
     vkCmdDispatch(cb, gx, gy, gz);
     if (cp->si->uses_gmem_map && cp->si->uses_gmem_store) gfast_finish(cb);
-    if (cp->si->uses_gmem_store) { vc_mark_sbufs(5); if (nwant) xsh_stored(5); atomic_store(&host_read_pending, true); }
+    if (cp->si->uses_gmem_store) { vc_mark_sbufs(5); if (nwant || nxsh) xsh_stored(5); atomic_store(&host_read_pending, true); }
     gmem_stage_finish(cp->si->uses_gmem_store);
     stat_dispatches++;
 }
@@ -6907,6 +6940,7 @@ static void draw_(CmdRec *r, bool indexed) {
     if (prof) prof_tp_ = SDL_GetTicksNS();
     prewarm_drain();  // [XCDE] T163
     if (!st.program) { SKIPPED(); return; }
+    if (!r->x[2] || (indexed ? !r->x[6] : !r->x[4])) return;
     {   // [XCDE] debugging: XCDE_SKIP_PROG=<fragment code addr hex>: drop the draws of that program
         static uint64_t skip = ~0ull;
         if (skip == ~0ull) skip = getenv("XCDE_SKIP_PROG") ? strtoull(getenv("XCDE_SKIP_PROG"), NULL, 16) : 0;
@@ -7073,9 +7107,32 @@ static void draw_(CmdRec *r, bool indexed) {
     if (stg_on < 0) { const char *e = getenv("XCDE_STG_WRITER_PASS"); stg_on = !(e && atoi(e) == 0); }
     static bool stg_tail;        // the previous draw was such a writer and left its pass open
     static uint64_t stg_tail_seq;
+    static Range stg_wr_ranges[64];
+    static int stg_n_wr;
     bool stg_writer = stg_on && !xfb && wst == VK_PIPELINE_STAGE_2_VERTEX_SHADER_BIT && !xsh_stage_relevant(0);
+    int stg_cur_n = 0;
+    if (stg_writer) {
+        for (int i = 0; i < 16; i++) if (st.sbuf[0][i].addr && st.sbuf[0][i].size) stg_cur_n++;
+        if (!stg_cur_n) stg_writer = false;  // unknown write target (no bound sbuf): keep barrier
+    }
     bool stg_follow = stg_tail && in_pass && !st.rt_dirty && stg_tail_seq == pass_seq_no;
+    if (stg_writer && stg_follow) {
+        if (stg_n_wr + stg_cur_n > 64) stg_follow = false;
+        for (int i = 0; stg_follow && i < 16; i++) {
+            uint64_t a = st.sbuf[0][i].addr, sz = st.sbuf[0][i].size;
+            if (!a || !sz) continue;
+            for (int k = 0; k < stg_n_wr; k++)
+                if (stg_wr_ranges[k].addr < a + sz && a < stg_wr_ranges[k].addr + stg_wr_ranges[k].size) { stg_follow = false; break; }
+        }
+    }
     stg_tail = false;
+    if (stg_writer) {
+        if (!stg_follow) stg_n_wr = 0;
+        for (int i = 0; i < 16 && stg_n_wr < 64; i++)
+            if (st.sbuf[0][i].addr && st.sbuf[0][i].size) stg_wr_ranges[stg_n_wr++] = st.sbuf[0][i];
+    } else {
+        stg_n_wr = 0;
+    }
     if (wst) {
         if (in_pass && !(stg_writer && stg_follow)) st.rt_dirty = true;
         pre_wr |= wst;  // (the barrier before it: earlier reads of guest memory first, T136)
@@ -7748,8 +7805,9 @@ static void draw_(CmdRec *r, bool indexed) {
     } else {
         vk_bind_graphics_sets(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, pr->layout, 0, pr->gi ? 3 : 2, sets, 0, NULL);  // (always new sets)
     }
-    if (pr->vi->uses_gmem_store) vc_mark_sbufs(0);
+    if (!xfb && pr->vi->uses_gmem_store) vc_mark_sbufs(0);
     if (pr->fi->uses_gmem_store) vc_mark_sbufs(1);
+    if (pr->gi && pr->gi->uses_gmem_store) vc_mark_sbufs(2);
 
     uint64_t prof_t2_ = prof ? SDL_GetTicksNS() : 0;
     // ---- indices (copied; the largest index bounds the vertex data copied below)
@@ -7833,12 +7891,12 @@ static void draw_(CmdRec *r, bool indexed) {
             VkBuffer dbuf;
             VkDeviceSize doff;
             if (v.addr && v.size && guest_direct(v.addr, v.size, &dbuf, &doff)) {
-                if (ss_on && (ss.vb_known >> s & 1) && ss.vb[s] == dbuf && ss.vo[s] == doff && ss.vsz[s] == v.size) continue;
-                ss.vb[s] = dbuf; ss.vo[s] = doff; ss.vsz[s] = v.size; ss.vb_known |= 1u << s;
                 // [XCDE] T173: bound with the stream's own size - fetches past it read 0 (robustBufferAccess2), as
                 // on Maxwell. Unbounded, a 4-byte per-object opacity stream read the guest memory after it.
                 VkDeviceSize vsz = g_vk.robust2 ? v.size : VK_WHOLE_SIZE;
                 if (g_direct_limit != ~0ull && (vsz == VK_WHOLE_SIZE || vsz > g_direct_limit)) vsz = g_direct_limit;  // (T175 mirror end)
+                if (ss_on && (ss.vb_known >> s & 1) && ss.vb[s] == dbuf && ss.vo[s] == doff && ss.vsz[s] == vsz) continue;
+                ss.vb[s] = dbuf; ss.vo[s] = doff; ss.vsz[s] = vsz; ss.vb_known |= 1u << s;
                 vkCmdBindVertexBuffers2(cb, (uint32_t)s, 1, &dbuf, &doff, &vsz, NULL);
                 continue;
             }
@@ -7907,7 +7965,11 @@ static void draw_(CmdRec *r, bool indexed) {
         stg_tail_seq = pass_seq_no;
     } else if (pr->vi->uses_gmem_store || pr->fi->uses_gmem_store || (pr->gi && pr->gi->uses_gmem_store)) {
         vk_end_pass(); st.rt_dirty = true; pass_untracked = !(mem_track_mode() & 1);
-        if (nwant) { if (pr->vi->uses_gmem_store) xsh_stored(0); if (pr->fi->uses_gmem_store) xsh_stored(1); }  // (T197)
+        if (nwant || nxsh) {
+            if (!xfb && pr->vi->uses_gmem_store) xsh_stored(0);
+            if (pr->fi->uses_gmem_store) xsh_stored(1);
+            if (pr->gi && pr->gi->uses_gmem_store) xsh_stored(2);
+        }  // (T197)
     }
     if (xfb_bytes || pr->vi->uses_gmem_store || pr->fi->uses_gmem_store || (pr->gi && pr->gi->uses_gmem_store)) atomic_store(&host_read_pending, true);
     gmem_stage_finish(xfb_bytes || pr->vi->uses_gmem_store || pr->fi->uses_gmem_store || (pr->gi && pr->gi->uses_gmem_store));
@@ -8489,6 +8551,10 @@ static VkCliffBatch cliff_batch_try(CmdRec *r, Prog *pr) {
     if (st.vbuf[inst_stream].addr < HEAP_BASE || st.vbuf[inst_stream].addr - HEAP_BASE >= HEAP_MAX ||
         st.vbuf[inst_stream].size > HEAP_MAX - (st.vbuf[inst_stream].addr - HEAP_BASE)) return none;
     VkCliffRange first = {st.vbuf[inst_stream].addr, st.vbuf[inst_stream].size};
+    if (nxsh) {
+        XfbShadow *sh = xsh_find(first.addr, first.size);
+        if (sh && first.size > sh->base + sh->size - first.addr) first.size = sh->base + sh->size - first.addr;
+    }
     VkCliffBatch batch = vk_inst_batch_scan(r, first, st.stream, (uint32_t)st.nstream, inst_stream, 64);
     if (batch.draws < 2) return none;
     // Live feedback reads stay per-draw. Only the already resolved, visibility-
@@ -8560,7 +8626,7 @@ static void exec_list(uint64_t handle, int depth) {
         case CMD_BIND_MULTISAMPLE: memcpy(st.ms, x, 0x18); st.pipe_gen = ++g_pipe_gen; break;
         case CMD_BIND_POLYGON: memcpy(st.poly, x, 4); st.pipe_gen = ++g_pipe_gen; break;
         case CMD_BIND_VERTEX_ATTRIB:
-            st.nattrib = (int)r->x[0] > 16 ? 16 : (int)r->x[0];
+            st.nattrib = (int)r->x[0] > 32 ? 32 : (int)r->x[0];
             memcpy(st.attrib, x, st.nattrib * 4);
             st.skey_gen = ++g_skey_gen;
             st.pipe_gen = ++g_pipe_gen;
@@ -8855,6 +8921,7 @@ static void exec_list(uint64_t handle, int depth) {
             break;
         case CMD_UPDATE_UNIFORM_BUFFER:
             watch_mem_note("inline uniform update", r->x[0] + r->x[2], r->x[3]);
+            xsh_retire_overlaps(r->x[0] + r->x[2], r->x[3]);
             memcpy((void *)(uintptr_t)(r->x[0] + r->x[2]), x, r->x[3]);
             guest_copy_flush();  // (cbuf copies shared within the submission are stale now)
             break;
@@ -8929,8 +8996,29 @@ static void exec_list(uint64_t handle, int depth) {
             wait_why = "buffer -> buffer copy";
             renderer_flush();
             watch_mem_note("buffer copy", r->x[1], r->x[2]);
+            xsh_retire_overlaps(r->x[1], r->x[2]);
+            plat_will_write(r->x[1], r->x[2]);
             memmove((void *)(uintptr_t)r->x[1], (void *)(uintptr_t)r->x[0], r->x[2]);
+            guest_copy_flush();
             break;
+        case CMD_CLEAR_BUFFER: {
+            flush_pending_clear();
+            wait_why = "buffer clear";
+            renderer_flush();
+            uint64_t dst = r->x[0], sz = r->x[1];
+            uint32_t val = (uint32_t)r->x[2];
+            if (dst && sz) {
+                watch_mem_note("buffer clear", dst, sz);
+                xsh_retire_overlaps(dst, sz);
+                plat_will_write(dst, sz);
+                uint32_t *p32 = (uint32_t *)(uintptr_t)dst;
+                uint64_t nw = sz / 4;
+                for (uint64_t i = 0; i < nw; i++) p32[i] = val;
+                if (sz & 3) memcpy((uint8_t *)p32 + nw * 4, &val, (size_t)(sz & 3));
+                guest_copy_flush();
+            }
+            break;
+        }
         default: {  // [XCDE] commands this executor does not implement: say so (once per type) instead of dropping them silently
             static uint32_t told[4]; static uint64_t cnt[128];
             uint32_t id = (uint32_t)r->op;

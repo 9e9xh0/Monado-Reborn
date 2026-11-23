@@ -19,7 +19,7 @@ static inline VkCliffBatch vk_inst_batch_scan(const CmdRec *first, VkCliffRange 
     VkCliffBatch out = {.next = (const CmdRec *)((const uint8_t *)first + first->size),
                        .last = initial, .draws = 1, .inst_stream = inst_stream};
     if (inst_stream >= nstream || nstream > 16 || first->op != CMD_DRAW_ELEMENTS ||
-        first->size != sizeof *first || first->x[5] || first->x[6] > 1 || limit < 2) return out;
+        first->size != sizeof *first || first->x[5] || first->x[6] != 1 || limit < 2) return out;
     uint32_t stride = streams[inst_stream][0], vb = 0, vs = 0;
     if (!stride || streams[inst_stream][1] != 1) return out;
     VkCliffRange pending = initial;
@@ -36,7 +36,7 @@ static inline VkCliffBatch vk_inst_batch_scan(const CmdRec *first, VkCliffRange 
             vs++;
         } else if (q->op == CMD_DRAW_ELEMENTS) {
             uint64_t offset = (uint64_t)out.draws * stride;
-            if (q->size != sizeof *q || q->x[6] > 1 || memcmp(q->x, first->x, 6 * sizeof(uint64_t)) ||
+            if (q->size != sizeof *q || q->x[6] != 1 || memcmp(q->x, first->x, 6 * sizeof(uint64_t)) ||
                 initial.addr > UINT64_MAX - offset || pending.addr != initial.addr + offset ||
                 pending.size < stride || initial.size / stride <= out.draws) break;
             out.draws++;
