@@ -142,9 +142,13 @@ if(WIN32)
   target_compile_definitions(monado_rt PRIVATE "GAMELIB_ID=\"${GAMELIB_ID}\"")
   set_source_files_properties(runtime/host/main_boot.c PROPERTIES COMPILE_DEFINITIONS XCDE_GFX)
   set_source_files_properties(runtime/nvn/smaa_data.c PROPERTIES INCLUDE_DIRECTORIES "${GEN_INC};${ROOT}/third_party/smaa/Textures")
-  # [XCDE] T-RUNTIME-O2: hot Vulkan/collision units get -O2 on Windows as well as Linux
-  set_source_files_properties(runtime/nvn/vulkan/exec.c runtime/nvn/vulkan/textures.c runtime/hle/collision_bvh.c
-                              PROPERTIES COMPILE_OPTIONS -O2)
+  # [XCDE] T-RUNTIME-O2: hot Vulkan/kernel/platform/collision units get -O2 on Windows as well as Linux
+  set_source_files_properties(
+      runtime/nvn/vulkan/exec.c runtime/nvn/vulkan/textures.c runtime/nvn/vulkan/vkq.c
+      runtime/nvn/vulkan/device.c runtime/nvn/vulkan/post.c runtime/nvn/vulkan/temporal.c
+      runtime/nvn/cmdbuf.c runtime/nvn/objects.c
+      runtime/kernel.c runtime/platform/windows.c runtime/hle/collision_bvh.c
+      PROPERTIES COMPILE_OPTIONS -O2)
 
   add_library(monado_ui OBJECT ${UI_SOURCES})
   target_compile_options(monado_ui PRIVATE ${CXX_FLAGS})
@@ -153,7 +157,7 @@ if(WIN32)
   target_compile_options(monado_dlss PRIVATE ${CXX_FLAGS})
   target_include_directories(monado_dlss PRIVATE runtime runtime/nvn third_party/streamline/include)
   add_library(monado_vma OBJECT runtime/nvn/vulkan/vma.cpp)
-  target_compile_options(monado_vma PRIVATE ${CXX_FLAGS})
+  target_compile_options(monado_vma PRIVATE ${CXX_FLAGS} -O2)
 
   set(GAME_LINK_LIBS)
   foreach(l SDL3.dll shaderc_shared.dll vulkan-1.dll opus.dll avcodec.dll avformat.dll avutil.dll swscale.dll

@@ -16,6 +16,7 @@
 #include "temporal.h"
 #include "../renderer.h"
 #include "../../settings.h"
+#include "../../env_cache.h"  // [XCDE] cached getenv
 
 void vk_watch(VkImage dst, const char *site);
 uint64_t renderer_present_count(void);
