@@ -4,6 +4,7 @@
 #include "../../resource_policy.h"
 // Executes recorded NVN command lists with Vulkan (port of renderer.m; same structure, same behaviour).
 #include "../../diag/diag.h"
+#include "../../fast_sync.h"
 #include "../../kernel.h"
 #include "../../platform.h"
 #include <SDL3/SDL_cpuinfo.h>
@@ -71,6 +72,7 @@ static uint64_t metric_desc_hits, metric_desc_updates, metric_gmem_upload, metri
 // LARECOMP_VK_PROF=1: render-thread time per category in the fps log (exec = whole command lists, draw = draw(),
 // sets = descriptor sets incl. cbuf copies, vtx = index scan + vertex copies, submit = vkQueueSubmit2)
 static int prof = -1;
+static bool metrics_on;
 static uint64_t prof_exec, prof_draw, prof_sets, prof_vtx, prof_submit, prof_pre, prof_key, prof_dyn, prof_tex, prof_up, prof_gpu;
 static VkQueryPool prof_qp;
 static uint64_t prof_same_pipe, prof_same_prog;  // (profiler: draws repeating the previous draw's program / pipeline)
@@ -190,7 +192,7 @@ static __thread const char *wait_why;
 const char *volatile g_rq_where = "not started";
 volatile uint64_t g_rq_where_ns;
 static __thread bool tl_rq_worker;  // (only the worker's own steps: game threads wait on the GPU too)
-void vk_rq_at(const char *where) { if (tl_rq_worker) g_rq_where = where, g_rq_where_ns = SDL_GetTicksNS(); }
+void vk_rq_at(const char *where) { if (tl_rq_worker) g_rq_where = where, g_rq_where_ns = plat_now_ns(); }
 static struct { const char *why; uint64_t ns, n; } wait_tab[12];
 static pthread_mutex_t wait_tab_lock = PTHREAD_MUTEX_INITIALIZER;
 static void wait_account(uint64_t ns) {
@@ -213,14 +215,15 @@ void vk_wait_seq(uint64_t seq) {
     if (!seq) { wait_why = NULL; return; }
     VkSemaphoreWaitInfo wi = {.sType = VK_STRUCTURE_TYPE_SEMAPHORE_WAIT_INFO, .semaphoreCount = 1, .pSemaphores = &g_vk.timeline,
                               .pValues = &seq};
-    uint64_t t0 = SDL_GetTicksNS();
+    uint64_t t0 = plat_now_ns();
     const char *was = g_rq_where;
     vk_rq_at(wait_why ? wait_why : "GPU wait");
     VkResult r = vkWaitSemaphores(g_vk.dev, &wi, 10ull * 1000000000ull);
     if (tl_rq_worker) g_rq_where = was;
-    stat_wait_ns += SDL_GetTicksNS() - t0;
-    cum_wait += SDL_GetTicksNS() - t0;
-    wait_account(SDL_GetTicksNS() - t0);
+    uint64_t dt = plat_now_ns() - t0;
+    stat_wait_ns += dt;
+    cum_wait += dt;
+    wait_account(dt);
     // [XCDE] T128 (upstream LASRecomp #127, hjqcan): a timed-out wait is fatal - the callers go on to reset descriptor
     // pools and command buffers the GPU may still be using
     if (r == VK_TIMEOUT) {
@@ -1474,7 +1477,8 @@ static void st_defaults(void) {
 }
 
 void vk_exec_init(void) {
-    prof = getenv("LARECOMP_VK_PROF") != NULL || getenv("XCDE_METRICS") != NULL;
+    prof = getenv("LARECOMP_VK_PROF") != NULL;
+    metrics_on = getenv("XCDE_METRICS") != NULL;
     uint32_t nq=0;
     vkGetPhysicalDeviceQueueFamilyProperties(g_vk.phys,&nq,NULL);
     VkQueueFamilyProperties *queues=calloc(nq,sizeof *queues);
@@ -6177,15 +6181,33 @@ static VkSpan hr_patch(int stage, const void *src, uint64_t have, uint64_t size)
     const float *f = (const float *)src;
     uint64_t rows = have / 16, r = 0;
     if (rows > 64) rows = 64;  // (the first 1 KB: the scan runs for every draw that gathers a scaled texture)
-    for (; r < rows; r++) if (hr_row(f + 4 * r)) break;
+    // [XCDE] Pack (float)g_hr.w and (float)g_hr.h into one 64-bit bit pattern: both are positive integers > 1 so
+    // IEEE-754 equality is exact bit equality (1 integer cmp instead of 2 FP ucomiss + 4 branches per 16 B row).
+    float fw = (float)g_hr.w, fh = (float)g_hr.h;
+    uint32_t wb, hb;
+    memcpy(&wb, &fw, 4);
+    memcpy(&hb, &fh, 4);
+    uint64_t wh_bits = (uint64_t)wb | ((uint64_t)hb << 32);
+    for (; r < rows; r++) {
+        uint64_t pair;
+        memcpy(&pair, f + 4 * r, 8);
+        if (pair == wh_bits && fabsf(f[4 * r + 2] * fw - 1.0f) < 1e-5f && fabsf(f[4 * r + 3] * fh - 1.0f) < 1e-5f)
+            break;
+    }
     if (r == rows) return (VkSpan){0};
     if (stage == 0) g_hr.vs_hit = true;
     VkSpan s = vk_transient(size, 256);
     memcpy(s.ptr, src, have);
     if (size > have) memset((uint8_t *)s.ptr + have, 0, size - have);
-    float *d = (float *)s.ptr, W = (float)g_hr.w * g_hr.sx, H = (float)g_hr.h * g_hr.sy;
-    for (; r < rows; r++)
-        if (hr_row(d + 4 * r)) { d[4 * r] = W; d[4 * r + 1] = H; d[4 * r + 2] = 1.0f / W; d[4 * r + 3] = 1.0f / H; }
+    float *d = (float *)s.ptr, W = fw * g_hr.sx, H = fh * g_hr.sy, invW = 1.0f / W, invH = 1.0f / H;
+    // [XCDE] Read from cached guest RAM `f`, never from write-combined VRAM `d` (`s.ptr`).
+    for (; r < rows; r++) {
+        uint64_t pair;
+        memcpy(&pair, f + 4 * r, 8);
+        if (pair == wh_bits && fabsf(f[4 * r + 2] * fw - 1.0f) < 1e-5f && fabsf(f[4 * r + 3] * fh - 1.0f) < 1e-5f) {
+            d[4 * r] = W; d[4 * r + 1] = H; d[4 * r + 2] = invW; d[4 * r + 3] = invH;
+        }
+    }
     static int nlog, trace_hr = -1;
     if (trace_hr < 0) trace_hr = getenv("XCDE_TRACE_HALFRES") != NULL;
     if (nlog < 8 && trace_hr) {
@@ -9047,8 +9069,8 @@ enum { RJ_EXEC, RJ_PRESENT, RJ_FENCE, RJ_DESTROY };
 static RJob rq[RQ_N];
 static uint64_t rq_head, rq_tail, rq_done;  // jobs run / queued; ticket of a job = its index + 1
 static int rq_presents;
-static pthread_mutex_t rq_lock = PTHREAD_MUTEX_INITIALIZER;
-static pthread_cond_t rq_cv = PTHREAD_COND_INITIALIZER, rq_done_cv = PTHREAD_COND_INITIALIZER;
+static FastMutex rq_lock = FAST_MUTEX_INIT;
+static FastCond rq_cv = FAST_COND_INIT, rq_done_cv = FAST_COND_INIT;
 void backend_texture_destroyed(NvnTexture *t);
 void backend_present(NvnTexture *t);
 
@@ -9085,31 +9107,32 @@ void backend_pool_write(void *dst, const void *src, size_t n, int kind) {
     if (n > sizeof w.data) { memcpy(dst, src, n); return; }
     memcpy(w.data, src, n);
     if (imm || !backend_async()) { pool_write_apply(&w); return; }
-    pthread_mutex_lock(&rq_lock);
+    fast_mutex_lock(&rq_lock);
     w.tag = rq_tail;
     if (pwq_n == pwq_cap) {
         size_t cap = pwq_cap ? pwq_cap * 2 : 4096;
         PoolWrite *q = realloc(pwq, cap * sizeof *q);
-        if (!q) { pthread_mutex_unlock(&rq_lock); pool_write_apply(&w); return; }
+        if (!q) { fast_mutex_unlock(&rq_lock); pool_write_apply(&w); return; }
         pwq = q; pwq_cap = cap;
     }
     pwq[pwq_n++] = w;
-    pthread_mutex_unlock(&rq_lock);
+    fast_mutex_unlock(&rq_lock);
 }
 
 static void *rq_worker(void *arg) {
     (void)arg;
+    plat_thread_name("vk-render");
     tl_rq_worker = true;
     for (;;) {
-        pthread_mutex_lock(&rq_lock);
+        fast_mutex_lock(&rq_lock);
         while (rq_head == rq_tail) {
             uint64_t t0 = plat_now_ns();
-            pthread_cond_wait(&rq_cv, &rq_lock);
+            fast_cond_wait(&rq_cv, &rq_lock);
             g_blocked_ns += plat_now_ns() - t0;  // (idle, not busy: vk_pace_frame measures this thread's frames)
         }
         RJob j = rq[rq_head % RQ_N];
         pool_writes_until(rq_head);
-        pthread_mutex_unlock(&rq_lock);
+        fast_mutex_unlock(&rq_lock);
         static const char *const kind_name[] = {"recording a command list", "presenting", "setting a fence", "freeing a texture"};
         vk_rq_at(j.kind >= 0 && j.kind < 4 ? kind_name[j.kind] : "a job");
         switch (j.kind) {
@@ -9129,12 +9152,12 @@ static void *rq_worker(void *arg) {
         }
         }
         vk_rq_at("idle (queue empty)");
-        pthread_mutex_lock(&rq_lock);
+        fast_mutex_lock(&rq_lock);
         rq_head++;
         if (j.kind == RJ_PRESENT) rq_presents--;
         rq_done = rq_head;
-        pthread_cond_broadcast(&rq_done_cv);
-        pthread_mutex_unlock(&rq_lock);
+        fast_cond_broadcast(&rq_done_cv);
+        fast_mutex_unlock(&rq_lock);
     }
     return NULL;
 }
@@ -9169,14 +9192,14 @@ bool backend_async(void) {
 
 static void scan_fences(uint64_t handle, uint64_t ticket, int depth);
 static uint64_t rq_push_result(int kind, uint64_t a, uint64_t result_seq) {
-    pthread_mutex_lock(&rq_lock);
-    while (rq_tail - rq_head >= RQ_N || (kind == RJ_PRESENT && rq_presents >= 2)) pthread_cond_wait(&rq_done_cv, &rq_lock);
+    fast_mutex_lock(&rq_lock);
+    while (rq_tail - rq_head >= RQ_N || (kind == RJ_PRESENT && rq_presents >= 2)) fast_cond_wait(&rq_done_cv, &rq_lock);
     if (kind == RJ_EXEC) scan_fences(a, rq_tail + 1, 0);  // (under the lock: its syncs carry this job's ticket before anyone waits)
     rq[rq_tail % RQ_N] = (RJob){kind, a, result_seq};
     uint64_t ticket = ++rq_tail;
     if (kind == RJ_PRESENT) rq_presents++;
-    pthread_cond_signal(&rq_cv);
-    pthread_mutex_unlock(&rq_lock);
+    fast_cond_signal(&rq_cv);
+    fast_mutex_unlock(&rq_lock);
     return ticket;
 }
 
@@ -9191,7 +9214,7 @@ uint64_t backend_present_fenced_sync(NvnTexture *t) {
 
 // [XCDE] T240 (diag/watchdog.c): the worker's state in a stall report - no locks (the stall may be inside one)
 void backend_stall_report(FILE *f) {
-    double secs = g_rq_where_ns ? (SDL_GetTicksNS() - g_rq_where_ns) / 1e9 : 0;
+    double secs = g_rq_where_ns ? (plat_now_ns() - g_rq_where_ns) / 1e9 : 0;
     fprintf(f, "[stall] render worker: %s (for %.1f s); jobs run %llu, queued %llu, presents queued %d; submissions %llu;"
                " build jobs queued %d busy %d, translations queued %d\n", g_rq_where ? g_rq_where : "?", secs,
             (unsigned long long)rq_head, (unsigned long long)rq_tail, rq_presents, (unsigned long long)submit_seq,
@@ -9199,14 +9222,14 @@ void backend_stall_report(FILE *f) {
 }
 
 void backend_wait_ticket(uint64_t ticket) {  // (guest threads) the worker has run every job up to that one
-    pthread_mutex_lock(&rq_lock);
-    while (rq_done < ticket) pthread_cond_wait(&rq_done_cv, &rq_lock);
-    pthread_mutex_unlock(&rq_lock);
+    fast_mutex_lock(&rq_lock);
+    while (rq_done < ticket) fast_cond_wait(&rq_done_cv, &rq_lock);
+    fast_mutex_unlock(&rq_lock);
 }
 void backend_drain(void) {
-    pthread_mutex_lock(&rq_lock);
+    fast_mutex_lock(&rq_lock);
     uint64_t t = rq_tail;
-    pthread_mutex_unlock(&rq_lock);
+    fast_mutex_unlock(&rq_lock);
     backend_wait_ticket(t);
 }
 
@@ -9238,10 +9261,13 @@ void backend_queue_destroy(NvnTexture *t) { rq_push(RJ_DESTROY, (uint64_t)(uintp
 
 void backend_execute(uint64_t handle) {
     split_since = 0;
-    PROF_T0();
+    uint64_t exec_t0 = (prof || metrics_on) ? plat_now_ns() : 0;
     exec_list(handle, 0);
-    PROF_ADD(prof_exec);
-    if (prof) cum_exec += SDL_GetTicksNS() - prof_t0_;
+    if (prof || metrics_on) {
+        uint64_t dt = plat_now_ns() - exec_t0;
+        if (prof) prof_exec += dt;
+        cum_exec += dt;
+    }
     static int sync_submit = -1;
     if (sync_submit < 0) sync_submit = getenv("LARECOMP_SYNC_SUBMIT") ? 1 : 0;
     if (sync_submit) renderer_flush();

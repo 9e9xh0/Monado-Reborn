@@ -18,6 +18,7 @@
 
 #include "../../diag/diag.h"
 #include "../../settings.h"
+#include "../../env_cache.h"  // [XCDE] cached getenv (avoids UCRT strchr/locale scan per frame on Windows)
 #include "temporal.h"
 #include "vkq.h"  // [XCDE] T-LINUX-THREE: drain before the SDKs record into the command buffer
 #include "fsr4.h"  // [XCDE] T-FSR4-LITE (Linux)
@@ -207,9 +208,9 @@ static void jit_upscale_out(const float jit[2], float out[2]) {
 }
 
 // ---------------------------------------------------------------- images
-typedef struct { TexBackend b; VkImageView v; } Img;
+typedef struct { TexBackend b; VkImageView v; VkImageUsageFlags usage; } Img;
 static void img_make(Img *d, VkFormat f, uint32_t w, uint32_t h, VkImageUsageFlags usage) {
-    if (d->b.image && d->b.width == w && d->b.height == h && d->b.format == f) return;
+    if (d->b.image && d->b.width == w && d->b.height == h && d->b.format == f && d->usage == usage) return;
     if (d->b.image) {
         vk_views_forget(&d->b);
         vk_defer_image(d->b.image, d->b.mem);
@@ -222,6 +223,7 @@ static void img_make(Img *d, VkFormat f, uint32_t w, uint32_t h, VkImageUsageFla
     VK_CHECK(vmaCreateImage(g_vk.vma, &ci, &ai, &d->b.image, &d->b.mem, NULL));
     d->b.format = f; d->b.width = w; d->b.height = h; d->b.depth = 1; d->b.layers = 1; d->b.levels = 1;
     d->b.samples = 1; d->b.aspect = VK_IMAGE_ASPECT_COLOR_BIT; d->b.base_type = VK_IMAGE_VIEW_TYPE_2D;
+    d->usage = usage;
     vk_image_init_layout(vk_cmd(), d->b.image, d->b.aspect);
     static const VkComponentMapping id = {0};
     d->v = vk_image_view(&d->b, VK_IMAGE_VIEW_TYPE_2D, f, 0, 1, 0, 1, id, VK_IMAGE_ASPECT_COLOR_BIT);
@@ -714,10 +716,15 @@ VkImageView tmp_upscale(VkCommandBuffer cb, TexBackend *color, VkImageView color
             }
         }
     }
-    img_make(&img[0], F_COLOR, rw, rh, VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_STORAGE_BIT);
-    img_make(&img[1], F_MV, rw, rh, VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_STORAGE_BIT);
-    img_make(&img[2], F_DEPTH, rw, rh, VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_STORAGE_BIT);
-    img_make(&img[5], F_MASK, rw, rh, VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_STORAGE_BIT);
+    // [XCDE] FSR 3 reads img[0,1,2,5] as sampled textures (not UAVs): omitting STORAGE_BIT lets AMDVLK keep full DCC
+    // compression on tmp_prep's 4 MRT attachments (24% faster tmp_prep on RX 6900 XT). DLSS / FSR 4 Lite keep STORAGE_BIT.
+    bool fsr3_opt_inputs = g_settings.upscaler != UPSCALE_FSR4_LITE && !use_dlss();
+    VkImageUsageFlags in_usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT |
+                                 (fsr3_opt_inputs ? 0 : VK_IMAGE_USAGE_STORAGE_BIT);
+    img_make(&img[0], F_COLOR, rw, rh, in_usage);
+    img_make(&img[1], F_MV, rw, rh, in_usage);
+    img_make(&img[2], F_DEPTH, rw, rh, in_usage);
+    img_make(&img[5], F_MASK, rw, rh, in_usage);
     bool snap = snap_frame == renderer_present_count() && img[4].b.image && img[4].b.width == color->width &&
                 img[4].b.height == color->height && !env_int("XCDE_TMP_NO_HUD_MASK");
     img_make(&img[3], F_COLOR, ow, oh, VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_STORAGE_BIT |

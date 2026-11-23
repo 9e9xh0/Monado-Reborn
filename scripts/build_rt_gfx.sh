@@ -20,13 +20,13 @@ for f in $RT; do
   pick "$f" || continue
   o=build/rt/$(echo $f | tr / _).o; extra=""
   [ "$f" = host/main_boot ] && { o=build/rt/host_main_boot_gfx.o; extra="-DXCDE_GFX"; }
-  [ "$f" = hle/collision_bvh ] && extra="$extra -O2"
+  case "$f" in kernel|platform/windows|hle/collision_bvh) extra="$extra -O2" ;; esac
   $Z -c runtime/$f.c -o $o.$$.tmp $CF -DGAMELIB_ID='"dev"' $extra && mv -f $o.$$.tmp $o || { echo "FAIL $f"; fail=1; }  # (tmp + rename: a parallel link never reads half an object)
 done
 for f in $NVN; do
   pick "nvn/$f" || continue
   extra=""
-  case "$f" in vulkan/exec|vulkan/textures) extra="-O2" ;; esac
+  case "$f" in cmdbuf|objects|vulkan/device|vulkan/exec|vulkan/post|vulkan/temporal|vulkan/textures|vulkan/vkq) extra="-O2" ;; esac
   if [ "$f" = smaa_data ]; then  # [XCDE] the SMAA reference shader (third_party/smaa, MIT) as a C string
     mkdir -p build/inc
     .venv/Scripts/python tools/build/gen_smaa_inc.py third_party/smaa/SMAA.hlsl build/inc/smaa_hlsl.inc || fail=1
@@ -56,7 +56,7 @@ fi
 # same baseline CPU as everything else. (Built by hand before: vma.o carried AVX-512 from the build PC's CPU, so the
 # game would stop with an illegal instruction on CPUs without it.)
 if pick nvn/vulkan/vma; then
-  .venv/Scripts/python -m ziglang c++ -c runtime/nvn/vulkan/vma.cpp -o build/nvn/vma.o -std=c++17 -O1 -march=x86_64_v2 -fvisibility=hidden -idirafter /c/msys64/ucrt64/include -w || { echo "FAIL nvn/vulkan/vma"; fail=1; }
+  .venv/Scripts/python -m ziglang c++ -c runtime/nvn/vulkan/vma.cpp -o build/nvn/vma.o -std=c++17 -O2 -march=x86_64_v2 -fvisibility=hidden -idirafter /c/msys64/ucrt64/include -w || { echo "FAIL nvn/vulkan/vma"; fail=1; }
 fi
 if pick paths; then
   $Z -c runtime/paths.c -o build/nvn/paths.o $CF -DGAMELIB_ID='"dev"' || { echo "FAIL paths"; fail=1; }

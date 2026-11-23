@@ -518,9 +518,7 @@ static void create_device(void) {
     b->logicOp = h->logicOp;  // [XCDE] T176: ColorState logic ops (the probe-lighting index map ORs its slots)
     g_vk.logic_op = h->logicOp;
 #if defined(__linux__) || defined(_WIN32)
-#ifdef __linux__
-    b->shaderStorageImageExtendedFormats = h->shaderStorageImageExtendedFormats;  // [XCDE] native FSR 3 FP images
-#endif
+    b->shaderStorageImageExtendedFormats = h->shaderStorageImageExtendedFormats;  // [XCDE] FSR 3 FP storage images
     b->shaderInt16 = h->shaderInt16;  // [XCDE] T-FSR4-LITE
     if (!legacy) f13.shaderIntegerDotProduct = h13.shaderIntegerDotProduct;
     {
@@ -748,6 +746,16 @@ static VkPresentModeKHR present_mode(void) {
     vkGetPhysicalDeviceSurfacePresentModesKHR(g_vk.phys, g_vk.surface, &n, m);
     g_vsync_fifo = vs;
     for (uint32_t i = 0; i < n; i++) if (m[i] == want) return g_present_mode_cur = want;
+    // [XCDE] Windows AMDVLK does not expose MAILBOX; when V-Sync FIFO was not requested (e.g. fps = unlimited / >60),
+    // fall back to IMMEDIATE instead of FIFO so the display refresh rate does not cap the frame rate.
+    if (!vs && want == VK_PRESENT_MODE_MAILBOX_KHR) {
+        for (uint32_t i = 0; i < n; i++)
+            if (m[i] == VK_PRESENT_MODE_IMMEDIATE_KHR) {
+                static int logged_fb;
+                if (!logged_fb++) LOG("[vk] present mode immediate (mailbox unavailable)\n");
+                return g_present_mode_cur = VK_PRESENT_MODE_IMMEDIATE_KHR;
+            }
+    }
     return g_present_mode_cur = VK_PRESENT_MODE_FIFO_KHR;
 }
 const char *vk_present_mode_name(void) {  // [XCDE] GitHub #39 (performance overlay)

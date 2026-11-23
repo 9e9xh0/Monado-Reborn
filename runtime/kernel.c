@@ -8,6 +8,12 @@
 
 #include "hle.h"
 #include "kernel.h"
+#ifdef _WIN32
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <windows.h>
+#endif
 
 // ------------------------------------------------------------------ results
 #undef R_OK
@@ -828,11 +834,23 @@ static void svc_impl(Cpu *c, uint32_t imm, uint64_t pc) {
             pthread_mutex_unlock(&g_klock);
             break;
         }
-        if (ns <= 0) { sched_yield(); break; }
+        if (ns <= 0) {
+#ifdef _WIN32
+            SwitchToThread();
+#else
+            sched_yield();
+#endif
+            break;
+        }
         for (uint64_t end = plat_now_ns() + (uint64_t)ns, now; !g_rt_unwind && (now = plat_now_ns()) < end;) {
             uint64_t d = end - now < 50000000 ? end - now : 50000000;
+#ifdef _WIN32
+            // [XCDE] libwinpthread's nanosleep rounds up to 1 ms Sleep(); use the high-res waitable timer path.
+            plat_sleep_until_ns(now + d);
+#else
             struct timespec ts = {(time_t)(d / 1000000000), (long)(d % 1000000000)};
             nanosleep(&ts, NULL);
+#endif
             g_blocked_ns += plat_now_ns() - now;
         }
         break;

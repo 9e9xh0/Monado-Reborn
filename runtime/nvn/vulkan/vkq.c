@@ -8,6 +8,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <immintrin.h>
+#include "../../fast_sync.h"
 #include "../../platform.h"
 #include "vk.h"
 #include "vkq.h"
@@ -29,12 +30,15 @@ enum {
 };
 typedef struct { uint32_t op, size; VkCommandBuffer cb; } QHdr;   // size: whole record, header included
 static uint8_t *q_buf;
-static _Atomic uint64_t q_w, q_r;
-static uint64_t q_wl;            // producer's write position (q_w lags it until the record is complete)
+// [XCDE] Separate producer/consumer atomics onto distinct 64-byte cache lines to prevent false sharing.
+static _Alignas(64) _Atomic uint64_t q_w;
+static _Alignas(64) _Atomic uint64_t q_r;
+static _Alignas(64) uint64_t q_wl, q_r_cached;  // producer-only write cursor & cached consumer read cursor
 static QHdr *q_cur;
-static _Atomic int q_sleeping, q_drain_wait;
-static pthread_mutex_t q_mu = PTHREAD_MUTEX_INITIALIZER, q_dmu = PTHREAD_MUTEX_INITIALIZER;
-static pthread_cond_t q_cv = PTHREAD_COND_INITIALIZER, q_dcv = PTHREAD_COND_INITIALIZER;
+static _Alignas(64) _Atomic int q_sleeping;
+static _Alignas(64) _Atomic int q_drain_wait;
+static FastMutex q_mu = FAST_MUTEX_INIT, q_dmu = FAST_MUTEX_INIT;
+static FastCond q_cv = FAST_COND_INIT, q_dcv = FAST_COND_INIT;
 static _Atomic int q_state = -1;         // -1 unknown, 0 off, 1 on
 static uint64_t q_stat_recs, q_stat_drains, q_stat_drain_ns, q_stat_full_ns, q_stat_wakes;
 static int q_spin = -1, q_batch = -1;   // LARECOMP_VKQ_SPIN (pause loops before the record thread sleeps, default 0),
@@ -80,10 +84,12 @@ static inline void q_pause(void) {
 }
 // room for n more bytes after q_wl
 static void q_wait_space(uint64_t n) {
-    if (q_wl + n - atomic_load_explicit(&q_r, memory_order_acquire) <= Q_SIZE) return;
-    uint64_t t0 = SDL_GetTicksNS();
-    while (q_wl + n - atomic_load_explicit(&q_r, memory_order_acquire) > Q_SIZE) q_pause();
-    q_stat_full_ns += SDL_GetTicksNS() - t0;
+    if (q_wl + n - q_r_cached <= Q_SIZE) return;
+    q_r_cached = atomic_load_explicit(&q_r, memory_order_acquire);
+    if (q_wl + n - q_r_cached <= Q_SIZE) return;
+    uint64_t t0 = plat_now_ns();
+    while (q_wl + n - (q_r_cached = atomic_load_explicit(&q_r, memory_order_acquire)) > Q_SIZE) q_pause();
+    q_stat_full_ns += plat_now_ns() - t0;
 }
 static void *q_alloc(uint32_t op, VkCommandBuffer cb, size_t payload) {
     uint64_t size = (sizeof(QHdr) + payload + 15) & ~15ull;
@@ -107,9 +113,9 @@ static void q_wake(void) {
     // [XCDE] Claim this wake once; repeated signals can otherwise starve the waking worker.
     if (!atomic_exchange_explicit(&q_sleeping, 0, memory_order_acq_rel)) return;
     q_stat_wakes++;
-    pthread_mutex_lock(&q_mu);
-    pthread_cond_signal(&q_cv);
-    pthread_mutex_unlock(&q_mu);
+    fast_mutex_lock(&q_mu);
+    fast_cond_signal(&q_cv);
+    fast_mutex_unlock(&q_mu);
 }
 static void q_commit(void) {
     q_wl += q_cur->size;
@@ -131,14 +137,14 @@ void vkq_drain(void) {
     uint64_t t0 = SDL_GetTicksNS();
     for (int i = 0; i < 2000 && atomic_load(&q_r) < target; i++) q_pause();
     if (atomic_load(&q_r) < target) {
-        pthread_mutex_lock(&q_dmu);
+        fast_mutex_lock(&q_dmu);
         atomic_store(&q_drain_wait, 1);
         while (atomic_load(&q_r) < target) {
             if (atomic_load(&q_sleeping)) q_wake();   // (a record thread asleep with work queued would never broadcast)
-            pthread_cond_wait(&q_dcv, &q_dmu);
+            fast_cond_wait(&q_dcv, &q_dmu);
         }
         atomic_store(&q_drain_wait, 0);
-        pthread_mutex_unlock(&q_dmu);
+        fast_mutex_unlock(&q_dmu);
     }
     q_stat_drains++;
     q_stat_drain_ns += SDL_GetTicksNS() - t0;
@@ -516,13 +522,13 @@ static void *q_main(void *arg) {
         if (r == w) {
             atomic_thread_fence(memory_order_seq_cst);   // (the q_r release store before the q_drain_wait load: Dekker with vkq_drain)
             if (atomic_load(&q_drain_wait)) {
-                pthread_mutex_lock(&q_dmu);
-                pthread_cond_broadcast(&q_dcv);
-                pthread_mutex_unlock(&q_dmu);
+                fast_mutex_lock(&q_dmu);
+                fast_cond_broadcast(&q_dcv);
+                fast_mutex_unlock(&q_dmu);
             }
             for (int i = 0; i < q_spin && atomic_load(&q_w) == r; i++) q_pause();
             if (atomic_load(&q_w) == r) {
-                pthread_mutex_lock(&q_mu);
+                fast_mutex_lock(&q_mu);
                 for (;;) {
                     // Dekker with vkq_drain: publish q_sleeping=1 with seq_cst
                     // BEFORE checking q_w, and re-arm on every iteration (since
@@ -531,21 +537,23 @@ static void *q_main(void *arg) {
                     // and sleep on q_dcv right before q_main slept on q_cv.
                     atomic_store_explicit(&q_sleeping, 1, memory_order_seq_cst);
                     if (atomic_load_explicit(&q_w, memory_order_seq_cst) != r) break;
-                    pthread_cond_wait(&q_cv, &q_mu);
+                    fast_cond_wait(&q_cv, &q_mu);
                 }
                 atomic_store_explicit(&q_sleeping, 0, memory_order_release);
-                pthread_mutex_unlock(&q_mu);
+                fast_mutex_unlock(&q_mu);
             }
             continue;
         }
-        uint64_t t0 = SDL_GetTicksNS();
+        uint64_t t0 = plat_now_ns();
+        uint32_t batch = 0;
         while (r != w) {
             const QHdr *h = (const QHdr *)(q_buf + (r & (Q_SIZE - 1)));
             if (h->op != QOP_WRAP) q_exec(h);
             r += h->size;
-            atomic_store_explicit(&q_r, r, memory_order_release);
+            if ((++batch & 31) == 0) atomic_store_explicit(&q_r, r, memory_order_release);
         }
-        atomic_fetch_add(&q_stat_busy_ns, SDL_GetTicksNS() - t0);
+        atomic_store_explicit(&q_r, r, memory_order_release);
+        atomic_fetch_add(&q_stat_busy_ns, plat_now_ns() - t0);
     }
     return NULL;
 }
