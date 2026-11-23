@@ -452,6 +452,7 @@ Review follow-ups on the two commits above (the Windows runtime is still not exe
   asynchronous) and the memo is dropped when a stop happens.
 - Tests: native signature test now builds a unique temp root (a killed run + PID reuse cannot wedge it), checks the
   isolated removal, a same-size mtime-only edit, a plain-file root, a folder without romfs, set-empty vs unset options,
-  a translator switch and a pass switch; unit tests updated for the force/memo/exit-code contracts and the new
-  fingerprint inputs. `scripts/ci.sh`: 220 unit tests (10 skipped); native suite and a runtime-only CMake build of the
-  changed units pass.
+  a translator switch and a pass switch; new `tests/native/test_translate_threads.c` translates the two scratch-ring
+  users on 8 threads and compares every GLSL source with the serial output (Linux native suite and Windows
+  validate_port); unit tests updated for the force/memo/exit-code contracts and the new fingerprint inputs.
+  `scripts/ci.sh`: 220 unit tests (10 skipped); native suite and a runtime-only CMake build of the changed units pass.

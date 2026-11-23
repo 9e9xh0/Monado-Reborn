@@ -46,6 +46,8 @@ run_test test_tex_resize -std=c11 -Wall -Wextra -Werror tests/native/test_tex_re
 run_test test_time_math -std=gnu11 -Wall -Wextra -Werror tests/native/test_time_math.c
 run_test test_translate_ldc -std=gnu11 -w tests/native/test_translate_ldc.c runtime/nvn/maxwell/translate.c -lm
 run_test test_translate_tex -std=gnu11 -w tests/native/test_translate_tex.c runtime/nvn/maxwell/translate.c -lm
+# [XCDE] T282 review: the translator is re-entrant (precompile workers translate concurrently): parallel GLSL == serial.
+run_test test_translate_threads -std=gnu11 -w tests/native/test_translate_threads.c runtime/nvn/maxwell/translate.c -lpthread -lm
 run_test test_translate_xfb -std=gnu11 -w tests/native/test_translate_xfb.c runtime/nvn/maxwell/translate.c -lm
 run_test test_ui_scale -std=c11 -Wall -Wextra -Werror tests/native/test_ui_scale.c -lm
 run_test test_window_size -std=c11 -Wall -Wextra -Werror tests/native/test_window_size.c

@@ -96,6 +96,8 @@ def main():
         'test_translate_ldc': ['runtime/nvn/maxwell/translate.c'],
         'test_translate_xfb': ['runtime/nvn/maxwell/translate.c'],
         'test_translate_cfg': ['runtime/nvn/maxwell/translate.c', str(sdk / 'lib/libshaderc_shared.dll.a')],
+        # [XCDE] T282 review: parallel translations must match the serial one (the precompile is multi-threaded).
+        'test_translate_threads': ['runtime/nvn/maxwell/translate.c', str(sdk / 'lib/libwinpthread.dll.a')],
         'test_tegra_copy': ['runtime/nvn/tegra.c', 'runtime/nvn/formats.c'],
         'test_tegra_block_height': ['runtime/nvn/tegra.c', 'runtime/nvn/formats.c'],
         'test_fibers': ['runtime/hle/fibers.c'],

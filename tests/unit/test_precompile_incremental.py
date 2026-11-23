@@ -205,6 +205,9 @@ class BuildContracts(unittest.TestCase):
         native = (ROOT / 'scripts/native_tests_linux.sh').read_text(encoding='utf-8')
         self.assertIn('test_precompile_sig', native)
         self.assertIn('runtime/nvn/vulkan/precompile_sig.c', native)
+        # [XCDE] T282 review: the re-entrancy claim (parallel translation == serial output) has a native test too.
+        self.assertIn('test_translate_threads', native)
+        self.assertIn('test_translate_threads', validation)
 
 
 if __name__ == '__main__':
