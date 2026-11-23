@@ -237,7 +237,7 @@ static void scan_buf(const uint8_t *d, size_t n) {
 
 static pthread_mutex_t big_lock = PTHREAD_MUTEX_INITIALIZER;  // (one file over 64 MB at a time: memory on 8 GB PCs)
 static void scan_file(const char *path) {
-    FILE *f = fopen(path, "rb");
+    FILE *f = xcde_utf8_fopen(path, "rb");
     if (!f) return;
     fseek(f, 0, SEEK_END);
     // [XCDE] T-LINUX: off_t is 64-bit on the supported Linux x86-64 host.
@@ -288,7 +288,7 @@ static void list_dir(const char *dir) {
         char p[1024];
         snprintf(p, sizeof p, "%s/%s", dir, e->d_name);
         struct stat sb;
-        if (stat(p, &sb)) continue;
+        if (xcde_utf8_stat(p, &sb)) continue;
         if (S_ISDIR(sb.st_mode)) list_dir(p);
         else if (wanted(e->d_name)) {
             if (npaths == cappaths) paths = realloc(paths, (cappaths = cappaths ? cappaths * 2 : 1024) * sizeof *paths);
@@ -441,7 +441,7 @@ static void load_seed(void) {
 }
 static void load_seed_file(const char *path, Map *done_) {
     Map *done = done_;
-    FILE *f = fopen(path, "rb");
+    FILE *f = xcde_utf8_fopen(path, "rb");
     if (!f) return;
     uint32_t hdr[2];
     if (fread(hdr, 4, 2, f) != 2 || hdr[0] != 0x56435843u || hdr[1] < 32 + 2 * sizeof(ShaderKey)) { fclose(f); return; }
@@ -701,8 +701,10 @@ int vk_precompile_main(const char *root) {
            npaths, (unsigned long long)n_controls, nfound, nprogs, secs, t_scan / 1e9, (unsigned long long)n_built,
            (unsigned long long)n_extra, (unsigned long long)n_named_int, (unsigned long long)n_failed, (unsigned long long)vk_spirv_misses,
            (unsigned long long)vk_spirv_hits, nthreads, 10);
-    if (getenv("XCDE_PRECOMPILE_LIST")) {  // (tests: "S <hash> <stage>" per shader, "P <vs hash> <fs hash>" per program)
-        FILE *l = fopen(getenv("XCDE_PRECOMPILE_LIST"), "w");
+    char list_env[1100];
+    const char *list = xcde_utf8_getenv("XCDE_PRECOMPILE_LIST", list_env, sizeof list_env) ? list_env : NULL;
+    if (list) {  // (tests: "S <hash> <stage>" per shader, "P <vs hash> <fs hash>" per program)
+        FILE *l = xcde_utf8_fopen(list, "w");
         for (size_t i = 0; l && i < nfound; i++) fprintf(l, "S %016llx %d%c", (unsigned long long)found[i].hash, found[i].stage, 10);
         for (size_t i = 0; l && i < nprogs; i++)
             fprintf(l, "P %016llx %016llx%c", (unsigned long long)found[progs[i].vs].hash,

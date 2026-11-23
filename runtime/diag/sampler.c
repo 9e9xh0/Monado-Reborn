@@ -217,9 +217,9 @@ static bool resolve(uint64_t pc, char *name, char *mname) {
 }
 
 static void report(void) {
-    const char *out = getenv("XCDE_SAMPLE_OUT");
-    if (!out) out = "build/samples.txt";
-    FILE *f = fopen(out, "w");
+    char out_env[1100];
+    const char *out = xcde_utf8_getenv("XCDE_SAMPLE_OUT", out_env, sizeof out_env) ? out_env : "build/samples.txt";
+    FILE *f = xcde_utf8_fopen(out, "w");
     if (!f) return;
     uint64_t total = 0;
     for (int i = 0; i < nth; i++) total += th[i].cyc_total;

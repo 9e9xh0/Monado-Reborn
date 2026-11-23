@@ -213,3 +213,9 @@ Details and the reporter's log evidence: [CHANGELOG](dev/CHANGELOG.md).
   through `CreateFileW`.
 - `tests/native/test_utf8_paths.c`, `tests/unit/test_runtime_utf8_paths.py`: regression coverage. The game itself was
   verified on a Linux-hosted Wine bed with a Windows runtime cross-built from this tree (see evidence).
+- Review follow-ups (same PR): `xcde_opendir` maps `FindFirstFileW` errors to `errno` like the CRT
+  (`ENOENT`/`EACCES`/`ENOTDIR`/`ENOMEM`/`EIO`) and fails a listing that breaks mid-way; `nvn/vulkan/precompile.c`
+  opens the shader files and its list/seed paths through the wrappers (an absolute non-ASCII `--precompile` root
+  works); `plat_argv_utf8` keeps the complete CRT argv if an argument cannot be converted; save-tree
+  `mkdir`/`rmdir`/`rename`/`remove` and the path-valued diagnostic variables use the wrappers. Left narrow:
+  `services/kbicons.c`, `win_compat.h`'s `realpath`, and the developer-only `XCDE_GLSL_DIR`/`XCDE_REC_OUT` switches.

@@ -557,7 +557,7 @@ static void directory(Service *s, IpcReq *req, IpcResp *resp) {
 
 static int rm_rf(const char *p, bool keep_root) {
     XcdeDir *d = xcde_opendir(p);
-    if (!d) return unlink(p);
+    if (!d) return xcde_utf8_remove(p);
     XcdeDirent *e;
     while ((e = xcde_readdir(d))) {
         if (!strcmp(e->d_name, ".") || !strcmp(e->d_name, "..")) continue;
@@ -566,7 +566,7 @@ static int rm_rf(const char *p, bool keep_root) {
         rm_rf(c, false);
     }
     xcde_closedir(d);
-    return keep_root ? 0 : rmdir(p);
+    return keep_root ? 0 : xcde_utf8_rmdir(p);
 }
 
 // [XCDE] Save commits (Horizon semantics: a save mount's changes become final on Commit). Before the first change since
@@ -581,7 +581,7 @@ static pthread_mutex_t g_journal_lock = PTHREAD_MUTEX_INITIALIZER;
 static int copy_tree(const char *from, const char *to) {
     XcdeDir *d = xcde_opendir(from);
     if (!d) return -1;
-    mkdir(to, 0755);
+    xcde_utf8_mkdir(to);
     int rc = 0;
     XcdeDirent *e;
     while (!rc && (e = xcde_readdir(d))) {
@@ -641,7 +641,7 @@ static void save_backup(const char *root) {
     char dir[1100], to[1200], stamp[32];
     if (sub > root) snprintf(dir, sizeof dir, "%.*s/backup", (int)(sub - root - 1), root);
     else snprintf(dir, sizeof dir, "backup");
-    mkdir(dir, 0755);
+    xcde_utf8_mkdir(dir);
     time_t now = time(NULL);
     strftime(stamp, sizeof stamp, "%Y%m%d_%H%M%S", localtime(&now));
     snprintf(to, sizeof to, "%s/%s_%s", dir, sub, stamp);
@@ -698,7 +698,7 @@ static void journal_touch(int j) {
         snprintf(tp, sizeof tp, "%s.journal.tmp", sj->root);
         rm_rf(tp, false);
         rm_rf(jp, false);
-        if (copy_tree(sj->root, tp) || rename(tp, jp)) {
+        if (copy_tree(sj->root, tp) || xcde_utf8_rename(tp, jp)) {
             LOG("[save] journal of %s could not be written (the save is not protected this time)\n", sj->root);
             rm_rf(tp, false);
         }
@@ -740,15 +740,15 @@ static void filesystem(Service *s, IpcReq *req, IpcResp *resp) {
         break;
     }
     case 1:
-        if (unlink(p)) resp->result = errno_result();
+        if (xcde_utf8_remove(p)) resp->result = errno_result();
         else if (fs->save && quickstep_save_changed(fs->root, p, NULL)) LOG("[save] Quick Step metadata not updated for %s\n", p);
         break;
-    case 2: if (mkdir(p, 0755)) resp->result = errno_result(); break;
-    case 3: if (rmdir(p)) resp->result = errno_result(); break;
+    case 2: if (xcde_utf8_mkdir(p)) resp->result = errno_result(); break;
+    case 3: if (xcde_utf8_rmdir(p)) resp->result = errno_result(); break;
     case 4: if (rm_rf(p, false)) resp->result = errno_result(); break;
     case 5: case 6:
         host_path(fs, in_path(req, 1), p2, sizeof p2);
-        if (rename(p, p2)) resp->result = errno_result();
+        if (xcde_utf8_rename(p, p2)) resp->result = errno_result();
         else if (fs->save && quickstep_save_changed(fs->root, p, p2)) LOG("[save] Quick Step metadata not moved for %s\n", p);
         break;
     case 7: {  // GetEntryType
@@ -821,8 +821,8 @@ static Service *open_host_fs(const char *sub) {
     char cmd[1200];
     snprintf(cmd, sizeof cmd, "%s", fs->root);
     for (char *q = cmd + 1; *q; q++)
-        if (*q == '/') { *q = 0; mkdir(cmd, 0755); *q = '/'; }
-    mkdir(cmd, 0755);
+        if (*q == '/') { *q = 0; xcde_utf8_mkdir(cmd); *q = '/'; }
+    xcde_utf8_mkdir(cmd);
     LOG("[fs] mounted host directory %s\n", fs->root);
     if (fs->save && !getenv("XCDE_SAVE_JOURNAL_OFF")) fs->journal = journal_mount(fs->root);
     return service_new("IFileSystem", filesystem, fs);

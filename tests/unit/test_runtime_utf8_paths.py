@@ -71,6 +71,8 @@ class RuntimeUtf8Paths(unittest.TestCase):
         shim = text("runtime/platform/dir_utf8.h")
         self.assertHas("FindFirstFileW(", shim, "wide enumeration")
         self.assertHas("xcde_utf8_from_wide(", shim, "names as UTF-8")
+        self.assertHas("xcde_dir_errno_from_win32(", shim, "errno like opendir")
+        self.assertHas("ERROR_DIRECTORY", shim, "a file passed as a folder")
         self.assertHas("static inline long xcde_telldir(", shim, "telldir")
         self.assertHas("static inline void xcde_seekdir(", shim, "seekdir")
         self.assertHas("FILE_ATTRIBUTE_DIRECTORY", shim, "d_type from the attributes")
@@ -90,6 +92,7 @@ class RuntimeUtf8Paths(unittest.TestCase):
         self.assertHas("SymInitializeW(", code, "PDB folder")
         self.assertHas("int plat_argv_utf8(", code, "argv")
         self.assertHas("CommandLineToArgvW(", code, "wide command line")
+        self.assertHas("if (failed)", code, "keep the complete argv if a conversion fails")
 
     def test_relaunch_and_install_folder_are_wide(self):
         code = code_only(text("runtime/host/main_boot.c"))
@@ -126,6 +129,29 @@ class RuntimeUtf8Paths(unittest.TestCase):
         self.assertHas("xcde_utf8_open(", fs, "romfs/bin descriptors")
         self.assertHas("xcde_utf8_open(", code_only(text("runtime/services/romfs_fd_cache.h")), "romfs descriptor cache")
         self.assertHas("xcde_utf8_stat(", code_only(text("runtime/services/romfs_virtual.c")), "romfs scan")
+        # The precompiler opens the romfs/<file> paths itself: an absolute non-ASCII --precompile root must scan them.
+        pre = code_only(text("runtime/nvn/vulkan/precompile.c"))
+        self.assertHas("xcde_utf8_stat(p", pre, "precompile scan")
+        self.assertHas("xcde_utf8_fopen(path", pre, "precompile shader read")
+        self.assertHas('xcde_utf8_getenv("XCDE_PRECOMPILE_LIST"', text("runtime/nvn/vulkan/precompile.c"), "precompile list")
+
+    def test_save_tree_operations_use_the_utf8_wrappers(self):
+        # LARECOMP_SAVE_DIR is UTF-8 too: mkdir/rmdir/rename/remove in the save/journal tree must not go through the ANSI CRT.
+        fs = code_only(text("runtime/services/fs.c"))
+        for call in ("mkdir", "rmdir", "unlink", "rename", "remove"):
+            self.assertIsNone(re.search(r"(?<![\w.])" + call + r"\(", fs), f"services/fs.c: {call}")
+        self.assertHas("xcde_utf8_mkdir(", fs, "save tree mkdir")
+        self.assertHas("xcde_utf8_rmdir(", fs, "save tree rmdir")
+        self.assertHas("xcde_utf8_remove(", fs, "save tree unlink")
+        self.assertHas("xcde_utf8_rename(", fs, "save tree rename")
+
+    def test_diagnostic_file_paths_are_utf8_on_windows(self):
+        for rel in ("runtime/diag/sampler.c", "runtime/diag/diag.c", "runtime/nvn/vulkan/precompile.c"):
+            code = code_only(text(rel))
+            self.assertHas("xcde_utf8_getenv(", code, rel)
+            self.assertHas("xcde_utf8_fopen(", code, rel)
+        self.assertHas("xcde_utf8_fopen(", code_only(text("runtime/hle/party.c")), "XCDE_TOUR")
+        self.assertHas("xcde_utf8_fopen(", code_only(text("runtime/platform/windows.c")), "XCDE_DUMP_HEAP")
 
     def test_native_test_covers_the_relative_listing_in_a_non_ascii_folder(self):
         test = text("tests/native/test_utf8_paths.c")

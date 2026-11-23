@@ -1738,6 +1738,14 @@ Detalle: `docs/PERFORMANCE_UI.md`. Evidencia: `docs/evidence/2026-11-04-performa
   `João-😀\…\targets` path loads and plays. Tests: `tests/native/test_utf8_paths.c` (relative listing in a non-ASCII
   folder, UTF-16 environment) and `tests/unit/test_runtime_utf8_paths.py` (source contracts). Linux CI and
   `scripts/native_tests_linux.sh` green; the Windows CI job compiles the runtime and runs the native test.
+  Review follow-ups: `xcde_opendir` maps `FindFirstFileW` errors to `errno` like the CRT (`ENOENT`/`EACCES`/`ENOTDIR`/
+  `ENOMEM`/`EIO`) and fails a listing that breaks mid-way; the precompiler's own `stat`/`fopen`, `XCDE_PRECOMPILE_LIST`
+  and `XCDE_VARIANTS_SEED` use the UTF-8 wrappers (so `--precompile <absolute non-ASCII path>` scans); `plat_argv_utf8`
+  falls back to the complete CRT argv if one argument cannot be converted; the save-tree `mkdir`/`rmdir`/`rename`/
+  `remove` calls and the path-valued diagnostic variables (`XCDE_DUMP_MEM*`, `XCDE_DUMP_HEAP`, `XCDE_FRAME_HASH`,
+  `XCDE_INPUT_*`, `XCDE_USAGE`, `XCDE_HLE_COVERAGE`, `XCDE_SAMPLE_OUT`, `XCDE_TOUR`) are wide too.
 - [ ] T278b **Leftovers off the play path:** `services/kbicons.c` opens its cache / mod icon files with the narrow
   CRT (a mod folder whose *own name* has accents would miss its icons); `platform/win_compat.h`'s `realpath` shim
   (`_fullpath`, ANSI) is unused by the game but any new caller must use the wide resolve in `runtime/paths.c` instead.
+  Developer-only debug switches that take a path (`XCDE_GLSL_DIR`, `XCDE_REC_OUT`) are still narrow; no normal run
+  reaches them.

@@ -126,10 +126,22 @@ settings, FSR 4, quickstep saves and the path-valued env vars; the T135 relaunch
 `--game`/the minidump/log routes above are the recorded route for `T-UTF8-RUNTIME`; the Wine bed is outside the
 repository (`build/` and `~/.cache/wine-utf8/…` are private).
 
+## Review follow-up (same PR)
+
+A review of the change found four small gaps, fixed in the same PR: `xcde_opendir` now sets `errno` like the CRT it
+replaces (and fails a listing that breaks mid-way); the precompiler's own `stat`/`fopen` and its `XCDE_PRECOMPILE_LIST`/
+`XCDE_VARIANTS_SEED` paths use the wrappers (an absolute non-ASCII `--precompile <root>` scans); `plat_argv_utf8` keeps
+the complete CRT argv if an argument cannot be converted; and the save-tree `mkdir`/`rmdir`/`rename`/`remove` calls plus
+the path-valued diagnostic variables use the wrappers. The Wine routes in the table above were recorded before this
+follow-up; its play-path change is limited to the save-tree calls (the same CRT operations through the wide wrappers).
+Re-run on Linux: `tests/native/test_utf8_paths.c` `all passed` (including the new missing-folder errno check) and the
+11 source-contract tests pass. CI re-runs the Windows build and the native test.
+
 ## Not covered here
 
 - **Leftovers off the play path** (`T278b` in [`tasks.md`](../../dev/tasks.md)): `services/kbicons.c` opens its cache/
-  mod icon files with the narrow CRT, and `platform/win_compat.h`'s `realpath` shim (`_fullpath`) is unused by the game.
+  mod icon files with the narrow CRT, `platform/win_compat.h`'s `realpath` shim (`_fullpath`) is unused by the game, and
+  the developer-only `XCDE_GLSL_DIR`/`XCDE_REC_OUT` path switches are still narrow.
 - **Only Wine here, no Windows machine.** The fix compiles for the Windows target with the same SDK as CI; the
   windows-latest job runs the native test. A run of the shipped package under `C:\Users\João\…` (launcher builds the
   game code there and the game plays) is still worth doing with the reporter.

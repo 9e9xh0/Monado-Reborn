@@ -181,6 +181,11 @@ int main(int argc, char **argv) {
         xcde_closedir(dh);
     }
     CHECK(listed);
+    // [XCDE] T278: the CRT's opendir() set errno; the wide shim maps FindFirstFileW's error the same way (fs.c's
+    // OpenDirectory reports errno to the game, so a missing folder must stay ENOENT rather than a stale value).
+    errno = 0;
+    CHECK(xcde_opendir("xcde-does-not-exist") == NULL);
+    CHECK(errno == ENOENT);
 #ifdef _WIN32
     int crt_listed = 0;
     DIR *crt_dir = opendir(".");

@@ -490,19 +490,30 @@ bool plat_exe_path(char *buf, size_t size) {
 // non-ASCII --game / --minidump / --precompile path would arrive mangled (GitHub #218).
 int plat_argv_utf8(int argc, char **argv, char ***out) {
     int n = 0, m = 0;
+    bool failed = false;
     wchar_t **w = CommandLineToArgvW(GetCommandLineW(), &n);
     char **v;
-    if (!w || n <= 0) { *out = argv; return argc; }
+    if (!w || n <= 0) {
+        if (w) LocalFree(w);
+        *out = argv;
+        return argc;
+    }
     v = (char **)calloc((size_t)n + 1, sizeof *v);
     if (!v) { LocalFree(w); *out = argv; return argc; }
     for (int i = 0; i < n; i++) {
         int len = xcde_utf8_from_wide(w[i], NULL, 0);
-        if (len < 0) continue;
+        if (len < 0) { failed = true; break; }
         v[m] = (char *)malloc((size_t)len + 1);
-        if (!v[m] || xcde_utf8_from_wide(w[i], v[m], (size_t)len + 1) < 0) { free(v[m]); continue; }
+        if (!v[m] || xcde_utf8_from_wide(w[i], v[m], (size_t)len + 1) < 0) { free(v[m]); failed = true; break; }
         m++;
     }
     LocalFree(w);
+    if (failed) {  // (one argument dropped would shift every option after it: keep the CRT's complete, if mangled, argv)
+        for (int i = 0; i < m; i++) free(v[i]);
+        free(v);
+        *out = argv;
+        return argc;
+    }
     *out = v;
     return m;
 }
@@ -810,7 +821,7 @@ void plat_thread_name(const char *name) {
 
 // [XCDE] diag.c XCDE_DUMP_HEAP: the committed, readable guest heap pages to a file (u64 address, u64 size, bytes)
 uint64_t plat_guest_dump(const char *path) {
-    FILE *f = fopen(path, "wb");
+    FILE *f = xcde_utf8_fopen(path, "wb");
     if (!f) return 0;
     uint64_t total = 0;
     for (uint64_t a = 0x7240000000ull; a < 0x7240000000ull + 0xD0000000ull;) {

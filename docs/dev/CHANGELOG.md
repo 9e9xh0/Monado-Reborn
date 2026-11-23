@@ -249,6 +249,14 @@ Triage of both symptoms, the minidump findings and the A/B table:
   `build/lasrecomp.log` in the João folder; `--game` with the absolute `João-😀\…\targets` path loads the game and
   renders (3,463 frames). Linux native tests and CI are green; the Windows CI job compiles the runtime and runs the
   native test on windows-latest.
+- Review follow-ups (same PR): `xcde_opendir` sets `errno` like the CRT it replaces (`ENOENT`/`EACCES`/`ENOTDIR`/
+  `ENOMEM`/`EIO`, and `services/fs.c`'s `OpenDirectory` reports it to the game) and gives up on a folder whose
+  enumeration fails mid-way; the precompiler's own `stat`/`fopen`, `XCDE_PRECOMPILE_LIST` and `XCDE_VARIANTS_SEED`
+  use the UTF-8 wrappers (an absolute non-ASCII `--precompile` root works); `plat_argv_utf8` keeps the complete CRT
+  argv if one argument cannot be converted instead of dropping it; the save-tree `mkdir`/`rmdir`/`rename`/`remove`
+  calls and the path-valued diagnostic variables (`XCDE_DUMP_MEM`/`_EACH`, `XCDE_DUMP_HEAP`, `XCDE_FRAME_HASH`,
+  `XCDE_INPUT_REPLAY`/`RECORD`, `XCDE_USAGE`, `XCDE_HLE_COVERAGE`, `XCDE_SAMPLE_OUT`, `XCDE_TOUR`) use them too.
 - Leftovers (none on the start/play path): `services/kbicons.c` still opens its cache / mod icon files with the
-  narrow CRT (relative ASCII names in practice), and `platform/win_compat.h`'s `realpath` shim (`_fullpath`) is not
-  used by the game. The reported install, dump and save paths are covered.
+  narrow CRT (relative ASCII names in practice), `platform/win_compat.h`'s `realpath` shim (`_fullpath`) is not used
+  by the game, and developer-only debug switches that take a path (`XCDE_GLSL_DIR`, `XCDE_REC_OUT`) are still narrow.
+  The reported install, dump and save paths are covered.

@@ -8,6 +8,7 @@
 // The whole name list is read when the folder is opened: FindFirstFile cannot be rewound, the game asks for a
 // directory's entry count before reading it, and one folder's names are small next to the romfs index built from them.
 #pragma once
+#include <errno.h>
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdlib.h>
@@ -26,6 +27,22 @@
 #define DT_DIR 4
 #define DT_REG 8
 #endif
+
+// [XCDE] T278: the CRT's opendir() set errno (fs.c's OpenDirectory reports it to the game). FindFirstFileW does not, so
+// map its error the same way (a path that names a file is ERROR_DIRECTORY).
+static inline void xcde_dir_errno_from_win32(DWORD error) {
+    switch (error) {
+    case ERROR_FILE_NOT_FOUND:
+    case ERROR_PATH_NOT_FOUND:
+    case ERROR_INVALID_NAME: errno = ENOENT; break;
+    case ERROR_ACCESS_DENIED:
+    case ERROR_SHARING_VIOLATION: errno = EACCES; break;
+    case ERROR_DIRECTORY: errno = ENOTDIR; break;
+    case ERROR_NOT_ENOUGH_MEMORY:
+    case ERROR_OUTOFMEMORY: errno = ENOMEM; break;
+    default: errno = EIO; break;
+    }
+}
 #else
 #include <dirent.h>
 #endif
@@ -93,40 +110,54 @@ static inline XcdeDir *xcde_opendir(const char *path) {
     HANDLE find;
     XcdeDir *d;
     size_t n;
-    if (!path || xcde_utf8_to_wide(path, wpath, XCDE_PATH_W) < 0) return NULL;
+    if (!path) { errno = EINVAL; return NULL; }
+    if (xcde_utf8_to_wide(path, wpath, XCDE_PATH_W) < 0) { errno = ENAMETOOLONG; return NULL; }
     n = wcslen(wpath);
-    if (!n || n + 2 >= XCDE_PATH_W) return NULL;
+    if (!n || n + 2 >= XCDE_PATH_W) { errno = ENAMETOOLONG; return NULL; }
     if (wpath[n - 1] != L'\\' && wpath[n - 1] != L'/') wpath[n++] = L'\\';
     wpath[n++] = L'*';
     wpath[n] = 0;
     find = FindFirstFileW(wpath, &data);
-    if (find == INVALID_HANDLE_VALUE) return NULL;
+    if (find == INVALID_HANDLE_VALUE) { xcde_dir_errno_from_win32(GetLastError()); return NULL; }
     d = (XcdeDir *)calloc(1, sizeof *d);
-    if (!d) { FindClose(find); return NULL; }
-    do {
+    if (!d) { FindClose(find); errno = ENOMEM; return NULL; }
+    for (;;) {
         char name[XCDE_DIR_NAME_MAX];
-        if (!wcscmp(data.cFileName, L".") || !wcscmp(data.cFileName, L"..")) continue;
-        if (xcde_utf8_from_wide(data.cFileName, name, sizeof name) < 0) continue;
-        if (!xcde_dir_add(d, name, (data.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) ? DT_DIR : DT_REG)) {
+        if (wcscmp(data.cFileName, L".") && wcscmp(data.cFileName, L"..") &&
+            xcde_utf8_from_wide(data.cFileName, name, sizeof name) >= 0 &&
+            !xcde_dir_add(d, name, (data.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) ? DT_DIR : DT_REG)) {
             xcde_closedir(d);
             FindClose(find);
+            errno = ENOMEM;
             return NULL;
         }
-    } while (FindNextFileW(find, &data));
+        if (!FindNextFileW(find, &data)) {
+            DWORD error = GetLastError();
+            if (error != ERROR_NO_MORE_FILES) {
+                xcde_closedir(d);
+                FindClose(find);
+                xcde_dir_errno_from_win32(error);
+                return NULL;
+            }
+            break;
+        }
+    }
     FindClose(find);
     return d;
 }
 #else
 static inline XcdeDir *xcde_opendir(const char *path) {
-    DIR *dir = opendir(path);
+    DIR *dir;
     XcdeDir *d;
     struct dirent *e;
+    if (!path) { errno = EINVAL; return NULL; }
+    dir = opendir(path);
     if (!dir) return NULL;
     d = (XcdeDir *)calloc(1, sizeof *d);
-    if (!d) { closedir(dir); return NULL; }
+    if (!d) { closedir(dir); errno = ENOMEM; return NULL; }
     while ((e = readdir(dir)) != NULL) {
         if (!strcmp(e->d_name, ".") || !strcmp(e->d_name, "..")) continue;
-        if (!xcde_dir_add(d, e->d_name, e->d_type)) { closedir(dir); xcde_closedir(d); return NULL; }
+        if (!xcde_dir_add(d, e->d_name, e->d_type)) { closedir(dir); xcde_closedir(d); errno = ENOMEM; return NULL; }
     }
     closedir(dir);
     return d;
