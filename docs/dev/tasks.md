@@ -1685,3 +1685,12 @@ Detalle: `docs/PERFORMANCE_UI.md`. Evidencia: `docs/evidence/2026-11-04-performa
   FSR 3, frame generation, jitter/HUD snapshot) is ruled out and the visual defect is in the game's own draws.
   Next A/Bs: `occlusion = off`, a 16:9 window (ultrawide `uvb()`), `XCDE_XFB_SHADOW=0`/`XCDE_STORE_SHADOW=0`.
   A local repro needs the reporter's save slot 0 (`bfsgame*.sav`, 1.4 MB). Triage: [summary.md](../evidence/2026-11-23-issue-216/summary.md).
+- [ ] T-216-FX-2 **Root cause: the #181 cutscene unquantize (gate 3).** Reproduced on Linux with the
+  reporter's manual save and the maintainer's settings: at 60 FPS the snap-track time bypass
+  (`0x700050c374`, `_cutscene_track_unquantize`) misses the exact 30 Hz key times and the cutscene track
+  that enables the Monado's glow never triggers; `XCDE_CUTSCENE_UNQUANTIZE=0` (or `cutscenes = 30`)
+  restores it, and a binary-patched build with only gate 3 requantized restores it too. Fix applied: the third
+  bypass is removed from `games/xcde/patches.py` (the clock and camera gates stay). Pending: regenerate the lifted code
+  in the main checkout and re-verify #181 smoothness on the regenerated build. Workaround for players until then:
+  `cutscenes = 30` / `XCDE_CUTSCENE_UNQUANTIZE=0`. Evidence:
+  [summary.md](../evidence/2026-11-23-issue-216/summary.md).
