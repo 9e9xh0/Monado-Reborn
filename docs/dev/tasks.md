@@ -1803,3 +1803,23 @@ Detalle: `docs/PERFORMANCE_UI.md`. Evidencia: `docs/evidence/2026-11-04-performa
   run found a Windows-only bug, fixed here: the Windows build has a 32-bit `off_t` and stat size, so a 15 GB package
   was not seen as one and reads past 2 GB would have been cut; `gf_pread_at` (ReadFile with a 64-bit offset) and
   `GetFileSizeEx` read it now. Not covered: a cutscene from a package (the run reached the title without one).
+
+## Shader precompile speed and progress — 2026-11-23 (T281)
+
+- [x] T281 **Shader precompilation is slow** (user report). Measured on the low-end PC (i7-3770K / GTX 1050 Ti /
+  16 GB, an LD_PRELOAD timer on the unmodified build plus a 312-file subset of the dump): the cost is the CPU shader
+  compilers - a fragment SPIR-V compile is 82 ms on average (29 median, p90 273; fragments run spirv-opt: 7.5x a
+  vertex shader, ~80 % of the per-stage CPU) and the driver's compile of each new module 27-55 ms. Translation is
+  cheap (0.2-1 ms/stage) but was serialized behind a global lock; the scan reads 8.1 GB, inflates 14.0 GB and left
+  its 25 >64 MB files for a serial tail. Done: (1) the translator is re-entrant (thread-local scratch rings and
+  guest-heap range) and precompile workers translate without the global lock; (2) the precompile uses cpus-1 workers,
+  ramping the build workers up after the scan (7 during the scan starved the inflate: 32.4 vs 21.8 s); (3) the scan
+  orders the biggest files first and opens up to 4 >64 MB files at once (by RAM); (4) progress covers the four passes
+  (scan/build/seed/pipelines), weighted by the previous run's measured times, with the pass, its count and the time
+  left in the launcher and in RecompLauncher's builder. Also: the seed pass skips the jobs the program pass built
+  (465/1,170 subset; 5,484/9,045 full game); skipped jobs count as "skipped", not failed; a user stop no longer
+  poisons the crash skip list (the launcher deletes the in-flight file) and the manual Precompile button retries the
+  list. Measured old vs new: warm rerun 8.37 -> 1.55 s, with drivers + pipelines 24.8 -> 3.6 s, cold SPIR-V 32.1 ->
+  27.8 s, full-dump scan 40.6 -> 21.1 s; SPIR-V cache identical (2,133 entries, same bytes). Tests: unit suite (196),
+  native suite. Left: the fragment-spirv-opt default (in-game FPS A/B needed), the translator-input fingerprint to
+  skip reruns after unrelated builds, and the whole-pipeline pass policy on low-end PCs.

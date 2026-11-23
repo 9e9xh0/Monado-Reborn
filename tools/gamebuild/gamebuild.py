@@ -272,31 +272,28 @@ def precompile_is_current(data_root, exe):
     return f'exe {stat.st_size} {int(stat.st_mtime)}' in (line.strip() for line in lines)
 
 
-# Of the shaders' part of the bar: the scan and the programs it finds first, the last pass (whole pipelines) after.
-PRECOMPILE_SCAN_SHARE = 0.8
+# [XCDE] T281: the precompile writes "<phase> <overall done> <overall total> <this pass done> <this pass total>" over
+# its four passes (scan, programs, seed variants, whole pipelines); the overall fraction is already weighted by the
+# measured cost of each pass (runtime/nvn/vulkan/precompile.c), so the bar here is the runtime's own, not a model.
+PRECOMPILE_PASSES = {'scan': 'scanning the game files', 'build': 'building the shader programs',
+                     'seed': 'known variants (seed)', 'pipelines': 'whole optimized pipelines'}
 
 
 def precompile_step(line):
-    """(share of the precompile done, text) from a cache/precompile_progress.txt line, `<phase> <files done> <files>
-    <programs found> <programs built>`, weighted as the launcher's bar (pc_poll): reading the files is a fifth of the
-    scan, building the programs found the rest. The `pipelines` pass counts its own files. None when unreadable, and
-    for the closing `done` line (scan totals again: the bar would go back; "Shaders ready" follows it)."""
+    """(share of the precompile done, text) from a cache/precompile_progress.txt line. None when unreadable, and for
+    the closing `done` line ("Shaders ready" follows it)."""
     parts = line.split()
     if len(parts) != 5 or parts[0] == 'done':
         return None
     try:
-        files_done, files, found, built = (int(x) for x in parts[1:])
+        overall_done, overall_total, pass_done, pass_total = (int(x) for x in parts[1:])
     except ValueError:
         return None
-    if not files:
+    if overall_total <= 0:
         return None
-    read = files_done / files
-    if parts[0] == 'pipelines':
-        share = PRECOMPILE_SCAN_SHARE + (1 - PRECOMPILE_SCAN_SHARE) * read
-        return share, f'Preparing the shaders: final pass, {files_done} of {files}'
-    built_share = built / found if found else 0.0
-    share = PRECOMPILE_SCAN_SHARE * (0.15 * read + 0.85 * read * built_share)
-    return share, f'Preparing the shaders: {files_done} of {files} files'
+    share = min(1.0, max(0.0, overall_done / overall_total))
+    name = PRECOMPILE_PASSES.get(parts[0], parts[0])
+    return share, f'Preparing the shaders: {name}, {pass_done} of {pass_total}'
 
 
 def child_environment():

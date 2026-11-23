@@ -322,3 +322,40 @@ Triage of both symptoms, the minidump findings and the A/B table:
 - Played from a real 2.0.0 package (14.6 GB, base game plus the v262144 update) on Windows with the release runtime
   (RTX 5080): the setup step built the game code (126 s) and precompiled 9,823 programs from the package's 8,124
   shader files (0 failed); the game reached the title screen at 30 FPS. A cutscene from a package was not reached.
+
+## Shader precompile speed and progress (T281, 2026-11-23)
+
+- Why it was slow (measured on the low-end dev PC: i7-3770K, GTX 1050 Ti, 16 GB; an LD_PRELOAD timer around
+  `shaderc_compile_into_spv`, `vkCreateGraphicsPipelines` and `uncompress` on an unmodified build, plus a 312-file
+  subset of the dump): the cost is the CPU compilers. A fragment shader costs 82 ms of shaderc on average (29 ms
+  median, p90 273 ms) because fragments run spirv-opt by default – 7.5x a vertex shader (5.3 ms) and ~80 % of the
+  per-stage CPU; NVIDIA's own compile of each new module adds 27–55 ms. Maxwell → GLSL translation itself is trivial
+  (0.2–1 ms per stage) but was serialized behind one global lock; with warm caches that lock was the whole critical
+  path. The scan reads 8.1 GB and inflates 14.0 GB, and the 25 >64 MB map/model files were processed last and one at
+  a time: a ~29 s serial tail of the 52 s phase.
+- `runtime/nvn/maxwell/translate.c` + `shader.h`: the translator is re-entrant now – the `RSC2`/`img_coord` scratch
+  rings and the guest-heap range (`maxwell_gmem_base/size`) are thread-local. `runtime/nvn/vulkan/exec.c`:
+  `xlat_lock`/`xlat_unlock` skip the global lock for threads running their own precompile jobs (`tl_inline_jobs`); the
+  game's single translator thread still takes it.
+- `runtime/nvn/vulkan/precompile.c`: the offline precompile uses all logical CPUs but one (was the in-game
+  `xcde_shader_workers`, cpus-4 = 4 here), with only 4 build workers during the scan and the rest joining after it
+  (7 workers starved the zlib inflate: 32.4 s vs 21.8 s scan); the scan sorts the biggest files first and allows up
+  to N >64 MB files at once (N by RAM: 4 at 16 GB, 2 at 8 GB) instead of the serial tail; progress reports the four
+  passes (scan, build, seed, pipelines) weighted by the previous run's measured pass times
+  (`cache/precompile_times.txt`), so the launcher's bar moves through the seed and pipeline passes and can show the
+  time left (it used to reach 100 % at the end of the build, stand still, then jump back for the pipelines pass); the
+  seed pass skips the jobs the program pass already built (465 of 1,170 on the subset; 5,484 of 9,045 for the whole
+  game); jobs on the crash skip list are reported as "skipped", not "failed".
+- `tools/launcher/launcher.cpp`: reads the new progress format and shows "pass N of 4 · name · done/total · ~min
+  left"; `pc_stop` deletes `cache/precompile_inflight.bin` because a stop the user asked for is not a driver crash
+  (the next run used to move those in-flight jobs to the permanent skip list – the 92 entries in the dev cache were
+  ~23 cancels × 4 workers); the explicit "Precompile shaders" button clears the skip list and a stale in-flight
+  record so the failed jobs are retried. `tools/gamebuild/gamebuild.py` reads the same progress format.
+- Measured, old vs new build back to back: warm rerun 8.37 → 1.55 s (5.4x), warm with driver libraries and whole
+  pipelines 24.8 → 3.6 s (6.9x), cold SPIR-V 32.1 → 27.8 s (-13 %, shaderc-bound with 7 threads on 4 cores), full-dump
+  scan 40.6 → 21.1 s (-48 %). The SPIR-V cache after a cold subset run is identical old vs new (2,133 entries, same
+  bytes): the parallel translation and the seed dedupe change no output.
+- Tests: `tests/unit/test_recomplauncher_support.py` (the new parser, the cancel/skip-list source contracts), the
+  full unit suite (196) and `scripts/native_tests_linux.sh`. Left open: the fragment-spirv-opt default needs an
+  in-game FPS A/B (86 % of a fragment compile is spirv-opt); a build-time fingerprint of the translator inputs to
+  skip the rerun after builds that cannot change any shader; and the whole-pipeline pass policy on low-end PCs.

@@ -474,6 +474,13 @@ static const char *const k_en[][2] = {
     {"Preparando shaders antes de la primera partida (solo esta vez)", "Preparing shaders before the first game (only this time)"},
     {"Precompilando shaders", "Precompiling shaders"}, {"Variantes conocidas (semilla)…", "Known variants (seed)…"},
     {"Archivos %llu de %llu · programas de shaders listos %llu de %llu", "Files %llu of %llu · shader programs ready %llu of %llu"},
+    // [XCDE] T281: the precompile's four passes, its overall bar and its remaining time
+    {"Fase %d de 4 · %s · %llu de %llu · quedan ~%d min", "Pass %d of 4 · %s · %llu of %llu · ~%d min left"},
+    {"Buscando shaders en los archivos del juego", "Scanning the game files for shaders"},
+    {"Compilando los programas de shaders", "Building the shader programs"},
+    {"Variantes conocidas (semilla)", "Known variants (seed)"},
+    {"Pipelines completos (optimizados)", "Whole optimized pipelines"},
+    {"Los trabajos que fallaron se reintentarán en esta pasada (lista de fallidos borrada)", "The jobs that failed are retried in this pass (failed list cleared)"},
     {"El controlador gráfico falló en un shader: se salta y se sigue (intento ", "The graphics driver failed on a shader: it is skipped (attempt "},
     {"Shaders precompilados", "Shaders precompiled"},
     {"La precompilación falló (registro: build/last_precompile.log)", "Precompilation failed (log: build/last_precompile.log)"},
@@ -949,12 +956,17 @@ static void launch() {
 // shader in the game's files into cache/spirv, so the first visit to an area doesn't stop to compile. It reports
 // progress in cache/precompile_progress.txt and writes cache/precompile_done.txt at the end. JUGAR runs it first
 // when it was never done (once, a few minutes; "Omitir" skips it).
+// [XCDE] T281: cache/precompile_progress.txt now covers the four passes ("<phase> <overall done> <overall total> <this
+// pass done> <this pass total>"), so the bar moves for the seed and whole-pipeline passes too and the text can show the
+// time left. The manual "Precompile shaders" button also clears the crash skip list (a cancel used to write its
+// in-flight jobs there as if the driver had crashed; pc_stop now deletes that file instead).
 #ifdef _WIN32
 static HANDLE g_pc_proc;
 #else
 static pid_t g_pc_proc;  // [XCDE] T-LINUX
 #endif
 static bool g_pc_then_play, g_pc_play_now;
+static Uint64 g_pc_t0;  // [XCDE] T281: when the run started (time left estimate)
 static float g_pc_frac;
 static std::string g_pc_text;
 
@@ -979,8 +991,14 @@ static bool pc_running() {
 #endif
 }
 
-static void pc_start(bool then_play) {
+static void pc_start(bool then_play, bool fresh = false) {
     apply_env();  // [XCDE] the Diagnostics tab variables also reach the shader precompiler
+    if (fresh) {  // [XCDE] T281: an explicit "Precompile shaders": retry the jobs that once crashed the driver, and drop a
+                  // stale in-flight record. The automatic run (JUGAR) keeps the skip list; a user stop is not a crash.
+        xcde_utf8_remove(path("cache/precompile_skip.txt").c_str());
+        xcde_utf8_remove(path("cache/precompile_inflight.bin").c_str());
+    }
+    g_pc_t0 = SDL_GetTicks();
 #ifdef _WIN32
     if (g_pc_proc) return;
     std::string exe = path("build/xcde.exe");
@@ -1026,6 +1044,10 @@ static void pc_start(bool then_play) {
 }
 
 static void pc_stop() {
+    // [XCDE] T281: a stop the user asked for (Omitir / Detener / closing the launcher) is NOT a driver crash: the
+    // precompile leaves cache/precompile_inflight.bin behind, and the next run used to move those ~4 jobs to the
+    // crash skip list forever. Delete it: they are simply retried next run (a genuine crash leaves its own file and
+    // the retry logic below still skips those jobs).
 #ifdef _WIN32
     if (!g_pc_proc) return;
     TerminateProcess(g_pc_proc, 1);
@@ -1040,6 +1062,7 @@ static void pc_stop() {
     if (!ended) { kill(-g_pc_proc, SIGKILL); waitpid(g_pc_proc, NULL, 0); }
     g_pc_proc = 0;
 #endif
+    xcde_utf8_remove(path("cache/precompile_inflight.bin").c_str());
 }
 
 // (every frame while it runs) progress from the file; at the end, the result and JUGAR if it was waiting
@@ -1052,18 +1075,27 @@ static void pc_poll() {
     FILE *f = xcde_utf8_fopen(path("cache/precompile_progress.txt").c_str(), "r");
     if (f) {
         char phase[16] = "";
-        unsigned long long fd = 0, ft = 0, found = 0, done = 0;
-        if (fscanf(f, "%15s %llu %llu %llu %llu", phase, &fd, &ft, &found, &done) == 5 && ft) {
-            // reading the files is ~1/5 of the time, building the programs found the rest (it follows the reading)
-            float fs = (float)fd / (float)ft, fc = found ? (float)done / (float)found : 0.0f;
-            g_pc_frac = 0.15f * fs + 0.85f * fs * fc;
-            char t[160];
-            if (!strcmp(phase, "pipelines")) {  // [PRECOMPILE-STALL-FIX] the last pass (whole pipelines) has its own count: the bar was stuck at 100 % while it ran
-                g_pc_frac = fs;
-                snprintf(t, sizeof t, T("Paso final: pipelines completos %llu de %llu (puedes pulsar Omitir: el juego los compila al jugar)"), fd, ft);
-            } else if (!strcmp(phase, "seed")) snprintf(t, sizeof t, "%s", T("Variantes conocidas (semilla)…"));  // [XCDE] T211: the seed pass
-            else snprintf(t, sizeof t, T("Archivos %llu de %llu · programas de shaders listos %llu de %llu"), fd, ft, done, found);
-            g_pc_text = t;
+        unsigned long long od = 0, ot = 0, pd = 0, pt = 0;
+        if (fscanf(f, "%15s %llu %llu %llu %llu", phase, &od, &ot, &pd, &pt) == 5 && ot) {
+            // [XCDE] T281: "<phase> <overall done> <overall total> <this pass done> <this pass total>" (precompile.c):
+            // the bar is the whole job (all four passes), the text the current pass and the time left.
+            float frac = (float)od / (float)ot;
+            g_pc_frac = frac > 1.0f ? 1.0f : frac < 0.0f ? 0.0f : frac;
+            if (!strcmp(phase, "done")) {
+                g_pc_frac = 1.0f;
+                g_pc_text = T("Shaders precompilados");
+            } else {
+                const char *name = !strcmp(phase, "scan") ? T("Buscando shaders en los archivos del juego")
+                                 : !strcmp(phase, "build") ? T("Compilando los programas de shaders")
+                                 : !strcmp(phase, "seed") ? T("Variantes conocidas (semilla)")
+                                 : T("Pipelines completos (optimizados)");
+                int pass = !strcmp(phase, "scan") ? 1 : !strcmp(phase, "build") ? 2 : !strcmp(phase, "seed") ? 3 : 4;
+                Uint64 elapsed = SDL_GetTicks() - g_pc_t0;
+                int left_min = g_pc_frac > 0.02f ? (int)((float)elapsed / 60000.0f * (1.0f - g_pc_frac) / g_pc_frac + 0.5f) : 0;
+                char t[256];
+                snprintf(t, sizeof t, T("Fase %d de 4 · %s · %llu de %llu · quedan ~%d min"), pass, name, pd, pt, left_min);
+                g_pc_text = t;
+            }
         }
         fclose(f);
     }
@@ -2777,7 +2809,11 @@ int main(int argc, char **argv) {
         ImGui::EndDisabled();
         ImGui::SameLine();
         ImGui::BeginDisabled(pc_running() || gc_running() || !have_exe || *g_mismatch_desc);
-        if (ImGui::Button(T("Precompilar shaders"))) pc_start(false);
+        if (ImGui::Button(T("Precompilar shaders"))) {  // [XCDE] T281: also retries the jobs on the crash skip list
+            bool retry = exists("cache/precompile_skip.txt");
+            pc_start(false, true);
+            if (retry) g_status = T("Los trabajos que fallaron se reintentarán en esta pasada (lista de fallidos borrada)");
+        }
         ImGui::SetItemTooltip("%s", g.ui_lang ? "Prepare every shader ahead of time, so new areas don't stop to compile them. Progress is kept."
                                               : "Prepara todos los shaders por adelantado, para que las zonas nuevas no se paren a compilarlos. El progreso se conserva.");
         ImGui::EndDisabled();

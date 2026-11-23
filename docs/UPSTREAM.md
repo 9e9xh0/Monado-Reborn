@@ -236,3 +236,17 @@ Details and the reporter's log evidence: [CHANGELOG](dev/CHANGELOG.md).
 - `runtime/hle/movie.c`: a package's movies through FFmpeg custom I/O (`pkg_open`, `ex_close`).
 - `runtime/nvn/vulkan/precompile.c`: `list_package`, and shader files read through `gf_read`.
 - `runtime/services/kbicons.c`, `runtime/hle/quickstep_native.c`: their romfs files through `gf_read`/`gf_source`.
+
+## Shader precompile speed and progress (T281, 2026-11-23)
+
+- `runtime/nvn/maxwell/translate.c`, `runtime/nvn/maxwell/shader.h`: the `RSC2`/`img_coord` scratch rings and
+  `maxwell_gmem_base/size` are thread-local; the translator can run on several precompile workers at once.
+- `runtime/nvn/vulkan/exec.c`: new `xlat_unlock`; `xlat_lock`/`xlat_unlock` skip the global translation lock for
+  threads running their own precompile jobs (`tl_inline_jobs`). The game's translator thread still serializes.
+- `runtime/nvn/vulkan/precompile.c`: cpus-1 worker threads (ramped up after the scan), >64 MB files first and up to
+  N at once, four-pass weighted progress (`cache/precompile_times.txt`), seed jobs deduped against the build pass,
+  skipped jobs reported separately.
+- `tools/launcher/launcher.cpp`: new progress format + time left; `pc_stop` deletes `cache/precompile_inflight.bin`
+  (a user stop is not a driver crash); the manual Precompile button clears the skip list; `pc_start(..., fresh)`.
+- `tools/gamebuild/gamebuild.py`: reads the four-pass progress format.
+- `tests/unit/test_recomplauncher_support.py`: the parser tests and the launcher source contracts.

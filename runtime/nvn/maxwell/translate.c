@@ -23,7 +23,8 @@
 #include "shader.h"
 #include "../../platform.h"  // [XCDE] T275: rt_logf, the timestamped diagnostics log
 
-uint64_t maxwell_gmem_base, maxwell_gmem_size;
+// [XCDE] T281: per-thread, so precompile workers can translate concurrently (exec.c sets them right before the call).
+_Thread_local uint64_t maxwell_gmem_base, maxwell_gmem_size;
 const uint8_t *maxwell_dbg_code;
 uint32_t maxwell_dbg_pc;
 int maxwell_dbg_reg;
@@ -642,8 +643,8 @@ static void write_tex_result(Ctx *c, int slot, const char *call, uint32_t mask, 
 
 // Integer texel coordinates in guest units -> the (possibly larger) allocation of texture slot `slot`.
 static const char *RSC2(Ctx *c, int slot, const char *fmt, ...) {
-    static char bufs[4][1024];
-    static int bi;
+    static _Thread_local char bufs[4][1024];  // [XCDE] T281: per thread (translation runs on several precompile workers)
+    static _Thread_local int bi;
     char *o = bufs[bi++ & 3];
     char inner[700];
     va_list ap;
@@ -1028,8 +1029,8 @@ static int surface_slot(Ctx *c, uint64_t w, const char *op, uint32_t *mask_out) 
 // lost by the losing pixels; at 4K one whole column always lost at a raster tile edge: the dark vertical line). Other
 // addresses (and other stages) map to the centre of the scaled texel, as texelFetch does (rsc).
 static const char *img_coord(Ctx *c, int slot, int a) {
-    static char bufs[2][640];
-    static int bi;
+    static _Thread_local char bufs[2][640];  // [XCDE] T281: per thread, like RSC2
+    static _Thread_local int bi;
     char *o = bufs[bi++ & 1];
     if (c->stage == STAGE_VERTEX) { snprintf(o, 640, "ivec2(int(r%d), int(r%d))", a, a + 1); return o; }
     c->uses_rscale = true;
