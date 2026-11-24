@@ -29,8 +29,10 @@ int main(int argc, char **argv) {
           "cheat_damage_dealt = 1\ncheat_damage_dealt_percent = 250\ncheat_exp = 2\ncheat_exp_percent = 1o0\n"
           "cheat_enemy_health = true\ncheat_enemy_health_percent = 5\ncheat_high_jump = true\ncamera_follow_jump = true\n"
           "grass_lod = extreme\n"
+          "audio_channels = 5.1\n"
           "future_plugin = preserve this\n", f); fclose(f);
     settings_load();
+    assert(g_settings.audio_channels == AUDIO_OUT_SURROUND_51);
     assert(g_settings.grass_lod == GRASS_ULTRA);
     // [XCDE] GitHub #171: the enlarged MPF block supports Ultra (3x), legacy
     // `extreme` / index 5 maps to Ultra (3x), and the diagnostic override caps at 3x.
@@ -113,5 +115,12 @@ int main(int argc, char **argv) {
     g_window_w = 2560; g_window_h = 1440; settings_save();
     g_window_w = 1280; g_window_h = 720; settings_load();
     assert(g_window_w == 2560 && g_window_h == 1440);
+    // [XCDE] audio output mode round-trips (5.1 / stereo / auto)
+    g_settings.audio_channels = AUDIO_OUT_STEREO; settings_save();
+    g_settings.audio_channels = AUDIO_OUT_AUTO; settings_load();
+    assert(g_settings.audio_channels == AUDIO_OUT_STEREO);
+    g_settings.audio_channels = AUDIO_OUT_SURROUND_51; settings_save();
+    g_settings.audio_channels = AUDIO_OUT_AUTO; settings_load();
+    assert(g_settings.audio_channels == AUDIO_OUT_SURROUND_51);
     assert(!remove(argv[1])); puts("settings round-trip: stable GPU ID, policies, 1.5x, window size, unknown keys and default reset OK"); return 0;
 }

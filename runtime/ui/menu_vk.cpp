@@ -35,6 +35,7 @@ const char *dlss_status(void);
 bool diag_deterministic(void);
 bool tmp_jitter_active(void);  // a temporal upscaler is selected: the game's TAA is off (runtime/hle/graphics.c)
 void plat_terminate(void);  // [XCDE] GitHub #22: the F1 menu's "exit the game" button (the platform's immediate exit)
+void audio_notify_device_change(void);  // [XCDE] live 5.1/stereo hot-swap (runtime/services/audio.c)
 // [XCDE] GitHub #39: what the performance overlay (perf_overlay.h) reads
 int xcde_present_fps(void);
 float vk_display_hz_cached(void);
@@ -234,6 +235,10 @@ static const char *const k_en[][2] = {
     {"Automático (RDNA 3: activado)", "Automatic (RDNA 3: on)"},
     {"Automático (desactivado)", "Automatic (off)"},
     {"Desactivada", "Off"}, {"Desactivado", "Off"}, {"Activada", "On"}, {"Activado", "On"},
+    {"Salida de audio", "Audio output"},
+    {"Automático (5.1 si es compatible)", "Auto (5.1 if supported)"},
+    {"Estéreo (2.0)", "Stereo (2.0)"},
+    {"Envolvente 5.1", "Surround 5.1"},
 };
 static const char *T(const char *es) {
     if (g_settings.ui_lang != 1) return es;
@@ -521,6 +526,15 @@ static void ui(void) {
         if (ImGui::BeginTabItem(T("Audio"))) {
             int vol = (int)lroundf(g_settings.volume * 100);
             if (ImGui::SliderInt(T("Volumen"), &vol, 0, 200, "%d %%")) g_settings.volume = vol / 100.0f;
+            static const char *audio_modes[] = {"Automático (5.1 si es compatible)", "Estéreo (2.0)", "Envolvente 5.1"};
+            int am = audio_out_valid(g_settings.audio_channels);
+            if (monado_combo(T("Salida de audio"), &am, TL(audio_modes, AUDIO_OUT_COUNT).p, AUDIO_OUT_COUNT)) {
+                g_settings.audio_channels = audio_out_valid(am);
+                audio_notify_device_change();
+            }
+            ImGui::SetItemTooltip("%s", g_settings.ui_lang
+                ? "Auto uses 5.1 LPCM surround on 5.1/7.1 devices and Stereo otherwise.\nThe Switch game mixes up to 5.1 (SDL maps 5.1 onto 7.1 devices). Applies live."
+                : "Automático usa sonido envolvente 5.1 LPCM en dispositivos 5.1/7.1 y estéreo en el resto.\nEl juego de Switch mezcla hasta 5.1 (SDL adapta 5.1 a dispositivos 7.1). Se aplica al instante.");
             ImGui::Checkbox(T("Audio de los vídeos (al reiniciar)"), &g_settings.movie_audio);
             ImGui::EndTabItem();
         }

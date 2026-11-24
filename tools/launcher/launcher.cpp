@@ -33,6 +33,7 @@
 #include "../../runtime/perf_overlay_opts.h"  // GitHub #147
 #include "../../runtime/grass_lod.h"
 #include "../../runtime/graphics_options.h"
+#include "../../runtime/audio_options.h"  // [XCDE] audio output channel policy (auto / stereo / 5.1)
 #include "update_check.h"  // GitHub #119
 
 // [XCDE] T275: the launcher does not link runtime/log.c; the shared settings code (graphics_options.h) logs through it.
@@ -239,6 +240,7 @@ struct Cfg {
     bool show_fps = false;
     int fps = 0;  // index into k_fps_ini
     int volume = 100;
+    int audio_channels = AUDIO_OUT_AUTO;  // [XCDE] AUDIO_OUT_*: auto / stereo / 5.1
     bool movie_audio = true;
     int lang = 0;           // index into k_langs
     int pad[NPAD];
@@ -442,7 +444,10 @@ static const char *const k_en[][2] = {
      "same file, the last one wins. Code mods (exefs, .pchtxt / IPS patches) don't work in this "
      "recompiled version."},
     {"Abrir carpeta de mods", "Open mods folder"}, {"Actualizar lista", "Refresh list"}, {"No hay mods instalados.", "No mods installed."},
-    {"Volumen", "Volume"}, {"Sonido de los vídeos", "Video sound"}, {"Idioma del juego", "Game language"}, {"Idioma", "Language"},
+    {"Volumen", "Volume"}, {"Salida de audio", "Audio output"},
+    {"Automático (5.1 si es compatible)", "Auto (5.1 if supported)"},
+    {"Estéreo (2.0)", "Stereo (2.0)"}, {"Envolvente 5.1", "Surround 5.1"},
+    {"Sonido de los vídeos", "Video sound"}, {"Idioma del juego", "Game language"}, {"Idioma", "Language"},
     {"Textos del juego. Solo los idiomas que incluya tu copia; si uno falla, vuelve a Inglés.",
      "The game's text. Only the languages your copy includes; if one fails, it goes back to English."},
     {"Recompilación nativa para PC · configuración", "Native PC recompilation · settings"},
@@ -733,6 +738,7 @@ static void load() {
         else if (!strcmp(k, "gpu_keep_heavy")) g.gpu_keep_heavy = atoi(v) != 0;
         else if (!strcmp(k, "fps")) { g.fps = 0; for (int j = 0; j < 6; j++) if (!strcmp(v, k_fps_ini[j])) g.fps = j; if (!strcmp(v, "unlímited") || !strcmp(v, "0")) g.fps = 5; }
         else if (!strcmp(k, "volume")) g.volume = atoi(v);
+        else if (!strcmp(k, "audio_channels")) g.audio_channels = audio_out_parse(v);
         else if (!strcmp(k, "movie_audio")) g.movie_audio = atoi(v) != 0;
         else if (!strcmp(k, "language") && (i = find(k_lang_ini, 10, v)) >= 0) g.lang = i;
         else if (!strncmp(k, "mod_", 4)) g_mods.push_back(Mod{k + 4, atoi(v) != 0, false});
@@ -800,7 +806,8 @@ static bool save() {
     fprintf(f, "cheat_no_fall_damage = %d\n", g.cheats.cheat_no_fall_damage);
     fprintf(f, "cheat_high_jump = %d\n", g.cheats.cheat_high_jump);  // [XCDE] T276: jump height x8
     fprintf(f, "camera_follow_jump = %d\n", g.cheats.camera_follow_jump);  // [XCDE] T276: camera follows jumps
-    fprintf(f, "volume = %d\nmovie_audio = %d\nlanguage = %s\nfps = %s\n", g.volume, g.movie_audio, k_lang_ini[g.lang], k_fps_ini[g.fps]);
+    fprintf(f, "volume = %d\naudio_channels = %s\nmovie_audio = %d\nlanguage = %s\nfps = %s\n", g.volume,
+            audio_out_ini[audio_out_valid(g.audio_channels)], g.movie_audio, k_lang_ini[g.lang], k_fps_ini[g.fps]);
     for (const Mod &m : g_mods) if (!is_icon_mod(m.name)) fprintf(f, "mod_%s = %d", m.name.c_str(), m.on), fputc(10, f);
     int ic = icons_effective(g.icons);
     fprintf(f, "button_icons = %s\nmod_%s = %d\nmod_%s = %d\nmod_icons_keyboard = %d\n", k_icon_ini[g.icons], k_icon_mod[0], ic == 2,
@@ -2604,6 +2611,14 @@ static void tab_audio() {
     ImGui::SeparatorText(T("Audio"));
     ImGui::SetNextItemWidth(300 * g_scale);
     ImGui::SliderInt(T("Volumen"), &g.volume, 0, 200, "%d%%");
+    static const char *audio_modes[] = {"Automático (5.1 si es compatible)", "Estéreo (2.0)", "Envolvente 5.1"};
+    ImGui::SetNextItemWidth(300 * g_scale);
+    int am = audio_out_valid(g.audio_channels);
+    if (monado_combo(T("Salida de audio"), &am, TL(audio_modes, AUDIO_OUT_COUNT).p, AUDIO_OUT_COUNT))
+        g.audio_channels = audio_out_valid(am);
+    ImGui::SetItemTooltip("%s", g.ui_lang
+        ? "Auto uses 5.1 LPCM surround on 5.1/7.1 devices and Stereo otherwise.\nThe Switch game mixes up to 5.1 (SDL maps 5.1 onto 7.1 devices)."
+        : "Automático usa sonido envolvente 5.1 LPCM en dispositivos 5.1/7.1 y estéreo en el resto.\nEl juego de Switch mezcla hasta 5.1 (SDL adapta 5.1 a dispositivos 7.1).");
     ImGui::Checkbox(T("Sonido de los vídeos"), &g.movie_audio);
     ImGui::SeparatorText(T("Idioma del juego"));
     ImGui::SetNextItemWidth(260 * g_scale);

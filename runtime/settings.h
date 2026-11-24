@@ -3,6 +3,7 @@
 #include <stdbool.h>
 #include "grass_lod.h"
 #include "graphics_options.h"
+#include "audio_options.h"  // [XCDE] audio output channel mode (auto / stereo / 5.1)
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -49,6 +50,7 @@ typedef struct {
     int upscaler;        // UPSCALE_*: how a lower internal resolution reaches the window (MetalFX: macOS, FSR 1: Windows)
     int antialias;       // AA_*: anti-aliasing of the game image before it is scaled to the window
     float volume;        // master volume, 1 = 100%
+    int audio_channels;  // [XCDE] AUDIO_OUT_*: auto (5.1 on >=6ch device, else stereo), stereo, 5.1 (restart)
     bool reverb;         // room reverb effect
     bool movie_audio;
     bool show_fps;

@@ -1813,6 +1813,11 @@ int ui_run(void) {
                 LOG("window closed\n");
                 exit(0);
             }
+            if (e.type == SDL_EVENT_AUDIO_DEVICE_ADDED || e.type == SDL_EVENT_AUDIO_DEVICE_REMOVED ||
+                e.type == SDL_EVENT_AUDIO_DEVICE_FORMAT_CHANGED) {
+                extern void audio_notify_device_change(void);  // [XCDE] live 5.1/stereo hot-swap (runtime/services/audio.c)
+                audio_notify_device_change();
+            }
             extern bool input_user_blocked(const SDL_Event *e);
             if (input_user_blocked(&e)) continue;  // scripted test runs: the real keyboard / mouse / pads do nothing (as metal.m)
             if (menu_handle_event(&e)) continue;
