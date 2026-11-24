@@ -23,7 +23,8 @@ const char *const g_language_names[N_LANGUAGES] = {"Auto", "Japanese", "English"
                                                    "Chinese (Simplified)", "Chinese (Traditional)"};
 Settings g_settings = {.fps = 30, .fps_overlay = true, .upscaler_auto = true, .volume = 1.0f, .movie_audio = true, .res_mode = RES_MATCH, .upscaler = UPSCALE_FSR1, .upscale_quality = UQ_QUALITY, .upscale_sharpness = -1.0f, .game_blur = true, .vsync = true, .ui_lang = 1, .gpu_index = -1, .gpu_profile = GPU_PROFILE_AUTO, .gpu_gpl = GPU_GPL_AUTO, .occlusion = OCCL_AUTO, .amd_fix = AMD_FIX_AUTO, .session_fix = SESSION_FIX_AUTO, .gpu_memory_budget = true, .input_rumble = true, .grass_lod = GRASS_DEFAULT, .run_speed = 1.0f, .ui_scale = 100,
     .cheat_damage_dealt_percent = 100, .cheat_damage_received_percent = 100, .cheat_exp_percent = 100, .cheat_ap_percent = 100,
-    .cheat_sp_percent = 100, .cheat_gold_percent = 100, .cheat_enemy_health_percent = 100, .save_slots_99 = true};
+    .cheat_sp_percent = 100, .cheat_gold_percent = 100, .cheat_enemy_health_percent = 100, .save_slots_99 = true,
+    .graphics = {.value = {[GFX_SHADOW_MASK] = 1}}};
 int g_window_w = 1280, g_window_h = 720;  // windowed size (settings.h)
 
 // [XCDE] Mods (runtime/services/romfs_virtual.c): xcde.ini `mod_<folder> = 0/1`; a folder not listed is on.

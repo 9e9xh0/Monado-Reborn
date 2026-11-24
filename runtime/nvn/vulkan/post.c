@@ -249,8 +249,7 @@ static VkImageView post_process(VkCommandBuffer cb, TexBackend *b, double ow_d, 
         extern VkImageView tmp_fg_hudless_target(void);
         VkImageView scene = t ? tmp_hud_scene_view(b->width, b->height) : VK_NULL_HANDLE;
         bool fuse_srgb = false;
-#ifdef __linux__
-        bool need_srgb = t && (g_settings.upscaler == UPSCALE_FSR4_LITE || g_settings.upscaler == UPSCALE_FSR3 || g_settings.upscaler == UPSCALE_DLSS);
+        bool need_srgb = t && tmp_uses_linear_fp16();
         fuse_srgb = need_srgb && scene && !tmp_fg_hudless_target();
         if (need_srgb && !fuse_srgb) {  // [XCDE] linear -> sRGB
             vk_gp_mark(cb, "post: tmp_srgb %ux%u", ow, oh);
@@ -260,7 +259,6 @@ static VkImageView post_process(VkCommandBuffer cb, TexBackend *b, double ow_d, 
             vk_full_barrier(cb);
             t = post_view(encoded);
         }
-#endif
         if (scene) {  // [XCDE] T213: the upscaled scene + what the HUD passes added (render size, bilinear)
             vk_gp_mark(cb, "post: tmp_hud %ux%u", ow, oh);
             fg_scene = t;

@@ -38,7 +38,14 @@ int main(void) {
         assert(lround(o.sx*1280)%8==0 && lround(o.sy*720)%8==0);
         assert(fabs(o.vw-1920)<.001 && fabs(o.vh-1080)<.001);  // the output box is unchanged
     }
+    // Non-native temporal presets snap to an 8-pixel grid (1440p Quality: 1707x960 -> 1704x960, Ultra: 853x480 -> 856x480;
+    // 4K Quality 2560x1440 is already on the grid; Native is never snapped).
     g_settings.upscale_quality=UQ_QUALITY; g_settings.upscaler=UPSCALE_FSR3;
-    output_scale(3840,2160,false,37,5,&o); assert(fabs(o.sx*1280-2560)<.001 && fabs(o.sy*720-1440)<.001);
-    puts("output scale: absolute limits, CPU bottleneck, profile switching, 1.5x and the Balanced grid passed"); return 0;
+    output_scale(2560,1440,false,37,5,&o); assert(lround(o.sx*1280)==1704 && lround(o.sy*720)==960);
+    output_scale(3840,2160,false,38,5,&o); assert(fabs(o.sx*1280-2560)<.001 && fabs(o.sy*720-1440)<.001);
+    g_settings.upscale_quality=UQ_ULTRA;
+    output_scale(2560,1440,false,39,5,&o); assert(lround(o.sx*1280)==856 && lround(o.sy*720)==480);
+    g_settings.upscale_quality=UQ_NATIVE;
+    output_scale(2560,1440,false,40,5,&o); assert(lround(o.sx*1280)==2560 && lround(o.sy*720)==1440);
+    puts("output scale: absolute limits, CPU bottleneck, profile switching, 1.5x and the 8-pixel grid passed"); return 0;
 }
