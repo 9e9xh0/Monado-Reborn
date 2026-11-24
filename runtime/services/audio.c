@@ -1,6 +1,7 @@
 // audren:u (audio renderer) and audout:u.
 #include "../diag/diag.h"
 #include <stdlib.h>
+#include <stdatomic.h>
 #include <string.h>
 #include <stdio.h>
 #include <math.h>
@@ -10,6 +11,7 @@
 
 #include "../hle.h"
 #include "../settings.h"
+#include "../audio_options.h"  // [XCDE] audio output channel policy (auto / stereo / 5.1)
 #include "../ipc.h"
 #include "../env_cache.h"  // (last: cached getenv - the mixer reads its debug switches per voice)
 
@@ -86,6 +88,7 @@ typedef struct {
     Mix *mix;
     uint32_t nmix;
     uint8_t sink_used, sink_inputs, sink_input[6];
+    uint32_t out_channels;  // [XCDE] 2 (stereo) or 6 (5.1 surround)
     Effect *fx;
     SDL_AudioStream *stream;
     FILE *wav;
@@ -93,6 +96,63 @@ typedef struct {
     pthread_t thread;
     volatile bool quit;  // reboot (audio_reset)
 } Renderer;
+
+// [XCDE] Host playback channel probe, active output channel count (2 = stereo, 6 = 5.1), and live hot-swap.
+static _Atomic int g_audio_host_ch;
+static _Atomic uint32_t g_audio_dev_gen;
+static _Atomic bool g_audio_mode_logged;
+static KEvent *g_audio_dev_events[16];
+static int g_audio_dev_events_n;
+static pthread_mutex_t g_track_lock = PTHREAD_MUTEX_INITIALIZER;
+
+static int audio_host_channels(void) {
+    int cached = atomic_load(&g_audio_host_ch);
+    if (cached > 0) return cached;
+    if (kernel_det() || (getenv("LARECOMP_NO_AUDIO") && strcmp(getenv("LARECOMP_NO_AUDIO"), "0"))) {
+        atomic_store(&g_audio_host_ch, 2);
+        return 2;
+    }
+    int ch = 2;
+    if (SDL_InitSubSystem(SDL_INIT_AUDIO)) {
+        SDL_AudioSpec dev;
+        if (SDL_GetAudioDeviceFormat(SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK, &dev, NULL) && dev.channels > 0)
+            ch = dev.channels;
+    }
+    atomic_store(&g_audio_host_ch, ch);
+    return ch;
+}
+
+static int audio_active_channels(void) {
+    int mode = audio_out_env_override(getenv("XCDE_AUDIO_CHANNELS"), g_settings.audio_channels);
+    int host_ch = audio_host_channels();
+    int active = audio_out_resolve_channels(mode, host_ch, kernel_det());
+    if (!atomic_exchange(&g_audio_mode_logged, true)) {
+        LOG("[audio] output mode: %s -> %d ch (host %d ch)\n", audio_out_ini[audio_out_valid(mode)], active, host_ch);
+    }
+    return active;
+}
+
+// [XCDE] Called on SDL audio device hot-swap or F1 Audio output change: re-probes the host playback device,
+// triggers stream reconfiguration in audren/audout threads, and signals IAudioDevice system/output events.
+void audio_notify_device_change(void) {
+    if (kernel_det()) return;
+    atomic_store(&g_audio_host_ch, 0);
+    atomic_store(&g_audio_mode_logged, false);
+    (void)audio_active_channels();
+    atomic_fetch_add(&g_audio_dev_gen, 1);
+    KEvent *evs[16];
+    int n = 0;
+    pthread_mutex_lock(&g_track_lock);
+    n = g_audio_dev_events_n;
+    if (n > 16) n = 16;
+    for (int i = 0; i < n; i++) evs[i] = g_audio_dev_events[i];
+    pthread_mutex_unlock(&g_track_lock);
+    if (n > 0) {
+        pthread_mutex_lock(&g_klock);
+        for (int i = 0; i < n; i++) if (evs[i]) kernel_signal(evs[i]);
+        pthread_mutex_unlock(&g_klock);
+    }
+}
 
 static float clampf(float v, float lo, float hi) { return v < lo ? lo : v > hi ? hi : v; }
 
@@ -590,21 +650,16 @@ static void render_frame(Renderer *r, float *stereo) {
                 }
         }
     }
-    // final mix -> device sink (FL FR FC LFE BL BR) -> stereo
+    // [XCDE] final mix -> device sink (FL FR FC LFE BL BR) -> 2 ch stereo or 6 ch 5.1
     Mix *f = find_mix(r, 0);
     if (f) apply_effects(r, 0, f);
+    uint32_t out_ch = r->out_channels ? r->out_channels : 2;
     for (uint32_t i = 0; i < N; i++) {
         float ch[6] = {0};
         if (f && r->sink_used)
             for (int c = 0; c < r->sink_inputs && c < 6; c++)
                 if (r->sink_input[c] < f->bufs) ch[c] = f->buf[r->sink_input[c] * N + i] * f->volume;
-        float L = ch[0], R = ch[1];
-        if (r->sink_inputs >= 6) {
-            L += 0.707f * ch[2] + 0.251f * ch[3] + 0.707f * ch[4];
-            R += 0.707f * ch[2] + 0.251f * ch[3] + 0.707f * ch[5];
-        }
-        stereo[i * 2] = clampf(L / 32768.f, -1, 1);
-        stereo[i * 2 + 1] = clampf(R / 32768.f, -1, 1);
+        audio_sink_mix_frame(ch, r->sink_inputs, (int)out_ch, stereo + i * out_ch);
     }
 }
 
@@ -616,9 +671,12 @@ static void apply_gain(SDL_AudioStream *st) {
     if (st && SDL_GetAudioStreamGain(st) != g) SDL_SetAudioStreamGain(st, g);
 }
 
-static void wav_header(FILE *f, uint32_t bytes) {
-    uint32_t h[11] = {0x46464952, 36 + bytes, 0x45564157, 0x20746d66, 16, 0x00020003, 48000, 48000 * 8,
-                      0x00200008, 0x61746164, bytes};
+static void wav_header(FILE *f, uint32_t rate, uint32_t ch, uint32_t bytes) {
+    if (!rate) rate = 48000;
+    if (!ch) ch = 2;
+    uint32_t block = ch * 4;
+    uint32_t h[11] = {0x46464952, 36 + bytes, 0x45564157, 0x20746d66, 16, (ch << 16) | 3, rate, rate * block,
+                      (32u << 16) | block, 0x61746164, bytes};
     fseek(f, 0, SEEK_SET);
     fwrite(h, 4, 11, f);
     fseek(f, 0, SEEK_END);
@@ -627,9 +685,10 @@ static void wav_header(FILE *f, uint32_t bytes) {
 static void *renderer_tick(void *arg) {
     Renderer *r = arg;
     { extern void plat_thread_audio(void); plat_thread_audio(); }  // [XCDE]
-    float out[2 * 4096];
+    float out[6 * 4096];
     uint32_t N = r->sample_count > 4096 ? 4096 : r->sample_count;
-    int frame_bytes = (int)(N * 2 * sizeof(float));
+    uint32_t ch = r->out_channels ? r->out_channels : 2;
+    int frame_bytes = (int)(N * ch * sizeof(float));
     uint64_t next = 0;
     struct timespec now;
     int target = 4 * frame_bytes;  // queued audio to keep ahead of the device: >= 2 device periods
@@ -637,13 +696,38 @@ static void *renderer_tick(void *arg) {
         SDL_AudioSpec dev;
         int dev_frames = 0;
         if (SDL_GetAudioDeviceFormat(SDL_GetAudioStreamDevice(r->stream), &dev, &dev_frames) && dev_frames > 0) {
-            int t = (2 * dev_frames * (int)r->sample_rate / (dev.freq ? dev.freq : 48000) + (int)N) * 2 * (int)sizeof(float);
+            int t = (2 * dev_frames * (int)r->sample_rate / (dev.freq ? dev.freq : 48000) + (int)N) * (int)ch * (int)sizeof(float);
             if (t > target) target = t;
-            LOG("[audren] device %d Hz, %d frames/period; queue target %d samples\n", dev.freq, dev_frames,
-                target / (2 * (int)sizeof(float)));
+            LOG("[audren] device %d Hz, %d ch, %d frames/period; stream %u ch; queue target %d samples\n", dev.freq,
+                dev.channels, dev_frames, ch, target / ((int)ch * (int)sizeof(float)));
         }
     }
+    uint32_t seen_gen = atomic_load(&g_audio_dev_gen);
     while (!r->quit) {
+        uint32_t cur_gen = atomic_load(&g_audio_dev_gen);
+        if (cur_gen != seen_gen) {
+            seen_gen = cur_gen;
+            uint32_t want_ch = (uint32_t)audio_active_channels();
+            if (want_ch != ch) {
+                pthread_mutex_lock(&r->lock);
+                r->out_channels = want_ch;
+                pthread_mutex_unlock(&r->lock);
+                ch = want_ch;
+                frame_bytes = (int)(N * ch * sizeof(float));
+                target = 4 * frame_bytes;
+                if (r->stream) {
+                    SDL_AudioSpec new_spec = {SDL_AUDIO_F32, (int)ch, (int)r->sample_rate};
+                    SDL_SetAudioStreamFormat(r->stream, &new_spec, NULL);
+                    SDL_AudioSpec dev;
+                    int dev_frames = 0;
+                    if (SDL_GetAudioDeviceFormat(SDL_GetAudioStreamDevice(r->stream), &dev, &dev_frames) && dev_frames > 0) {
+                        int t = (2 * dev_frames * (int)r->sample_rate / (dev.freq ? dev.freq : 48000) + (int)N) * (int)ch * (int)sizeof(float);
+                        if (t > target) target = t;
+                    }
+                }
+                LOG("[audren] hot-swapped output stream to %u ch\n", ch);
+            }
+        }
         if (r->stream) {
             while (SDL_GetAudioStreamQueued(r->stream) >= target && !r->quit) {
                 struct timespec ts = {0, 1000000};
@@ -677,7 +761,7 @@ static void *renderer_tick(void *arg) {
         if (r->wav && r->state == 0) {
             fwrite(out, 1, frame_bytes, r->wav);
             r->wav_bytes += frame_bytes;
-            if ((r->elapsed_frames & 255) == 0) { wav_header(r->wav, r->wav_bytes); fflush(r->wav); }
+            if ((r->elapsed_frames & 255) == 0) { wav_header(r->wav, r->sample_rate, ch, r->wav_bytes); fflush(r->wav); }
         }
         pthread_mutex_lock(&g_klock);
         kernel_signal(r->event);
@@ -942,13 +1026,14 @@ static void request_update(Renderer *r, IpcReq *req, IpcResp *resp) {
 }
 
 static void renderer_open_output(Renderer *r) {
+    uint32_t ch = r->out_channels ? r->out_channels : 2;
     if (getenv("LARECOMP_AUDIO_WAV")) {
         r->wav = fopen(getenv("LARECOMP_AUDIO_WAV"), "wb");
-        if (r->wav) wav_header(r->wav, 0);
+        if (r->wav) wav_header(r->wav, r->sample_rate, ch, 0);
     }
     if (getenv("LARECOMP_NO_AUDIO") && strcmp(getenv("LARECOMP_NO_AUDIO"), "0")) return;
     if (!SDL_InitSubSystem(SDL_INIT_AUDIO)) { LOG("[audren] SDL audio init failed: %s\n", SDL_GetError()); return; }
-    SDL_AudioSpec spec = {SDL_AUDIO_F32, 2, (int)r->sample_rate};
+    SDL_AudioSpec spec = {SDL_AUDIO_F32, (int)ch, (int)r->sample_rate};
     r->stream = SDL_OpenAudioDeviceStream(SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK, &spec, NULL, NULL);
     if (!r->stream) { LOG("[audren] SDL audio open failed: %s\n", SDL_GetError()); return; }
     if (getenv("LARECOMP_AUDIO_GAIN")) SDL_SetAudioStreamGain(r->stream, (float)atof(getenv("LARECOMP_AUDIO_GAIN")));
@@ -972,9 +1057,14 @@ static void audio_renderer(Service *s, IpcReq *req, IpcResp *resp) {
     }
 }
 
-static uint32_t new_event_handle(void) {
+static uint32_t new_event_handle(bool track_device_event) {
     uint32_t w, r;
-    kernel_create_event_pair(&w, &r);
+    KEvent *ev = kernel_create_event_pair(&w, &r);
+    if (track_device_event && ev) {
+        pthread_mutex_lock(&g_track_lock);
+        if (g_audio_dev_events_n < 16) g_audio_dev_events[g_audio_dev_events_n++] = ev;
+        pthread_mutex_unlock(&g_track_lock);
+    }
     return r;
 }
 
@@ -993,8 +1083,9 @@ static void audio_device(Service *s, IpcReq *req, IpcResp *resp) {
         if (b && b->size) strncpy((char *)(uintptr_t)b->addr, "AudioTvOutput", b->size);
         break;
     }
-    case 4: case 11: case 12: resp->copy_handles[resp->ncopy++] = new_event_handle(); break;
-    case 5: OUT(uint32_t, 0) = 2; resp_size(resp, 4); break;  // GetActiveChannelCount
+    case 4: case 12: resp->copy_handles[resp->ncopy++] = new_event_handle(true); break;   // [XCDE] System / Output device change event
+    case 11: resp->copy_handles[resp->ncopy++] = new_event_handle(false); break;          // Input device event
+    case 5: OUT(uint32_t, 0) = (uint32_t)audio_active_channels(); resp_size(resp, 4); break;  // [XCDE] GetActiveChannelCount (2 or 6)
     case 8: OUT(float, 0) = 1.0f; resp_size(resp, 4); break;
     default: break;
     }
@@ -1022,12 +1113,13 @@ SERVICE("audren:u", audren_u) {
         r->chst = calloc(r->voices, sizeof(ChanState));
         r->mix = calloc(r->nmix, sizeof(Mix));
         r->fx = calloc(r->effects ? r->effects : 1, sizeof(Effect));
+        r->out_channels = (uint32_t)audio_active_channels();  // [XCDE] 2 (stereo) or 6 (5.1 surround)
         renderer_open_output(r);
         r->event = kernel_create_event_pair(&r->event_w, &r->event_r);
         pthread_create(&r->thread, NULL, renderer_tick, r);
         audio_track(r, NULL);
-        LOG("[audren] renderer %u Hz, %u samples/frame, %u voices, %u mixes, %u mix buffers, %u splitters, %u effects\n",
-            r->sample_rate, r->sample_count, r->voices, r->nmix, r->mix_buffers, r->splitters, r->effects);
+        LOG("[audren] renderer %u Hz, %u ch, %u samples/frame, %u voices, %u mixes, %u mix buffers, %u splitters, %u effects\n",
+            r->sample_rate, r->out_channels, r->sample_count, r->voices, r->nmix, r->mix_buffers, r->splitters, r->effects);
         ipc_return_object(resp, service_new("IAudioRenderer", audio_renderer, r));
         break;
     }
@@ -1039,7 +1131,7 @@ SERVICE("audren:u", audren_u) {
 
 // ------------------------------------------------------------------ audout (buffers released in real time)
 typedef struct AudioOut {
-    uint32_t rate, channels, state;
+    uint32_t rate, channels, out_channels, state;  // [XCDE] out_channels: 2 when downmixing 6->2 in Stereo mode
     uint64_t tags[64], sizes[64], datas[64];
     SDL_AudioStream *stream;
     FILE *wav;
@@ -1060,7 +1152,6 @@ typedef struct AudioOut {
 // boot's kernel events) and closes their output streams.
 static Renderer *g_rens[8];
 static AudioOut *g_outs[8];
-static pthread_mutex_t g_track_lock = PTHREAD_MUTEX_INITIALIZER;
 static void audio_track(Renderer *r, AudioOut *a) {
     pthread_mutex_lock(&g_track_lock);
     for (int i = 0; i < 8; i++) {
@@ -1111,7 +1202,7 @@ RT_ON_RESET(audio_reset) {
             r->quit = true;
             pthread_join(r->thread, NULL);
             if (r->stream) SDL_DestroyAudioStream(r->stream);
-            if (r->wav) { wav_header(r->wav, r->wav_bytes); fclose(r->wav); }
+            if (r->wav) { wav_header(r->wav, r->sample_rate, r->out_channels ? r->out_channels : 2, r->wav_bytes); fclose(r->wav); }
             for (uint32_t m = 0; m < r->nmix; m++) free(r->mix[m].buf);
             free(r->voice), free(r->chres), free(r->chst), free(r->mix), free(r->fx);  // (reverb delay lines leak)
             free(r);
@@ -1120,6 +1211,12 @@ RT_ON_RESET(audio_reset) {
         }
         if (g_outs[i]) { audout_free(g_outs[i]); g_outs[i] = NULL; n++; }
     }
+    pthread_mutex_lock(&g_track_lock);
+    g_audio_dev_events_n = 0;
+    memset(g_audio_dev_events, 0, sizeof g_audio_dev_events);
+    pthread_mutex_unlock(&g_track_lock);
+    atomic_store(&g_audio_host_ch, 0);  // [XCDE] re-probe playback device on reboot
+    atomic_store(&g_audio_mode_logged, false);
     LOG("[audio] reboot: %d outputs closed\n", n);
 }
 
@@ -1174,15 +1271,39 @@ static void *audout_thread(void *arg) {
     AudioOut *a = arg;
     { extern void plat_thread_audio(void); plat_thread_audio(); }  // [XCDE]
     uint32_t ch = a->channels ? a->channels : 2;
+    uint32_t out_ch = a->out_channels ? a->out_channels : ch;
     int target = 0;
     if (a->stream) {
         SDL_AudioSpec dev;
         int dev_frames = 0;
         if (!SDL_GetAudioDeviceFormat(SDL_GetAudioStreamDevice(a->stream), &dev, &dev_frames) || dev_frames <= 0)
             dev_frames = 1024;
-        target = 2 * dev_frames * 2 * (int)ch;  // bytes of s16 at the source rate (close enough at 48 kHz)
+        target = 2 * dev_frames * 2 * (int)out_ch;  // bytes of s16 at the source rate (close enough at 48 kHz)
     }
+    int16_t *downmix = NULL;
+    size_t downmix_cap = 0;
+    uint32_t seen_gen = atomic_load(&g_audio_dev_gen);
     while (!a->quit) {
+        uint32_t cur_gen = atomic_load(&g_audio_dev_gen);
+        if (cur_gen != seen_gen) {
+            seen_gen = cur_gen;
+            uint32_t active_ch = (uint32_t)audio_active_channels();
+            uint32_t want_out = (ch == 6 && active_ch == 2) ? 2 : ch;
+            if (want_out != out_ch) {
+                out_ch = want_out;
+                a->out_channels = out_ch;
+                if (a->stream) {
+                    SDL_AudioSpec new_spec = {SDL_AUDIO_S16, (int)out_ch, (int)a->rate};
+                    SDL_SetAudioStreamFormat(a->stream, &new_spec, NULL);
+                    SDL_AudioSpec dev;
+                    int dev_frames = 0;
+                    if (!SDL_GetAudioDeviceFormat(SDL_GetAudioStreamDevice(a->stream), &dev, &dev_frames) || dev_frames <= 0)
+                        dev_frames = 1024;
+                    target = 2 * dev_frames * 2 * (int)out_ch;
+                }
+                LOG("[audout] hot-swapped output stream to %u ch\n", out_ch);
+            }
+        }
         pthread_mutex_lock(&a->lock);
         uint64_t size = 0, tag = 0, data = 0;
         if (a->state == 0 && a->queued) { size = a->sizes[0]; tag = a->tags[0]; data = a->datas[0]; }
@@ -1199,7 +1320,22 @@ static void *audout_thread(void *arg) {
                     (unsigned long long)buffers, plat_now_ns() / 1e9);
             }
             apply_gain(a->stream);
-            if (data) SDL_PutAudioStreamData(a->stream, (const void *)(uintptr_t)data, (int)size);
+            if (data) {
+                if (ch == 6 && out_ch == 2) {
+                    // [XCDE] Stereo mode forced on a 6-channel guest stream: downmix 5.1 -> 2.0 before SDL.
+                    size_t need = (size_t)frames * 2;
+                    if (need > downmix_cap) {
+                        int16_t *p = realloc(downmix, need * sizeof(int16_t));
+                        if (p) { downmix = p; downmix_cap = need; }
+                    }
+                    if (downmix && need <= downmix_cap) {
+                        audio_downmix_s16_6to2((const int16_t *)(uintptr_t)data, downmix, (size_t)frames);
+                        SDL_PutAudioStreamData(a->stream, downmix, (int)(need * sizeof(int16_t)));
+                    }
+                } else {
+                    SDL_PutAudioStreamData(a->stream, (const void *)(uintptr_t)data, (int)size);
+                }
+            }
             while (SDL_GetAudioStreamQueued(a->stream) > target && !a->quit) { struct timespec ts = {0, 1000000}; nanosleep(&ts, NULL); }
         } else {
             // [XCDE] T059: absolute deadlines. A relative nanosleep() of one buffer (21 ms) rounds up to the 15.6 ms
@@ -1228,6 +1364,7 @@ static void *audout_thread(void *arg) {
         kernel_signal(a->event);
         pthread_mutex_unlock(&g_klock);
     }
+    free(downmix);
     return NULL;
 }
 
@@ -1309,9 +1446,12 @@ SERVICE("audout:u", audout_u) {
     }
     case 1: case 3: {  // OpenAudioOut(rate, channels, aruid, name) -> rate, channels, format, state + IAudioOut
         AudioOut *a = calloc(1, sizeof *a);
+        uint32_t active_ch = (uint32_t)audio_active_channels();  // [XCDE] 2 (stereo) or 6 (5.1)
+        uint32_t req_ch = IN(uint16_t, 4);
         a->rate = IN(uint32_t, 0) ? IN(uint32_t, 0) : 48000;
-        a->channels = IN(uint16_t, 4) ? IN(uint16_t, 4) : 2;
-        if (a->channels != 1 && a->channels != 2 && a->channels != 6) a->channels = 2;
+        a->channels = req_ch ? req_ch : active_ch;
+        if (a->channels != 1 && a->channels != 2 && a->channels != 6) a->channels = active_ch;
+        a->out_channels = (a->channels == 6 && active_ch == 2) ? 2 : a->channels;
         a->state = 1;
         pthread_mutex_init(&a->lock, NULL);
         a->event = kernel_create_event_pair(&a->ev_w, &a->ev_r);
@@ -1324,7 +1464,7 @@ SERVICE("audout:u", audout_u) {
             if ((a->wav = fopen(wp, "wb"))) audout_wav_header(a);
         }
         if (!kernel_det() && !(getenv("LARECOMP_NO_AUDIO") && strcmp(getenv("LARECOMP_NO_AUDIO"), "0")) && SDL_InitSubSystem(SDL_INIT_AUDIO)) {
-            SDL_AudioSpec spec = {SDL_AUDIO_S16, (int)a->channels, (int)a->rate};
+            SDL_AudioSpec spec = {SDL_AUDIO_S16, (int)a->out_channels, (int)a->rate};
             a->stream = SDL_OpenAudioDeviceStream(SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK, &spec, NULL, NULL);
             if (a->stream) {
                 if (getenv("LARECOMP_AUDIO_GAIN")) SDL_SetAudioStreamGain(a->stream, (float)atof(getenv("LARECOMP_AUDIO_GAIN")));
@@ -1343,7 +1483,7 @@ SERVICE("audout:u", audout_u) {
         Service *svc = service_new("IAudioOut", audio_out, a);
         svc->on_close = audout_close;
         ipc_return_object(resp, svc);
-        LOG("[audout] opened %u Hz, %u ch\n", a->rate, a->channels);
+        LOG("[audout] opened %u Hz, %u ch (out %u ch)\n", a->rate, a->channels, a->out_channels);
         break;
     }
     default: diag_unimplemented("ipc", "[audout] cmd %u", req->cmd);

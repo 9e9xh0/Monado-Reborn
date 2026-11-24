@@ -279,3 +279,29 @@ Details and the reporter's log evidence: [CHANGELOG](dev/CHANGELOG.md).
   (new), `tests/unit/test_recomplauncher_support.py`, `tests/unit/test_launcher_utf8_paths.py`. The native test builds a
   unique temp root, and covers isolated removal, a same-size mtime-only edit, a plain-file root, a folder without
   `romfs/`, set-empty vs unset options and one translator/pass switch.
+
+## 5.1 surround sound output (2026-11-24)
+
+*Xenoblade Chronicles: Definitive Edition* natively mixes up to 5.1 LPCM (6 channels: `FL, FR, FC, LFE, BL, BR`) when
+the system audio device reports 6 active channels; previously `IAudioDevice::GetActiveChannelCount` was hardcoded to `2`
+and `audren:u` always downmixed to a 2-channel SDL stream.
+
+- `runtime/audio_options.h` (new): shared pure-C11 policy (`AUDIO_OUT_AUTO`, `AUDIO_OUT_STEREO`, `AUDIO_OUT_SURROUND_51`),
+  INI parser/formatter (`audio_channels = auto | stereo | 5.1`), `XCDE_AUDIO_CHANNELS` diagnostic override, deterministic
+  channel resolution (`auto` resolves to 6 ch on `>= 6`-channel host devices including 7.1 endpoints mapped by SDL3, and
+  stays 2 ch in deterministic/headless runs), `audio_sink_mix_frame` (6-channel discrete passthrough or ITU/Ryujinx
+  6->2 stereo downmix), and `audio_downmix_s16_6to2` for `audout:u`.
+- `runtime/services/audio.c`: `audio_host_channels()` probes `SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK` via
+  `SDL_GetAudioDeviceFormat`; `IAudioDevice::GetActiveChannelCount` returns `audio_active_channels()`; `audren:u` opens
+  its SDL3 stream, mixes frames, sizes its queue target, and writes WAV headers with `r->out_channels` (2 or 6);
+  `audout:u` defaults `channels == 0` to `audio_active_channels()` and downmixes 6->2 PCM16 when Stereo is forced on a
+  6-channel guest stream. Live hot-swap (`audio_notify_device_change`) re-probes the playback device, reconfigures
+  active `audren`/`audout` SDL3 streams via `SDL_SetAudioStreamFormat`, and signals registered `IAudioDevice`
+  system/output `KEvent`s (cmds 4/12). `audio_reset` clears cached host-probe and event state on reboot.
+- `runtime/nvn/vulkan/device.c`: forwards `SDL_EVENT_AUDIO_DEVICE_ADDED` / `REMOVED` / `FORMAT_CHANGED` to
+  `audio_notify_device_change()`.
+- `runtime/settings.h`, `runtime/host/settings_ini.c`, `runtime/host/settings_boot.c`, `runtime/ui/menu_vk.cpp`,
+  `tools/launcher/launcher.cpp`, `recomplauncher.json`: `audio_channels` persistence and Audio tab selector (Auto /
+  Stereo 2.0 / Surround 5.1).
+- `tests/native/test_audio_options.c` (new), `tests/native/test_settings_roundtrip.c`, `scripts/native_tests.sh`,
+  `scripts/native_tests_linux.sh`, `tests/unit/test_audio_surround.py` (new): native C11 and source-contract coverage.

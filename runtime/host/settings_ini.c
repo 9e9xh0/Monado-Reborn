@@ -149,6 +149,7 @@ void settings_load(void) {
         else if (!strcmp(k, "save_slots_99")) g_settings.save_slots_99 = xcde_cheat_enabled(v);  // [XCDE] 99 manual save slots, applied at the next start
         else if (!strcmp(k, "ui_scale")) g_settings.ui_scale = ui_scale_percent(atoi(v));  // [XCDE] GitHub #121
         else if (!strcmp(k, "volume")) g_settings.volume = (float)atof(v) / 100.0f;
+        else if (!strcmp(k, "audio_channels")) g_settings.audio_channels = audio_out_parse(v);  // [XCDE]
         else if (!strcmp(k, "movie_audio")) g_settings.movie_audio = atoi(v) != 0;
         else if (!strcmp(k, "show_fps")) g_settings.show_fps = atoi(v) != 0;
         else if (!strcmp(k, "fps")) {
@@ -234,7 +235,8 @@ void settings_save(void) {
             xcde_quality_name(g_settings.quality_preset), g_settings.gpu_keep_heavy);
     fprintf(f, "low_memory = %d\ndynamic_min_height = %d\ndynamic_max_height = %d\neffects_off = %u\n",
             g_settings.gpu_performance, g_settings.dynamic_min_height, g_settings.dynamic_max_height, g_settings.effects_off);
-    fprintf(f, "volume = %d\nmovie_audio = %d\nshow_fps = %d\n", (int)(g_settings.volume * 100 + 0.5f), g_settings.movie_audio,
+    fprintf(f, "volume = %d\naudio_channels = %s\nmovie_audio = %d\nshow_fps = %d\n", (int)(g_settings.volume * 100 + 0.5f),
+            audio_out_ini[audio_out_valid(g_settings.audio_channels)], g_settings.movie_audio,
             g_settings.show_fps);
     if (g_settings.fps) fprintf(f, "fps = %d\n", g_settings.fps); else fprintf(f, "fps = unlimited\n");
     fprintf(f, "language = %s\n", g_settings.language > 0 && g_settings.language < N_LANGUAGES ? g_language_codes[g_settings.language] : "auto");

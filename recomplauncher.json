@@ -55,6 +55,7 @@
         "vsync": "1",
         "fps": "30",
         "fps_overlay": "1",
+        "audio_channels": "auto",
         "language": "auto"
       }
     }
@@ -185,6 +186,16 @@
         { "label": "Off", "set": { "fps_overlay": "0" } }
       ],
       "defaults": { "fps_overlay": "1" }
+    },
+    {
+      "id": "audio_channels", "label": "Audio output",
+      "help": "Auto uses 5.1 surround on 5.1/7.1 devices and stereo otherwise. Stereo forces 2.0 downmix. 5.1 forces 6-channel output.",
+      "choices": [
+        { "label": "Auto (5.1 if supported)", "set": { "audio_channels": "auto" } },
+        { "label": "Stereo (2.0)", "set": { "audio_channels": "stereo" } },
+        { "label": "Surround 5.1", "set": { "audio_channels": "5.1" } }
+      ],
+      "defaults": { "audio_channels": "auto" }
     },
     {
       "id": "language", "label": "Game language",
