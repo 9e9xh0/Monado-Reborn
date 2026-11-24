@@ -5455,6 +5455,22 @@ static bool vc_drop(VcEnt *e) {  // (freed once the submissions that may read it
 static int pt_state = -1;  // 1: tracking, 0: none
 static bool pt_init(void) {
     if (pt_state >= 0) return pt_state;
+#ifdef __linux__
+    // [XCDE] GitHub #233: Linux write-watch uses mprotect(PROT_READ) + SIGSEGV on HEAP_BASE.
+    // When the guest heap is imported via VK_EXT_external_memory_host (userptr BO, not dma-buf),
+    // write-protecting pages in the imported range causes Linux DRM drivers (e.g. amdgpu/RADV
+    // hmm_range_fault with HMM_PFN_REQ_WRITE) to reject CS submission with -EPERM (VK_ERROR_DEVICE_LOST).
+    // Only allow Linux write-watch when the heap is dma-buf-backed or host-pointer import is off,
+    // unless explicitly forced via XCDE_LINUX_WRITE_WATCH=1.
+    uint64_t dma_sz = 0;
+    const char *ww_env = getenv("XCDE_LINUX_WRITE_WATCH");
+    if (!(ww_env && atoi(ww_env) > 0) && g_vk.host_import && !getenv("LARECOMP_VK_NO_GMEM") &&
+        plat_gpu_heap_fd(HEAP_BASE, VC_PAGE, &dma_sz) < 0) {
+        pt_state = 0;
+        LOG("[vk] no page write tracking: Linux mprotect conflicts with host-imported guest heap (set XCDE_LINUX_WRITE_WATCH=1 to force)\n");
+        return false;
+    }
+#endif
     uint64_t pg = VC_PAGE, one;
     int n = plat_written_pages(HEAP_BASE, VC_PAGE, &one, 1, &pg);  // (is there write tracking?)
     pt_state = n >= 0 && pg == VC_PAGE;
