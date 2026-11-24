@@ -18,6 +18,11 @@ enum { GFX_SHADOWS, GFX_SHADOW_MASK, GFX_EFFECTS_RES, GFX_CLOUD, GFX_AO,
        GFX_REFLECTIONS, GFX_BLOOM, GFX_GODRAYS, GFX_SHAFTS, GFX_MOTION_BLUR,
        GFX_FUR_BLUR, GFX_FILTERING, GFX_SHADOW_MAPS, GFX_PROP_LOD, GFX_COUNT };
 typedef struct { int value[GFX_COUNT]; } GraphicsOptions;
+static inline GraphicsOptions gfx_defaults(void) {
+    GraphicsOptions o = {{0}};
+    o.value[GFX_SHADOW_MASK] = 1;  // full-resolution shadow mask by default (avoids half-res shadow shimmer)
+    return o;
+}
 static const char *const gfx_keys[GFX_COUNT] = {"shadows", "shadow_mask", "effects_resolution", "cloud_shadows", "ambient_occlusion",
     "reflections", "bloom", "godrays", "light_shafts", "motion_blur", "fur_blur", "texture_filtering", "shadow_map_resolution", "prop_lod"};
 static const char *const gfx_labels[GFX_COUNT] = {"Shadows", "Shadow mask (restart)", "Effects resolution (restart)", "Cloud shadows", "Ambient occlusion",

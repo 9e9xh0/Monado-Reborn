@@ -211,7 +211,7 @@ struct Cfg {
     int occlusion = -1;     // [XCDE][FSR3] -1 automatic (off on AMD iGPUs), 0 off, 1 on (xcde.ini occlusion)
     int grass_lod = GRASS_DEFAULT;  // [XCDE] grass draw distance preset (xcde.ini grass_lod)
     int amd_fix = -1;       // issue #7: -1 automatic (on for AMD RDNA 3), 0 off, 1 on (xcde.ini amd_fix)
-    GraphicsOptions graphics = {};  // [XCDE] graphics options (xcde.ini keys in graphics_options.h)
+    GraphicsOptions graphics = gfx_defaults();  // [XCDE] graphics options (xcde.ini keys in graphics_options.h)
     int session_fix = -1;   // issue #25: -1 automatic (worker stays on), 0 off, 1 on = no async render worker (xcde.ini session_fix)
     bool gpu_memory_budget = true, gpu_performance = false, gpu_keep_heavy = false;
     bool fullscreen = false;
@@ -2297,7 +2297,7 @@ static void tab_graphics() {
     if (g.quality_preset==preset_before && !xcde_quality_equal(before,xcde_quality_current(&editable))) g.quality_preset=QUALITY_CUSTOM;
     if (ImGui::Button(g.ui_lang ? "Restore graphics" : "Restaurar gráficos")) {
         xcde_quality_apply(&editable,QUALITY_BALANCED); quality_from_settings(editable);
-        g.graphics = GraphicsOptions{};  // (every shadow / detail / effect choice back to Original)
+        g.graphics = gfx_defaults();  // (back to defaults: full-res shadow mask, everything else Original)
     }
 
 }

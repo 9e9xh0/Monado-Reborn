@@ -29,6 +29,7 @@
 #include "cliff_batch.h"  // [XCDE] T-CLIFF-BATCH
 #include "bloom_prefilter.h"  // [XCDE] T-BLOOM-PREFILTER
 #include "bloom.h"  // [XCDE] T-WATER-BLOOM
+#include "gtao.h"  // [XCDE] GitHub #178 / #125: native per-frame physical-resolution GTAO
 #include "temporal.h"
 #include "tex_resize.h"
 void vk_watch(VkImage dst, const char *site);  // [XCDE] debugging: log writes to a watched image
@@ -2383,6 +2384,31 @@ static const char *bloom_tent_src(uint64_t code) {
     return monado_bloom_tent_glsl;
 }
 
+// [XCDE] GitHub #178 / #125: native per-frame physical-resolution GTAO replacing the game's temporal SSAO
+// (SLCT 85 raymarch -> SLCT 86 bilateral blur H/V -> SLCT 87 temporal resolve -> SLCT 88 composite).
+// Eliminates Valak Mountain silhouette shimmer (Halton jitter vs TSSAO history) and temporal rope/railing trails
+// while running at native physical resolution with the game's own gTEtc material mask. XCDE_GTAO=0: original TSSAO.
+static const char *gtao_src(uint64_t code) {
+    static int on = -1;
+    if (on < 0) { const char *e = getenv("XCDE_GTAO"); on = !e || atoi(e) != 0; }
+    if (!on || !code) return NULL;
+    uint64_t h = hmix(1469598103934665603ull, (const void *)(uintptr_t)(code + 0x30), 0x200);
+    const char *src = NULL;
+    int pass = 0;
+    if (h == 0x8ba81f6c23a705c7ull || h == 0x5def0012e6637971ull) { src = monado_gtao_main_glsl; pass = 1; }
+    else if (h == 0xf38cdb37598b7198ull) { src = monado_gtao_blur_h_glsl; pass = 2; }
+    else if (h == 0x8099d6b500ed6aa1ull) { src = monado_gtao_blur_v_glsl; pass = 3; }
+    else if (h == 0x866acd9025c66232ull || h == 0x9929fa09334fed79ull) { src = monado_gtao_pass_t2_glsl; pass = 4; }
+    else if (h == 0x809136406d107f84ull || h == 0x155c5a7af5423219ull) { src = monado_gtao_pass_t3_glsl; pass = 5; }
+    else if (h == 0xc840dee21051ce2full) { src = monado_gtao_composite_glsl; pass = 6; }
+    if (src) {
+        static int reported_mask;
+        if (!(__atomic_fetch_or(&reported_mask, 1 << pass, __ATOMIC_RELAXED) & (1 << pass)))
+            LOG("[gtao] pass %d (%016llx) enabled\n", pass, (unsigned long long)h);
+    }
+    return src;
+}
+
 // [XCDE] T-CHAR-LIGHT: the character deferred-lighting program (guest fragment program 72c2cb3f00, matched by the
 // content hash of its code like the bloom replacements above) writes its lit colour above the frame's exposure clip
 // point: in the Corridor of Silence (prison island, blue torch) the face/hair saturate to 255 — 11.6k clipped pixels
@@ -2487,6 +2513,7 @@ static void compile_program(void *arg) {
     const char *fs_src = p->fi->msl;
     { const char *b = bloom_prefilter_src(p->src[1]); if (b) fs_src = b; }
     { const char *b = bloom_tent_src(p->src[1]); if (b) fs_src = b; }
+    { const char *b = gtao_src(p->src[1]); if (b) fs_src = b; }
     char *fs_char = NULL;
     { const char *b = char_light_src(p->src[1], fs_src, &fs_char); if (b) fs_src = b; }
     char *fs_tmaa = NULL;

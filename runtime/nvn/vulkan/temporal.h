@@ -14,6 +14,7 @@ typedef struct {
 } TmpCamera;
 
 bool tmp_enabled(void);         // the option is on, a temporal upscaler is usable and this run isn't deterministic
+bool tmp_uses_linear_fp16(void);  // true when tmp_upscale inputs/outputs are linear R16G16B16A16_SFLOAT (post.c encodes to sRGB)
 float tmp_lod_bias(void);
 bool tmp_lod_bias_forced(void);
 const char *tmp_overlay_info(uint32_t *render_w, uint32_t *render_h, uint32_t *out_w, uint32_t *out_h);  // GitHub #39: upscaler in use + its input size, or NULL

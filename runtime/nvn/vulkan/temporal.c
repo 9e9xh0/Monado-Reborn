@@ -153,13 +153,16 @@ static float halton(uint32_t i, uint32_t b) {
     for (; i; i /= b) { f /= (float)b; r += f * (float)(i % b); }
     return r;
 }
-// [XCDE] T-LINUX-FSR3 / T-FSR4-LITE: the native Linux upscalers are fed the Halton jitter (their accumulation is steady
-// with it; validated on RADV); XCDE_TMP_NOJITTER=1 turns it off for comparison. Windows keeps #14's zero-jitter default.
-static bool native_temporal(void) {
+// [XCDE] T-LINUX-FSR3 / T-FSR4-LITE: native upscalers (and Windows FSR 3 / FSR 4 Lite) take linear FP16 colour
+// (tmp_prep.frag decodes sRGB; post.c encodes the output back to sRGB). Windows DLSS stays on gamma-encoded R8G8B8A8_UNORM.
+// XCDE_TMP_LINEAR_FP16=0 restores R8G8B8A8_UNORM sRGB on Windows for A/B comparison.
+bool tmp_uses_linear_fp16(void) {
 #ifdef __linux__
     return g_settings.upscaler == UPSCALE_FSR4_LITE || g_settings.upscaler == UPSCALE_FSR3 || g_settings.upscaler == UPSCALE_DLSS;
 #else
-    return false;
+    static int on = -1;
+    if (on < 0) { const char *e = getenv("XCDE_TMP_LINEAR_FP16"); on = !(e && *e == '0'); }
+    return on && (g_settings.upscaler == UPSCALE_FSR3 || g_settings.upscaler == UPSCALE_FSR4_LITE);
 #endif
 }
 // GitHub #29: every temporal upscaler (FSR 3, FSR 4 Lite, DLSS / DLAA) gets the Halton jitter on every platform. With
@@ -368,18 +371,21 @@ void tmp_hud_snapshot(VkCommandBuffer cb, TexBackend *b) {
 // ---------------------------------------------------------------- the inputs pass
 static VkPipelineLayout prep_layout;
 static VkDescriptorSetLayout prep_set_layout;
-static VkPipeline prep_pipe;
-static void prep_pipeline(void) {
-    if (prep_pipe) return;
-    VkDescriptorSetLayoutBinding b[3];
-    for (uint32_t i = 0; i < 3; i++)
-        b[i] = (VkDescriptorSetLayoutBinding){i, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, NULL};
-    VkDescriptorSetLayoutCreateInfo li = {.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO, .bindingCount = 3, .pBindings = b};
-    VK_CHECK(vkCreateDescriptorSetLayout(g_vk.dev, &li, NULL, &prep_set_layout));
-    VkPushConstantRange r = {VK_SHADER_STAGE_FRAGMENT_BIT, 0, 112};  // ([XCDE] +16: pc.c.x = linear output)
-    VkPipelineLayoutCreateInfo ci = {.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO, .setLayoutCount = 1,
-                                     .pSetLayouts = &prep_set_layout, .pushConstantRangeCount = 1, .pPushConstantRanges = &r};
-    VK_CHECK(vkCreatePipelineLayout(g_vk.dev, &ci, NULL, &prep_layout));
+static VkPipeline prep_pipe[2];  // 0 = R8G8B8A8_UNORM, 1 = R16G16B16A16_SFLOAT
+static void prep_pipeline(bool lin) {
+    int slot = lin ? 1 : 0;
+    if (prep_pipe[slot]) return;
+    if (!prep_set_layout) {
+        VkDescriptorSetLayoutBinding b[3];
+        for (uint32_t i = 0; i < 3; i++)
+            b[i] = (VkDescriptorSetLayoutBinding){i, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, NULL};
+        VkDescriptorSetLayoutCreateInfo li = {.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO, .bindingCount = 3, .pBindings = b};
+        VK_CHECK(vkCreateDescriptorSetLayout(g_vk.dev, &li, NULL, &prep_set_layout));
+        VkPushConstantRange r = {VK_SHADER_STAGE_FRAGMENT_BIT, 0, 112};  // ([XCDE] +16: pc.c.x = linear output)
+        VkPipelineLayoutCreateInfo ci = {.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO, .setLayoutCount = 1,
+                                         .pSetLayouts = &prep_set_layout, .pushConstantRangeCount = 1, .pPushConstantRanges = &r};
+        VK_CHECK(vkCreatePipelineLayout(g_vk.dev, &ci, NULL, &prep_layout));
+    }
     VkPipelineShaderStageCreateInfo stages[2] = {
         {.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, .stage = VK_SHADER_STAGE_VERTEX_BIT,
          .module = vk_builtin_shader("post.vert"), .pName = "main"},
@@ -399,7 +405,7 @@ static void prep_pipeline(void) {
                                               .pAttachments = cba};
     VkDynamicState dyn[] = {VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR};
     VkPipelineDynamicStateCreateInfo dy = {.sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO, .dynamicStateCount = 2, .pDynamicStates = dyn};
-    VkFormat fmts[4] = {F_COLOR, F_MV, F_DEPTH, F_MASK};
+    VkFormat fmts[4] = {lin ? VK_FORMAT_R16G16B16A16_SFLOAT : VK_FORMAT_R8G8B8A8_UNORM, F_MV, F_DEPTH, F_MASK};
     VkPipelineRenderingCreateInfo ri = {.sType = VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO, .colorAttachmentCount = 4,
                                         .pColorAttachmentFormats = fmts};
     VkPipelineDepthStencilStateCreateInfo ds = {.sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO};
@@ -407,7 +413,7 @@ static void prep_pipeline(void) {
                                        .pStages = stages, .pVertexInputState = &vi, .pInputAssemblyState = &ia, .pViewportState = &vs,
                                        .pRasterizationState = &rs, .pMultisampleState = &ms, .pDepthStencilState = &ds,
                                        .pColorBlendState = &cb, .pDynamicState = &dy, .layout = prep_layout};
-    VK_CHECK(vkCreateGraphicsPipelines(g_vk.dev, g_vk.pcache, 1, &pi, NULL, &prep_pipe));
+    VK_CHECK(vkCreateGraphicsPipelines(g_vk.dev, g_vk.pcache, 1, &pi, NULL, &prep_pipe[slot]));
 }
 
 // 4x4 helpers on the game's row matrices (double precision)
@@ -439,8 +445,8 @@ static bool mat_inv(const double m[16], double o[16]) {  // Gauss-Jordan
 }
 
 static void prep(VkCommandBuffer cb, VkImageView color_view, VkImageView vel_view, TexBackend *depth,
-                 const double reproj[16], bool have_prev, const float jit[2], bool dm1, uint32_t rw, uint32_t rh) {
-    prep_pipeline();
+                 const double reproj[16], bool have_prev, const float jit[2], bool dm1, uint32_t rw, uint32_t rh, bool lin) {
+    prep_pipeline(lin);
     vk_full_barrier(cb);
     VkRenderingAttachmentInfo ca[4];
     for (int i = 0; i < 4; i++)
@@ -461,16 +467,14 @@ static void prep(VkCommandBuffer cb, VkImageView color_view, VkImageView vel_vie
         w[i] = (VkWriteDescriptorSet){.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, .dstSet = ds, .dstBinding = (uint32_t)i,
                                       .descriptorCount = 1, .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, .pImageInfo = &ii[i]};
     vkUpdateDescriptorSets(g_vk.dev, 3, w, 0, NULL);
-    vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, prep_pipe);
+    vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, prep_pipe[lin ? 1 : 0]);
     vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, prep_layout, 0, 1, &ds, 0, NULL);
     VkViewport vp = {0, 0, (float)rw, (float)rh, 0, 1};
     VkRect2D sc = {{0, 0}, {rw, rh}};
     vkCmdSetViewport(cb, 0, 1, &vp);
     vkCmdSetScissor(cb, 0, 1, &sc);
     float pc[28] = {0};
-#ifdef __linux__
-    pc[24] = native_temporal() ? 1.0f : 0.0f;  // [XCDE] linear colour for the native upscalers
-#endif
+    pc[24] = lin ? 1.0f : 0.0f;  // [XCDE] linear FP16 colour (sRGB -> linear decode in tmp_prep.frag)
     // [XCDE] FSR 4 Lite has no depth-convention input (FSR 3 gets DEPTH_INFINITE, not inverted): the port replays
     // AMD's shaders as recorded, and they read reversed depth (near = 1). With XCDE's standard depth its edge tests
     // took the background for the foreground: ghosting and flicker along outlines, a soft image (history rejected).
@@ -492,6 +496,7 @@ static void prep(VkCommandBuffer cb, VkImageView color_view, VkImageView vel_vie
 // ---------------------------------------------------------------- FSR 3.1
 static ffxContext fsr_ctx;
 static uint32_t fsr_w, fsr_h;
+static bool fsr_lin;
 static void fsr_message(uint32_t type, const wchar_t *msg) {
     char buf[512];
     size_t n = 0;
@@ -512,21 +517,26 @@ static PFN_vkVoidFunction VKAPI_PTR ffx_proc(VkDevice d, const char *name) {
     }
     return f;
 }
-static bool fsr_context(uint32_t ow, uint32_t oh) {
-    if (fsr_ctx && fsr_w == ow && fsr_h == oh) return true;
+static bool fsr_context(uint32_t ow, uint32_t oh, bool lin) {
+    if (fsr_ctx && fsr_w == ow && fsr_h == oh && fsr_lin == lin) return true;
     vkq_drain();
     if (fsr_ctx) { vkDeviceWaitIdle(g_vk.dev); ffx_destroy(&fsr_ctx, NULL); fsr_ctx = NULL; }
     struct ffxCreateBackendVKDesc be = {.header = {.type = FFX_API_CREATE_CONTEXT_DESC_TYPE_BACKEND_VK},
                                         .vkDevice = g_vk.dev, .vkPhysicalDevice = g_vk.phys, .vkDeviceProcAddr = ffx_proc};
+    uint32_t cflags = FFX_UPSCALE_ENABLE_DEPTH_INFINITE | FFX_UPSCALE_ENABLE_DYNAMIC_RESOLUTION;
+#ifdef __linux__
+    cflags |= FFX_UPSCALE_ENABLE_NON_LINEAR_COLORSPACE;
+#else
+    if (!lin) cflags |= FFX_UPSCALE_ENABLE_NON_LINEAR_COLORSPACE;
+#endif
     struct ffxCreateContextDescUpscale cd = {.header = {.type = FFX_API_CREATE_CONTEXT_DESC_TYPE_UPSCALE, .pNext = &be.header},
-                                             .flags = FFX_UPSCALE_ENABLE_DEPTH_INFINITE | FFX_UPSCALE_ENABLE_NON_LINEAR_COLORSPACE |
-                                                      FFX_UPSCALE_ENABLE_DYNAMIC_RESOLUTION,
+                                             .flags = cflags,
                                              .maxRenderSize = {ow, oh}, .maxUpscaleSize = {ow, oh}, .fpMessage = fsr_message};
     // [XCDE] T260: XCDE_TMP_CHECK=1: FSR 3 validates its inputs and says what is wrong in the log ([tmp] FSR warning/error), no overlay
     if (env_int("XCDE_TMP_DEBUG") || env_int("XCDE_TMP_CHECK")) cd.flags |= FFX_UPSCALE_ENABLE_DEBUG_CHECKING;
     ffxReturnCode_t r = ffx_create(&fsr_ctx, &cd.header, NULL);
     if (r != FFX_API_RETURN_OK) { LOG("[tmp] FSR 3 context failed: %u\n", r); fsr_ctx = NULL; ffx_state = -1; return false; }
-    fsr_w = ow; fsr_h = oh;
+    fsr_w = ow; fsr_h = oh; fsr_lin = lin;
     struct ffxQueryGetProviderVersion pv = {.header = {.type = FFX_API_QUERY_DESC_TYPE_GET_PROVIDER_VERSION}};
     ffx_query(&fsr_ctx, &pv.header);
     LOG("[tmp] FSR context %ux%u (%s)\n", ow, oh, pv.versionName ? pv.versionName : "?");
@@ -716,19 +726,22 @@ VkImageView tmp_upscale(VkCommandBuffer cb, TexBackend *color, VkImageView color
             }
         }
     }
+    bool lin = tmp_uses_linear_fp16();
+    VkFormat cfmt = lin ? VK_FORMAT_R16G16B16A16_SFLOAT : VK_FORMAT_R8G8B8A8_UNORM;
+    uint32_t ffx_cfmt = lin ? FFX_API_SURFACE_FORMAT_R16G16B16A16_FLOAT : FFX_API_SURFACE_FORMAT_R8G8B8A8_UNORM;
     // [XCDE] FSR 3 reads img[0,1,2,5] as sampled textures (not UAVs): omitting STORAGE_BIT lets AMDVLK keep full DCC
     // compression on tmp_prep's 4 MRT attachments (24% faster tmp_prep on RX 6900 XT). DLSS / FSR 4 Lite keep STORAGE_BIT.
     bool fsr3_opt_inputs = g_settings.upscaler != UPSCALE_FSR4_LITE && !use_dlss();
     VkImageUsageFlags in_usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT |
                                  (fsr3_opt_inputs ? 0 : VK_IMAGE_USAGE_STORAGE_BIT);
-    img_make(&img[0], F_COLOR, rw, rh, in_usage);
+    img_make(&img[0], cfmt, rw, rh, in_usage);
     img_make(&img[1], F_MV, rw, rh, in_usage);
     img_make(&img[2], F_DEPTH, rw, rh, in_usage);
     img_make(&img[5], F_MASK, rw, rh, in_usage);
     bool snap = snap_frame == renderer_present_count() && img[4].b.image && img[4].b.width == color->width &&
                 img[4].b.height == color->height && !env_int("XCDE_TMP_NO_HUD_MASK");
-    img_make(&img[3], F_COLOR, ow, oh, VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_STORAGE_BIT |
-                                       VK_IMAGE_USAGE_TRANSFER_SRC_BIT);
+    img_make(&img[3], cfmt, ow, oh, VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_STORAGE_BIT |
+                                    VK_IMAGE_USAGE_TRANSFER_SRC_BIT);
     // [XCDE] T213: the upscalers get the image before the HUD; the HUD goes back on top after them (exec.c
     // post_process, tmp_hud.frag). The upscalers undo the jitter on all they get: the HUD, never jittered, shook
     // (user: "it vibrates") - with the HUD in their input no mask can fix that.
@@ -750,9 +763,9 @@ VkImageView tmp_upscale(VkCommandBuffer cb, TexBackend *color, VkImageView color
     }
     vk_gp_mark(cb, "post: tmp_prep %ux%u", rw, rh);
     if (!getenv("XCDE_TMP_VEL_FIT")) {
-        prep(cb, snap ? img[4].v : color_view, vel_view, depth, reproj, have_prev, jitter, dm1, rw, rh);
+        prep(cb, snap ? img[4].v : color_view, vel_view, depth, reproj, have_prev, jitter, dm1, rw, rh, lin);
     } else {
-        prep(cb, snap ? img[4].v : color_view, VK_NULL_HANDLE, depth, reproj, have_prev, jitter, dm1, rw, rh);
+        prep(cb, snap ? img[4].v : color_view, VK_NULL_HANDLE, depth, reproj, have_prev, jitter, dm1, rw, rh, lin);
     }
     vel_fit(cb, rw, rh);  // [XCDE] T215 (research)
     mv_shot(cb, rw, rh, reproj, have_prev);  // [XCDE] T228 (research)
@@ -786,7 +799,7 @@ VkImageView tmp_upscale(VkCommandBuffer cb, TexBackend *color, VkImageView color
         vkq_drain();
         ok = dlss_evaluate(cb, &img[0].b, &img[1].b, &img[2].b, &img[3].b, env_int("XCDE_TMP_NO_REACTIVE") ? NULL : &img[5].b, jit_out, reset,
                            cam, reproj);
-    } else if (ffx_load() && fsr_context(ow, oh)) {
+    } else if (ffx_load() && fsr_context(ow, oh, lin)) {
 #ifdef __linux__
         // [XCDE] T-LINUX-FSR3: the SDK rotates its transient descriptors / constant buffers through four frames
         static uint64_t ring[4];
@@ -801,10 +814,10 @@ VkImageView tmp_upscale(VkCommandBuffer cb, TexBackend *color, VkImageView color
         memset(&d, 0, sizeof d);
         d.header.type = FFX_API_DISPATCH_DESC_TYPE_UPSCALE;
         d.commandList = (void *)cb;
-        d.color = res(&img[0], FFX_COLOR, FFX_API_RESOURCE_USAGE_READ_ONLY);
+        d.color = res(&img[0], ffx_cfmt, FFX_API_RESOURCE_USAGE_READ_ONLY);
         d.motionVectors = res(&img[1], FFX_API_SURFACE_FORMAT_R16G16_FLOAT, FFX_API_RESOURCE_USAGE_READ_ONLY);
         d.depth = res(&img[2], FFX_API_SURFACE_FORMAT_R32_FLOAT, FFX_API_RESOURCE_USAGE_READ_ONLY);
-        d.output = res(&img[3], FFX_COLOR, FFX_API_RESOURCE_USAGE_UAV);
+        d.output = res(&img[3], ffx_cfmt, FFX_API_RESOURCE_USAGE_UAV);
         // [XCDE] T260: the reactive mask (tmp_prep.frag oHud; before T260 it was computed but never handed over)
         if (!env_int("XCDE_TMP_NO_REACTIVE")) d.reactive = res(&img[5], FFX_API_SURFACE_FORMAT_R8_UNORM, FFX_API_RESOURCE_USAGE_READ_ONLY);
 
@@ -824,7 +837,12 @@ VkImageView tmp_upscale(VkCommandBuffer cb, TexBackend *color, VkImageView color
         d.cameraFar = FLT_MAX;  // [XCDE] T260: with DEPTH_INFINITE FSR 3.1 requires FLT_MAX (its own warning, 2500x per session in the log)
         d.cameraFovAngleVertical = p11 != 0 ? 2.0f * atanf(1.0f / fabsf(p11)) : 0.785f;
         d.viewSpaceToMetersFactor = 1.0f;
-        d.flags = FFX_UPSCALE_FLAG_NON_LINEAR_COLOR_SRGB | (env_int("XCDE_TMP_DEBUG") ? FFX_UPSCALE_FLAG_DRAW_DEBUG_VIEW : 0);
+        d.flags = (env_int("XCDE_TMP_DEBUG") ? FFX_UPSCALE_FLAG_DRAW_DEBUG_VIEW : 0);
+#ifdef __linux__
+        d.flags |= FFX_UPSCALE_FLAG_NON_LINEAR_COLOR_SRGB;
+#else
+        if (!lin) d.flags |= FFX_UPSCALE_FLAG_NON_LINEAR_COLOR_SRGB;
+#endif
         vkq_drain();
         ffxReturnCode_t r = ffx_dispatch(&fsr_ctx, &d.header);
         ok = r == FFX_API_RETURN_OK;
